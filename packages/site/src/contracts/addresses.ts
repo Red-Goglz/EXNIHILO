@@ -4,12 +4,10 @@ export const HARDHAT_CHAIN_ID = 31337;
 export const ADDRESSES = {
   // ── Avalanche Fuji testnet ──────────────────────────────────────────────────
   [FUJI_CHAIN_ID]: {
-    // Fill these after deploying contracts to Fuji
-    factory:     "0x0000000000000000000000000000000000000000" as `0x${string}`,
-    positionNFT: "0x0000000000000000000000000000000000000000" as `0x${string}`,
-    lpNFT:       "0x0000000000000000000000000000000000000000" as `0x${string}`,
-    // Official Circle testnet USDC on Fuji
-    usdc:        "0x5425890298aed601595a70AB815c96711a31Bc65" as `0x${string}`,
+    factory:     "0x541d9eF535B2F9eEc9769f281E8F88A727c8764E" as `0x${string}`,
+    positionNFT: "0x853de4146B96352257964eD2D25F6B4beF203f4e" as `0x${string}`,
+    lpNFT:       "0x01906738B32aeF10e0a864Bca6E056952c6E3603" as `0x${string}`,
+    usdc:        "0x50538BbeaF3040Fec0B13D9C39bC0521237f15a5" as `0x${string}`,
   },
 
   // ── Local Hardhat node (npx hardhat node) ───────────────────────────────────
