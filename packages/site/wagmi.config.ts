@@ -5,7 +5,7 @@ import { injected, walletConnect } from "wagmi/connectors";
 const wcProjectId = import.meta.env.VITE_WC_PROJECT_ID ?? "";
 
 export const config = createConfig({
-  chains: [hardhat, avalancheFuji],
+  chains: [avalancheFuji, hardhat],
   connectors: [
     injected(),                          // catches any window.ethereum (legacy fallback)
     walletConnect({ projectId: wcProjectId }), // WalletConnect v2 (mobile + Rabby desktop via WC)
