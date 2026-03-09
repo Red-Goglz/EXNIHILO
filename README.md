@@ -1,16 +1,16 @@
 # EXNIHILO
 
-**Permissionless leveraged trading on Avalanche.** Create a market for any token, go long or short with up to 20x leverage, or provide liquidity — all from a single constant-product AMM.
+**Permissionless "buy no pay later" trading on Avalanche.** Create a market for any token, go long or short with tradable NFT positions. No liquidation. 
 
 ---
 
 ## Overview
 
-EXNIHILO is a Web3 dApp that lets anyone spin up a two-sided market for any ERC-20 meme token. Each market is an isolated pool with:
+EXNIHILO is a Web3 app that lets anyone spin up a two-sided market for any ERC-20 token. Each market is an isolated pool with:
 
-- **Swaps** — constant-product AMM between the meme token and a synthetic USD
-- **Long positions** — leveraged exposure to meme token price appreciation
-- **Short positions** — leveraged exposure to meme token price decline
+- **Swaps** — constant-product AMM between the token and a synthetic USDC
+- **Long positions** — leveraged exposure to token price appreciation
+- **Short positions** — leveraged exposure to token price decline
 - **LP** — provide liquidity and earn 3% of all position fees
 
 Positions are represented as ERC-721 NFTs (transferable) and settled against the pool's reserves.
@@ -32,7 +32,7 @@ packages/
 | `EXNIHILOFactory` | Deploys pools, routes protocol fees to treasury |
 | `PositionNFT` | ERC-721 representing open long/short positions |
 | `LpNFT` | ERC-721 representing an LP's ownership of a pool |
-| `AirToken` | ERC-20 used for synthetic meme tokens and synthetic USD |
+| `AirToken` | ERC-20 used for synthetic tokens and synthetic USD |
 
 **Target network:** Avalanche (mainnet chainId 43114 / Fuji testnet chainId 43113)
 
@@ -166,11 +166,11 @@ Spot price: `backedAirUsd / backedAirMeme` (USDC per whole meme token).
 
 ## Fee Structure
 
-| Fee | Amount | Destination |
-|---|---|---|
-| Open fee | 5% of notional (min $0.05) | 3% LP + 2% protocol treasury |
-| Close fee | 1% of profit surplus | Pool reserves |
-| Swap fee | 100 bps = 1% (immutable per pool) | LP reserves |
+| Fee | Amount | Destination                            |
+|---|---|----------------------------------------|
+| Open fee | 5% of notional (min $0.05) | 3% LP claimable + 2% protocol treasury |
+| Close fee | 1% of profit surplus | prtocol treasury                       |
+| Swap fee | 100 bps = 1% (immutable per pool) | LP reserves                            |
 
 ## Tech Stack
 
