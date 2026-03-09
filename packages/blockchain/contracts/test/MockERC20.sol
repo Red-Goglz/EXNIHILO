@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+
+/**
+ * @title MockERC20
+ * @notice Minimal mintable ERC-20 for use in unit tests only.
+ *         Anyone can mint; this contract must never be deployed on a live network.
+ */
+contract MockERC20 is ERC20 {
+    uint8 private immutable _dec;
+
+    constructor(
+        string memory name_,
+        string memory symbol_,
+        uint8 decimals_
+    ) ERC20(name_, symbol_) {
+        _dec = decimals_;
+    }
+
+    function decimals() public view override returns (uint8) {
+        return _dec;
+    }
+
+    /// @notice Mint `amount` tokens to `to`. Open access — test use only.
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+}

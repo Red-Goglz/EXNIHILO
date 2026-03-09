@@ -1,0 +1,7 @@
+{
+  "EXNIHILOCore": {
+    "usdc": "0x5425890298aed601595a70AB815c96711a31Bc65",
+    "protocolTreasury": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+    "defaultSwapFeeBps": 100
+  }
+}

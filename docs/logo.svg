@@ -1,0 +1,150 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&amp;display=swap');
+      .f { font-family: 'Bebas Neue', Arial, sans-serif; }
+
+      /*
+       * 8s total cycle — 4 pairs × 2s each
+       * EX  : 0–25%
+       * NI  : 25–50%
+       * HI  : 50–75%
+       * LO  : 75–100%
+       *
+       * Within each 2s window:
+       *   0–74%  → white text visible (clean)
+       *   74–87% → first  glitch burst
+       *   87–99% → second glitch burst
+       *   99–100%→ dark (snap off)
+       */
+
+      /* ── White text visibility ─────────────────────────────── */
+      @keyframes vex {
+        0%    { opacity: 1; }
+        18.5% { opacity: 1; }
+        19%   { opacity: 0; }
+        100%  { opacity: 0; }
+      }
+      @keyframes vni {
+        0%,25%  { opacity: 0; }
+        25.1%   { opacity: 1; }
+        43.5%   { opacity: 1; }
+        44%     { opacity: 0; }
+        100%    { opacity: 0; }
+      }
+      @keyframes vhi {
+        0%,50%  { opacity: 0; }
+        50.1%   { opacity: 1; }
+        68.5%   { opacity: 1; }
+        69%     { opacity: 0; }
+        100%    { opacity: 0; }
+      }
+      @keyframes vlo {
+        0%,75%  { opacity: 0; }
+        75.1%   { opacity: 1; }
+        93.5%   { opacity: 1; }
+        94%     { opacity: 0; }
+        100%    { opacity: 0; }
+      }
+
+      /* ── Glitch burst keyframes (two bursts per pair window) ── */
+      /* EX  glitch: 19–22%, then 22.5–24.5%                      */
+      @keyframes gex {
+        0%, 18.9%, 24.6%, 25%, 100% {
+          opacity: 0; clip-path: inset(0 0 100% 0); transform: translateX(0);
+        }
+        19%   { opacity: 1; clip-path: inset( 8% 0 52% 0); transform: translateX(-4px); }
+        20%   { opacity: 1; clip-path: inset(50% 0 10% 0); transform: translateX( 3px); }
+        21%   { opacity: 1; clip-path: inset(20% 0 35% 0); transform: translateX(-2px); }
+        22%   { opacity: 0; clip-path: inset( 0  0 100% 0); }
+        22.5% { opacity: 1; clip-path: inset(60% 0  5% 0); transform: translateX( 4px); }
+        23.5% { opacity: 1; clip-path: inset(10% 0 60% 0); transform: translateX(-3px); }
+        24.5% { opacity: 1; clip-path: inset(40% 0 20% 0); transform: translateX( 2px); }
+      }
+      /* NI  glitch: 44–47%, then 47.5–49.5%                      */
+      @keyframes gni {
+        0%, 43.9%, 49.6%, 50%, 100% {
+          opacity: 0; clip-path: inset(0 0 100% 0); transform: translateX(0);
+        }
+        44%   { opacity: 1; clip-path: inset( 8% 0 52% 0); transform: translateX(-4px); }
+        45%   { opacity: 1; clip-path: inset(50% 0 10% 0); transform: translateX( 3px); }
+        46%   { opacity: 1; clip-path: inset(20% 0 35% 0); transform: translateX(-2px); }
+        47%   { opacity: 0; clip-path: inset( 0  0 100% 0); }
+        47.5% { opacity: 1; clip-path: inset(60% 0  5% 0); transform: translateX( 4px); }
+        48.5% { opacity: 1; clip-path: inset(10% 0 60% 0); transform: translateX(-3px); }
+        49.5% { opacity: 1; clip-path: inset(40% 0 20% 0); transform: translateX( 2px); }
+      }
+      /* HI  glitch: 69–72%, then 72.5–74.5%                      */
+      @keyframes ghi {
+        0%, 68.9%, 74.6%, 75%, 100% {
+          opacity: 0; clip-path: inset(0 0 100% 0); transform: translateX(0);
+        }
+        69%   { opacity: 1; clip-path: inset( 8% 0 52% 0); transform: translateX(-4px); }
+        70%   { opacity: 1; clip-path: inset(50% 0 10% 0); transform: translateX( 3px); }
+        71%   { opacity: 1; clip-path: inset(20% 0 35% 0); transform: translateX(-2px); }
+        72%   { opacity: 0; clip-path: inset( 0  0 100% 0); }
+        72.5% { opacity: 1; clip-path: inset(60% 0  5% 0); transform: translateX( 4px); }
+        73.5% { opacity: 1; clip-path: inset(10% 0 60% 0); transform: translateX(-3px); }
+        74.5% { opacity: 1; clip-path: inset(40% 0 20% 0); transform: translateX( 2px); }
+      }
+      /* LO  glitch: 94–97%, then 97.5–99.5%                      */
+      @keyframes glo {
+        0%, 93.9%, 99.6%, 100% {
+          opacity: 0; clip-path: inset(0 0 100% 0); transform: translateX(0);
+        }
+        94%   { opacity: 1; clip-path: inset( 8% 0 52% 0); transform: translateX(-4px); }
+        95%   { opacity: 1; clip-path: inset(50% 0 10% 0); transform: translateX( 3px); }
+        96%   { opacity: 1; clip-path: inset(20% 0 35% 0); transform: translateX(-2px); }
+        97%   { opacity: 0; clip-path: inset( 0  0 100% 0); }
+        97.5% { opacity: 1; clip-path: inset(60% 0  5% 0); transform: translateX( 4px); }
+        98.5% { opacity: 1; clip-path: inset(10% 0 60% 0); transform: translateX(-3px); }
+        99.5% { opacity: 1; clip-path: inset(40% 0 20% 0); transform: translateX( 2px); }
+      }
+
+      /* ── Class assignments ─────────────────────────────────── */
+      .wex { animation: vex 8s infinite; fill: #fff; }
+      .wni { animation: vni 8s infinite; fill: #fff; }
+      .whi { animation: vhi 8s infinite; fill: #fff; }
+      .wlo { animation: vlo 8s infinite; fill: #fff; }
+
+      /* cyan layer — leads; red layer — follows by 60ms */
+      .cex { animation: gex 8s        infinite; fill: #00e5ff; transform-box: fill-box; }
+      .rex { animation: gex 8s 0.06s  infinite; fill: #ff3b30; transform-box: fill-box; }
+      .cni { animation: gni 8s        infinite; fill: #00e5ff; transform-box: fill-box; }
+      .rni { animation: gni 8s 0.06s  infinite; fill: #ff3b30; transform-box: fill-box; }
+      .chi { animation: ghi 8s        infinite; fill: #00e5ff; transform-box: fill-box; }
+      .rhi { animation: ghi 8s 0.06s  infinite; fill: #ff3b30; transform-box: fill-box; }
+      .clo { animation: glo 8s        infinite; fill: #00e5ff; transform-box: fill-box; }
+      .rlo { animation: glo 8s 0.06s  infinite; fill: #ff3b30; transform-box: fill-box; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="200" height="200" fill="#000"/>
+
+  <!-- Corner brackets -->
+  <polyline points="1,14 1,1 14,1"     fill="none" stroke="#00e5ff" stroke-width="1.5"/>
+  <polyline points="186,1 199,1 199,14"   fill="none" stroke="#00e5ff" stroke-width="1.5"/>
+  <polyline points="1,186 1,199 14,199"   fill="none" stroke="#00e5ff" stroke-width="1.5"/>
+  <polyline points="186,199 199,199 199,186" fill="none" stroke="#00e5ff" stroke-width="1.5"/>
+
+  <!-- EX -->
+  <text x="100" y="100" class="f cex" font-size="88" font-weight="bold" text-anchor="middle" dominant-baseline="central">EX</text>
+  <text x="100" y="100" class="f rex" font-size="88" font-weight="bold" text-anchor="middle" dominant-baseline="central">EX</text>
+  <text x="100" y="100" class="f wex" font-size="88" font-weight="bold" text-anchor="middle" dominant-baseline="central">EX</text>
+
+  <!-- NI -->
+  <text x="100" y="100" class="f cni" font-size="88" font-weight="bold" text-anchor="middle" dominant-baseline="central">NI</text>
+  <text x="100" y="100" class="f rni" font-size="88" font-weight="bold" text-anchor="middle" dominant-baseline="central">NI</text>
+  <text x="100" y="100" class="f wni" font-size="88" font-weight="bold" text-anchor="middle" dominant-baseline="central">NI</text>
+
+  <!-- HI -->
+  <text x="100" y="100" class="f chi" font-size="88" font-weight="bold" text-anchor="middle" dominant-baseline="central">HI</text>
+  <text x="100" y="100" class="f rhi" font-size="88" font-weight="bold" text-anchor="middle" dominant-baseline="central">HI</text>
+  <text x="100" y="100" class="f whi" font-size="88" font-weight="bold" text-anchor="middle" dominant-baseline="central">HI</text>
+
+  <!-- LO -->
+  <text x="100" y="100" class="f clo" font-size="88" font-weight="bold" text-anchor="middle" dominant-baseline="central">LO</text>
+  <text x="100" y="100" class="f rlo" font-size="88" font-weight="bold" text-anchor="middle" dominant-baseline="central">LO</text>
+  <text x="100" y="100" class="f wlo" font-size="88" font-weight="bold" text-anchor="middle" dominant-baseline="central">LO</text>
+</svg>

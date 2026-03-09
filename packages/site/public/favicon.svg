@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" fill="#000"/>
+  <!-- Cyan glitch layer (offset left) -->
+  <text x="30" y="44" text-anchor="middle" font-family="Arial Black, Impact, sans-serif" font-weight="900" font-size="22" fill="#00e5ff" opacity="0.6">EX</text>
+  <!-- Red glitch layer (offset right) -->
+  <text x="34" y="44" text-anchor="middle" font-family="Arial Black, Impact, sans-serif" font-weight="900" font-size="22" fill="#ff3b30" opacity="0.6">EX</text>
+  <!-- Main text -->
+  <text x="32" y="44" text-anchor="middle" font-family="Arial Black, Impact, sans-serif" font-weight="900" font-size="22" fill="#fff">EX</text>
+  <!-- Bottom accent line -->
+  <rect x="12" y="50" width="40" height="2" fill="#00e5ff"/>
+</svg>
