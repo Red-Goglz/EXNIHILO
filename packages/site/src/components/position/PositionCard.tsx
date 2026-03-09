@@ -65,7 +65,6 @@ function WithTooltip({ tip, children }: { tip: string; children: React.ReactNode
 export default function PositionCard({
   tokenId,
   position,
-  underlyingUsdc,
 }: PositionCardProps) {
   const queryClient = useQueryClient();
 
