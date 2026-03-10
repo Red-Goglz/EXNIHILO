@@ -14,7 +14,7 @@ export default function Layout() {
   const { pathname } = useLocation();
 
   return (
-    <div style={{ minHeight: "100vh", fontFamily: "var(--font-mono)", width: "100%" }}>
+    <div style={{ minHeight: "100vh", fontFamily: "var(--font-mono)", width: "100%", display: "flex", flexDirection: "column" }}>
       {/* ── Navbar ─────────────────────────────────────────────────────── */}
       <nav
         style={{
@@ -84,11 +84,62 @@ export default function Layout() {
           margin: "0 auto",
           padding: "32px 24px 64px",
           width: "100%",
+          flex: 1,
         }}
       >
         <Outlet />
       </main>
+
+      {/* ── Footer ──────────────────────────────────────────────────────── */}
+      <footer style={{ borderTop: "1px solid var(--border)" }}>
+        <div
+          style={{
+            maxWidth: MAX_WIDTH,
+            margin: "0 auto",
+            padding: "24px 24px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: 16,
+          }}
+        >
+          <Link to="/" style={{ textDecoration: "none" }}>
+            <span className="logo-glitch" data-text="EXNIHILO" style={{ fontSize: "1.1rem" }}>
+              EXNIHILO
+            </span>
+          </Link>
+          <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
+            <FooterLink href="/docs">Docs</FooterLink>
+            <FooterLink href="https://github.com/Red-Goglz/EXNIHILO">GitHub</FooterLink>
+            <FooterLink href="https://x.com/exnihilo_dex">X</FooterLink>
+          </div>
+          <span style={{ fontSize: "0.6rem", color: "var(--dim)", letterSpacing: "0.08em" }}>
+            &copy; 2026 EXNIHILO
+          </span>
+        </div>
+      </footer>
     </div>
+  );
+}
+
+function FooterLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <a
+      href={href}
+      style={{
+        fontSize: "0.62rem",
+        letterSpacing: "0.12em",
+        color: "var(--muted)",
+        textDecoration: "none",
+        transition: "color 0.15s",
+        textTransform: "uppercase",
+      }}
+      onMouseEnter={(e) => (e.currentTarget.style.color = "var(--cyan)")}
+      onMouseLeave={(e) => (e.currentTarget.style.color = "var(--muted)")}
+    >
+      {children}
+    </a>
   );
 }
 
