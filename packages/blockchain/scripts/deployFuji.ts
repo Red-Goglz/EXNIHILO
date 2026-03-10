@@ -1,6 +1,6 @@
 /**
  * Avalanche Fuji testnet deployment script.
- * Deploys MockUSDC + PositionNFT + LpNFT + EXNIHILOFactory + 5 mock meme tokens,
+ * Deploys MockUSDC + PositionNFT + LpNFT + EXNIHILOFactory + 5 mock base tokens,
  * then seeds one market per token.
  *
  * All contracts use MockERC20 for USDC so you don't need real Fuji USDC.
@@ -95,10 +95,10 @@ async function main() {
   }
   console.log("Factory:     ", factoryAddress, "(LpNFT.factory verified ✓)");
 
-  // ── 4. Mock meme tokens ──────────────────────────────────────────────────────
-  const memeTokens: { name: string; symbol: string; contract: any; address: string }[] = [];
+  // ── 4. Mock base tokens ──────────────────────────────────────────────────────
+  const baseTokens: { name: string; symbol: string; contract: any; address: string }[] = [];
 
-  const memeSpecs = [
+  const tokenSpecs = [
     { name: "Arena Token",    symbol: "ARENA"   },
     { name: "No Chill Token", symbol: "NOCHILL" },
     { name: "Ragoogle",       symbol: "RGOGLZ"  },
@@ -106,17 +106,17 @@ async function main() {
     { name: "Wrapped AVAX",   symbol: "WAVAX"   },
   ];
 
-  for (const spec of memeSpecs) {
+  for (const spec of tokenSpecs) {
     const token = await MockERC20F.connect(deployer).deploy(spec.name, spec.symbol, 18);
     await token.waitForDeployment();
     const addr = await token.getAddress();
-    memeTokens.push({ ...spec, contract: token, address: addr });
+    baseTokens.push({ ...spec, contract: token, address: addr });
     console.log(`Mock${spec.symbol.padEnd(7)}: `, addr);
   }
 
   // ── 5. Mint tokens to deployer (and treasury if different) ───────────────────
   const USDC_MINT  = 100_000_000n * 1_000_000n;    // 100M MockUSDC (6 dec)
-  const TOKEN_MINT = 100_000_000n * 10n ** 18n;    // 100M of each meme (18 dec)
+  const TOKEN_MINT = 100_000_000n * 10n ** 18n;    // 100M of each token (18 dec)
 
   const mintRecipients = [deployer.address];
   if (treasuryAddr.toLowerCase() !== deployer.address.toLowerCase()) {
@@ -125,11 +125,11 @@ async function main() {
 
   for (const recipient of mintRecipients) {
     await (usdc as any).connect(deployer).mint(recipient, USDC_MINT);
-    for (const t of memeTokens) {
+    for (const t of baseTokens) {
       await (t.contract as any).connect(deployer).mint(recipient, TOKEN_MINT);
     }
   }
-  console.log(`Minted 100M MockUSDC + 100M of each meme to: ${mintRecipients.join(", ")}`);
+  console.log(`Minted 100M MockUSDC + 100M of each token to: ${mintRecipients.join(", ")}`);
 
   // ── 6. Create markets ────────────────────────────────────────────────────────
   //    Seed sizes chosen to give varied TVLs and prices similar to localhost.
@@ -150,13 +150,13 @@ async function main() {
   const poolAddresses: Record<string, string> = {};
 
   for (const [symbol, usdcSeed, tokenSeed] of marketSpecs) {
-    const meme = memeTokens.find(t => t.symbol === symbol)!;
+    const baseToken = baseTokens.find(t => t.symbol === symbol)!;
 
     await usdc.connect(deployer).approve(factoryAddress, usdcSeed);
-    await meme.contract.connect(deployer).approve(factoryAddress, tokenSeed);
+    await baseToken.contract.connect(deployer).approve(factoryAddress, tokenSeed);
 
     const tx = await factory.connect(deployer).createMarket(
-      meme.address,
+      baseToken.address,
       usdcSeed,
       tokenSeed,
       0n, // maxPositionUsd — no cap
@@ -185,7 +185,7 @@ async function main() {
     positionNFT: positionNFTAddress,
     lpNFT:       lpNFTAddress,
     usdc:        usdcAddress,
-    testMeme:    memeTokens[0].address, // ARENA as the "default" test meme
+    testToken:   baseTokens[0].address, // ARENA as the "default" test token
     treasury:    treasuryAddr,
     deployer:    deployer.address,
     pools:       poolAddresses,
@@ -206,7 +206,7 @@ async function main() {
   console.log(`    npx hardhat verify --network avalancheFujiTestnet ${positionNFTAddress}`);
   console.log(`    npx hardhat verify --network avalancheFujiTestnet ${lpNFTAddress} "${factoryAddress}"`);
   console.log(`    npx hardhat verify --network avalancheFujiTestnet ${factoryAddress} "${positionNFTAddress}" "${lpNFTAddress}" "${usdcAddress}" "${treasuryAddr}" ${defaultSwapFeeBps}`);
-  for (const t of memeTokens) {
+  for (const t of baseTokens) {
     console.log(`    npx hardhat verify --network avalancheFujiTestnet ${t.address} "${t.name}" "${t.symbol}" 18`);
   }
   console.log("─────────────────────────────────────────────────────────");

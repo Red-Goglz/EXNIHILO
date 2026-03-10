@@ -9,38 +9,38 @@ import TxButton from "../shared/TxButton.tsx";
 
 interface SwapPanelProps {
   poolAddress: `0x${string}`;
-  underlyingMeme: `0x${string}`;
+  underlyingToken: `0x${string}`;
   underlyingUsdc: `0x${string}`;
-  memeSymbol: string;
-  memeDecimals: number;
+  tokenSymbol: string;
+  tokenDecimals: number;
 }
 
 export default function SwapPanel({
   poolAddress,
-  underlyingMeme,
+  underlyingToken,
   underlyingUsdc,
-  memeSymbol,
-  memeDecimals,
+  tokenSymbol,
+  tokenDecimals,
 }: SwapPanelProps) {
   const { address } = useAccount();
   const queryClient = useQueryClient();
 
-  const [memeToUsdc, setMemeToUsdc] = useState(true);
+  const [tokenToUsdc, setTokenToUsdc] = useState(true);
   const [amountIn, setAmountIn] = useState("");
   const [slippageMode, setSlippageMode] = useState<"auto" | "manual">("auto");
   const [manualSlippagePct, setManualSlippagePct] = useState("0.50");
 
-  const amountInRaw = parseUnits(amountIn, memeToUsdc ? memeDecimals : 6);
-  const tokenIn = memeToUsdc ? underlyingMeme : underlyingUsdc;
-  const tokenInDecimals = memeToUsdc ? memeDecimals : 6;
-  const tokenInSymbol = memeToUsdc ? memeSymbol : "USDC";
-  const tokenOutSymbol = memeToUsdc ? "USDC" : memeSymbol;
+  const amountInRaw = parseUnits(amountIn, tokenToUsdc ? tokenDecimals : 6);
+  const tokenIn = tokenToUsdc ? underlyingToken : underlyingUsdc;
+  const tokenInDecimals = tokenToUsdc ? tokenDecimals : 6;
+  const tokenInSymbol = tokenToUsdc ? tokenSymbol : "USDC";
+  const tokenOutSymbol = tokenToUsdc ? "USDC" : tokenSymbol;
 
   const poolContract = { address: poolAddress, abi: exnihiloPoolAbi } as const;
 
   const { data: poolData } = useReadContracts({
     contracts: [
-      { ...poolContract, functionName: "backedAirMeme" },
+      { ...poolContract, functionName: "backedAirToken" },
       { ...poolContract, functionName: "backedAirUsd" },
       { ...poolContract, functionName: "swapFeeBps" },
     ],
@@ -58,25 +58,25 @@ export default function SwapPanel({
     query: { enabled: !!address },
   });
 
-  const backedAirMeme = poolData?.[0]?.result as bigint | undefined;
+  const backedAirToken = poolData?.[0]?.result as bigint | undefined;
   const backedAirUsd  = poolData?.[1]?.result as bigint | undefined;
   const swapFeeBps    = poolData?.[2]?.result as bigint | undefined;
   const allowance = allowanceData?.[0]?.result as bigint | undefined;
 
   // Client-side SWAP-1 quote — matches _cpAmountOut in the contract exactly.
   const quoted =
-    amountInRaw > 0n && backedAirMeme !== undefined && backedAirUsd !== undefined && swapFeeBps !== undefined
-      ? memeToUsdc
-        ? cpAmountOut(amountInRaw, backedAirMeme, backedAirUsd, swapFeeBps)
-        : cpAmountOut(amountInRaw, backedAirUsd, backedAirMeme, swapFeeBps)
+    amountInRaw > 0n && backedAirToken !== undefined && backedAirUsd !== undefined && swapFeeBps !== undefined
+      ? tokenToUsdc
+        ? cpAmountOut(amountInRaw, backedAirToken, backedAirUsd, swapFeeBps)
+        : cpAmountOut(amountInRaw, backedAirUsd, backedAirToken, swapFeeBps)
       : undefined;
 
   // Price impact: amountIn / (reserveIn + amountIn) in bps
   const priceImpactBps = (() => {
     if (amountInRaw === 0n) return 0n;
-    if (memeToUsdc) {
-      if (!backedAirMeme || backedAirMeme === 0n) return 0n;
-      return (amountInRaw * 10_000n) / (backedAirMeme + amountInRaw);
+    if (tokenToUsdc) {
+      if (!backedAirToken || backedAirToken === 0n) return 0n;
+      return (amountInRaw * 10_000n) / (backedAirToken + amountInRaw);
     } else {
       if (!backedAirUsd || backedAirUsd === 0n) return 0n;
       return (amountInRaw * 10_000n) / (backedAirUsd + amountInRaw);
@@ -132,7 +132,7 @@ export default function SwapPanel({
         }}
       >
         <button
-          onClick={() => { setMemeToUsdc(true); setAmountIn(""); }}
+          onClick={() => { setTokenToUsdc(true); setAmountIn(""); }}
           style={{
             flex: 1,
             padding: "8px 12px",
@@ -140,17 +140,17 @@ export default function SwapPanel({
             fontSize: "0.65rem",
             letterSpacing: "0.08em",
             border: "none",
-            background: memeToUsdc ? "var(--cyan-glow)" : "transparent",
-            color: memeToUsdc ? "var(--cyan)" : "var(--muted)",
+            background: tokenToUsdc ? "var(--cyan-glow)" : "transparent",
+            color: tokenToUsdc ? "var(--cyan)" : "var(--muted)",
             cursor: "pointer",
             borderRight: "1px solid var(--border)",
             transition: "all 0.15s",
           }}
         >
-          {memeSymbol} → USDC
+          {tokenSymbol} → USDC
         </button>
         <button
-          onClick={() => { setMemeToUsdc(false); setAmountIn(""); }}
+          onClick={() => { setTokenToUsdc(false); setAmountIn(""); }}
           style={{
             flex: 1,
             padding: "8px 12px",
@@ -158,13 +158,13 @@ export default function SwapPanel({
             fontSize: "0.65rem",
             letterSpacing: "0.08em",
             border: "none",
-            background: !memeToUsdc ? "var(--cyan-glow)" : "transparent",
-            color: !memeToUsdc ? "var(--cyan)" : "var(--muted)",
+            background: !tokenToUsdc ? "var(--cyan-glow)" : "transparent",
+            color: !tokenToUsdc ? "var(--cyan)" : "var(--muted)",
             cursor: "pointer",
             transition: "all 0.15s",
           }}
         >
-          USDC → {memeSymbol}
+          USDC → {tokenSymbol}
         </button>
       </div>
 
@@ -302,7 +302,7 @@ export default function SwapPanel({
               EXPECTED OUT
             </span>
             <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.78rem", color: "var(--body)" }}>
-              {formatToken(quoted, memeToUsdc ? 6 : memeDecimals)} {tokenOutSymbol}
+              {formatToken(quoted, tokenToUsdc ? 6 : tokenDecimals)} {tokenOutSymbol}
             </span>
           </div>
           <div className="flex justify-between">
@@ -310,7 +310,7 @@ export default function SwapPanel({
               MIN ({slippagePctDisplay} SLIP)
             </span>
             <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.78rem", color: "#f59e0b" }}>
-              {formatToken(minAmountOut, memeToUsdc ? 6 : memeDecimals)} {tokenOutSymbol}
+              {formatToken(minAmountOut, tokenToUsdc ? 6 : tokenDecimals)} {tokenOutSymbol}
             </span>
           </div>
         </div>
@@ -342,7 +342,7 @@ export default function SwapPanel({
                 address: poolAddress,
                 abi: exnihiloPoolAbi,
                 functionName: "swap",
-                args: [amountInRaw, minAmountOut, memeToUsdc],
+                args: [amountInRaw, minAmountOut, tokenToUsdc],
               },
               { onSuccess: handleSwapSuccess }
             )

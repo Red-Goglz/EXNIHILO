@@ -5,11 +5,11 @@ async function main() {
   for (let i = 0; i < len; i++) {
     const poolAddr = await factory.allPools(i);
     const pool = await ethers.getContractAt("EXNIHILOPool", poolAddr);
-    const bMeme = await pool.backedAirMeme();
+    const bToken = await pool.backedAirToken();
     const bUsd  = await pool.backedAirUsd();
     const swaps = await pool.queryFilter(pool.filters.Swap(), 0);
     console.log(`\nPool[${i}] ${poolAddr}`);
-    console.log(`  backedAirMeme: ${ethers.formatUnits(bMeme, 18)} PEPE`);
+    console.log(`  backedAirToken: ${ethers.formatUnits(bToken, 18)} PEPE`);
     console.log(`  backedAirUsd:  ${ethers.formatUnits(bUsd,  6)} USDC`);
     console.log(`  Swaps (${swaps.length}):`);
     for (const e of swaps) {

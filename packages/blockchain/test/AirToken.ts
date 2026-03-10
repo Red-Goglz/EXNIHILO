@@ -8,10 +8,10 @@ describe("AirToken", function () {
   // ── Fixtures ───────────────────────────────────────────────────────────────
 
   /**
-   * Deploys AirToken as a meme-side wrapper (18 decimals).
+   * Deploys AirToken as a token-side wrapper (18 decimals).
    * The deployer acts as the factory; `pool` signer acts as the pool.
    */
-  async function deployMemeTokenFixture() {
+  async function deployTokenFixture() {
     const [factory, pool, other] = await ethers.getSigners();
 
     const AirToken = await ethers.getContractFactory("AirToken");
@@ -28,7 +28,7 @@ describe("AirToken", function () {
    * Same as above but with pool already initialised — used by most tests.
    */
   async function deployAndInitFixture() {
-    const { token, factory, pool, other } = await deployMemeTokenFixture();
+    const { token, factory, pool, other } = await deployTokenFixture();
     await token.connect(factory).initPool(pool.address);
     return { token, factory, pool, other };
   }
@@ -53,8 +53,8 @@ describe("AirToken", function () {
   // ── Deployment ─────────────────────────────────────────────────────────────
 
   describe("Deployment", function () {
-    it("sets name, symbol, and decimals correctly (meme side)", async function () {
-      const { token } = await loadFixture(deployMemeTokenFixture);
+    it("sets name, symbol, and decimals correctly (token side)", async function () {
+      const { token } = await loadFixture(deployTokenFixture);
       expect(await token.name()).to.equal("airPEPE");
       expect(await token.symbol()).to.equal("airPEPE");
       expect(await token.decimals()).to.equal(18);
@@ -68,17 +68,17 @@ describe("AirToken", function () {
     });
 
     it("stores the deployer as factory", async function () {
-      const { token, factory } = await loadFixture(deployMemeTokenFixture);
+      const { token, factory } = await loadFixture(deployTokenFixture);
       expect(await token.factory()).to.equal(factory.address);
     });
 
     it("initialises pool to the zero address before initPool", async function () {
-      const { token } = await loadFixture(deployMemeTokenFixture);
+      const { token } = await loadFixture(deployTokenFixture);
       expect(await token.pool()).to.equal(ethers.ZeroAddress);
     });
 
     it("starts with zero total supply", async function () {
-      const { token } = await loadFixture(deployMemeTokenFixture);
+      const { token } = await loadFixture(deployTokenFixture);
       expect(await token.totalSupply()).to.equal(0n);
     });
   });
@@ -87,27 +87,27 @@ describe("AirToken", function () {
 
   describe("initPool", function () {
     it("sets pool address when called by factory", async function () {
-      const { token, factory, pool } = await loadFixture(deployMemeTokenFixture);
+      const { token, factory, pool } = await loadFixture(deployTokenFixture);
       await token.connect(factory).initPool(pool.address);
       expect(await token.pool()).to.equal(pool.address);
     });
 
     it("reverts when called by a non-factory address", async function () {
-      const { token, pool, other } = await loadFixture(deployMemeTokenFixture);
+      const { token, pool, other } = await loadFixture(deployTokenFixture);
       await expect(token.connect(other).initPool(pool.address))
         .to.be.revertedWithCustomError(token, "OnlyFactory");
     });
 
     it("reverts when called a second time", async function () {
       const { token, factory, pool, other } =
-        await loadFixture(deployMemeTokenFixture);
+        await loadFixture(deployTokenFixture);
       await token.connect(factory).initPool(pool.address);
       await expect(token.connect(factory).initPool(other.address))
         .to.be.revertedWithCustomError(token, "PoolAlreadySet");
     });
 
     it("reverts when given the zero address", async function () {
-      const { token, factory } = await loadFixture(deployMemeTokenFixture);
+      const { token, factory } = await loadFixture(deployTokenFixture);
       await expect(token.connect(factory).initPool(ethers.ZeroAddress))
         .to.be.revertedWithCustomError(token, "ZeroAddress");
     });
@@ -143,7 +143,7 @@ describe("AirToken", function () {
     });
 
     it("reverts when pool is not yet initialised", async function () {
-      const { token, pool, other } = await loadFixture(deployMemeTokenFixture);
+      const { token, pool, other } = await loadFixture(deployTokenFixture);
       // pool signer is not the actual pool yet — initPool not called
       await expect(token.connect(pool).mint(other.address, 1000n))
         .to.be.revertedWithCustomError(token, "OnlyPool");

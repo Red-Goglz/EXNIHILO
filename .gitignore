@@ -15,6 +15,10 @@ packages/blockchain/coverage.json
 # Site
 packages/site/dist
 
+# Docs (VitePress)
+packages/docs/.vitepress/dist
+packages/docs/.vitepress/cache
+
 # IDE
 .vscode
 .idea

@@ -19,7 +19,7 @@ interface OnChainPosition {
   lockedAmount: bigint;
   usdcIn: bigint;
   airUsdMinted: bigint;
-  airMemeMinted: bigint;
+  airTokenMinted: bigint;
   feesPaid: bigint;
   openedAt: bigint;
 }

@@ -1,0 +1,88 @@
+/* ── EXNIHILO dark theme overrides ──────────────────────────────────────── */
+
+:root {
+  --vp-c-brand-1: #00e5ff;
+  --vp-c-brand-2: #00c8e0;
+  --vp-c-brand-3: #00aabf;
+  --vp-c-brand-soft: rgba(0, 229, 255, 0.12);
+
+  --vp-font-family-base: "IBM Plex Mono", "Courier New", monospace;
+  --vp-font-family-mono: "IBM Plex Mono", "Courier New", monospace;
+}
+
+.dark {
+  --vp-c-bg: #000000;
+  --vp-c-bg-alt: #070707;
+  --vp-c-bg-elv: #0d0d0d;
+  --vp-c-bg-soft: #0d0d0d;
+
+  --vp-c-border: #1a1a1a;
+  --vp-c-divider: #1a1a1a;
+  --vp-c-gutter: #070707;
+
+  --vp-c-text-1: #c8c8c8;
+  --vp-c-text-2: #808080;
+  --vp-c-text-3: #505050;
+
+  --vp-c-brand-1: #00e5ff;
+  --vp-c-brand-2: #00c8e0;
+  --vp-c-brand-3: #00aabf;
+  --vp-c-brand-soft: rgba(0, 229, 255, 0.12);
+
+  --vp-code-block-bg: #070707;
+  --vp-code-line-highlight-color: rgba(0, 229, 255, 0.06);
+}
+
+/* Force dark mode */
+html {
+  color-scheme: dark;
+}
+
+/* Dot grid background */
+html body {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+/* Headings use display font */
+.vp-doc h1,
+.vp-doc h2,
+.vp-doc h3 {
+  font-family: "Bebas Neue", "Arial Black", sans-serif;
+  letter-spacing: 0.04em;
+}
+
+.vp-doc h1 {
+  font-size: 2.5rem;
+}
+
+/* Sidebar title */
+.VPSidebar .title {
+  font-family: "IBM Plex Mono", monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+}
+
+/* Custom tip/warning blocks */
+.vp-doc .custom-block.tip {
+  border-color: #00e5ff;
+  background: rgba(0, 229, 255, 0.04);
+}
+
+.vp-doc .custom-block.warning {
+  border-color: #ff8c00;
+  background: rgba(255, 140, 0, 0.04);
+}
+
+.vp-doc .custom-block.danger {
+  border-color: #ff3b30;
+  background: rgba(255, 59, 48, 0.04);
+}
+
+/* Nav brand */
+.VPNavBarTitle .title {
+  font-family: "Bebas Neue", "Arial Black", sans-serif;
+  letter-spacing: 0.06em;
+  font-size: 1.2rem;
+}

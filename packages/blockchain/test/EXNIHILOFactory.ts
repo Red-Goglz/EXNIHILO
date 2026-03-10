@@ -13,7 +13,7 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const INITIAL_USDC = ethers.parseUnits("10000", 6); // 10,000 USDC
-const INITIAL_MEME = ethers.parseEther("1000000");  // 1,000,000 meme
+const INITIAL_TOKEN = ethers.parseEther("1000000");  // 1,000,000 token
 const MAX_POS_USD  = ethers.parseUnits("5000", 6);  // 5,000 USDC hard cap
 const MAX_POS_BPS  = 500n;                          // 5 % of backedAirUsd
 const SWAP_FEE_BPS = 100n;                          // 1 %
@@ -110,7 +110,7 @@ async function deployFactoryFixture() {
   const [deployer, treasury, creator, creator2, other] = await ethers.getSigners();
 
   const MockERC20F = await ethers.getContractFactory("MockERC20");
-  const memeToken  = (await MockERC20F.connect(deployer).deploy("PEPE", "PEPE", 18)) as unknown as MockERC20;
+  const baseToken  = (await MockERC20F.connect(deployer).deploy("PEPE", "PEPE", 18)) as unknown as MockERC20;
   const usdc       = (await MockERC20F.connect(deployer).deploy("USD Coin", "USDC", 6)) as unknown as MockERC20;
   const positionNFT = (await (await ethers.getContractFactory("PositionNFT"))
     .connect(deployer)
@@ -124,27 +124,27 @@ async function deployFactoryFixture() {
 
   // Fund creators and approve factory
   const factoryAddr = await factory.getAddress();
-  await memeToken.mint(creator.address,  INITIAL_MEME * 3n);
+  await baseToken.mint(creator.address,  INITIAL_TOKEN * 3n);
   await usdc.mint(creator.address,       INITIAL_USDC * 3n);
-  await memeToken.connect(creator).approve(factoryAddr, ethers.MaxUint256);
+  await baseToken.connect(creator).approve(factoryAddr, ethers.MaxUint256);
   await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
 
-  await memeToken.mint(creator2.address, INITIAL_MEME * 3n);
+  await baseToken.mint(creator2.address, INITIAL_TOKEN * 3n);
   await usdc.mint(creator2.address,      INITIAL_USDC * 3n);
-  await memeToken.connect(creator2).approve(factoryAddr, ethers.MaxUint256);
+  await baseToken.connect(creator2).approve(factoryAddr, ethers.MaxUint256);
   await usdc.connect(creator2).approve(factoryAddr, ethers.MaxUint256);
 
-  return { factory, positionNFT, lpNft, memeToken, usdc, deployer, treasury, creator, creator2, other };
+  return { factory, positionNFT, lpNft, baseToken, usdc, deployer, treasury, creator, creator2, other };
 }
 
 async function withOneMarketFixture() {
   const base = await deployFactoryFixture();
-  const { factory, creator, memeToken } = base;
+  const { factory, creator, baseToken } = base;
 
   const tx = await factory.connect(creator).createMarket(
-    await memeToken.getAddress(),
+    await baseToken.getAddress(),
     INITIAL_USDC,
-    INITIAL_MEME,
+    INITIAL_TOKEN,
     MAX_POS_USD,
     MAX_POS_BPS
   );
@@ -258,14 +258,14 @@ describe("EXNIHILOFactory", function () {
 
   describe("createMarket — happy path", function () {
     it("emits MarketCreated with correct fields", async function () {
-      const { factory, creator, memeToken } =
+      const { factory, creator, baseToken } =
         await loadFixture(deployFactoryFixture);
 
       await expect(
         factory.connect(creator).createMarket(
-          await memeToken.getAddress(),
+          await baseToken.getAddress(),
           INITIAL_USDC,
-          INITIAL_MEME,
+          INITIAL_TOKEN,
           MAX_POS_USD,
           MAX_POS_BPS
         )
@@ -273,9 +273,9 @@ describe("EXNIHILOFactory", function () {
         .to.emit(factory, "MarketCreated")
         .withArgs(
           (v: string) => v !== ethers.ZeroAddress,
-          await memeToken.getAddress(),
+          await baseToken.getAddress(),
           INITIAL_USDC,
-          INITIAL_MEME,
+          INITIAL_TOKEN,
           0n,
           creator.address,
           MAX_POS_USD,
@@ -284,13 +284,13 @@ describe("EXNIHILOFactory", function () {
     });
 
     it("returns a pool address and lpNftId via staticCall", async function () {
-      const { factory, creator, memeToken } =
+      const { factory, creator, baseToken } =
         await loadFixture(deployFactoryFixture);
 
       const [pool, lpNftId] = await factory.connect(creator).createMarket.staticCall(
-        await memeToken.getAddress(),
+        await baseToken.getAddress(),
         INITIAL_USDC,
-        INITIAL_MEME,
+        INITIAL_TOKEN,
         MAX_POS_USD,
         MAX_POS_BPS
       );
@@ -310,8 +310,8 @@ describe("EXNIHILOFactory", function () {
     });
 
     it("registers the pool in poolForToken", async function () {
-      const { factory, poolAddress, memeToken } = await loadFixture(withOneMarketFixture);
-      expect(await factory.poolForToken(await memeToken.getAddress())).to.equal(poolAddress);
+      const { factory, poolAddress, baseToken } = await loadFixture(withOneMarketFixture);
+      expect(await factory.poolForToken(await baseToken.getAddress())).to.equal(poolAddress);
     });
 
     it("transfers the LP NFT to the creator", async function () {
@@ -319,10 +319,10 @@ describe("EXNIHILOFactory", function () {
       expect(await lpNft.ownerOf(lpNftId)).to.equal(creator.address);
     });
 
-    it("pool has the correct backed meme reserve", async function () {
+    it("pool has the correct backed token reserve", async function () {
       const { poolAddress } = await loadFixture(withOneMarketFixture);
       const pool = await ethers.getContractAt("EXNIHILOPool", poolAddress);
-      expect(await pool.backedAirMeme()).to.equal(INITIAL_MEME);
+      expect(await pool.backedAirToken()).to.equal(INITIAL_TOKEN);
     });
 
     it("pool has the correct backed USDC reserve", async function () {
@@ -331,12 +331,12 @@ describe("EXNIHILOFactory", function () {
       expect(await pool.backedAirUsd()).to.equal(INITIAL_USDC);
     });
 
-    it("pool's airMeme token is named correctly", async function () {
+    it("pool's airToken token is named correctly", async function () {
       const { poolAddress } = await loadFixture(withOneMarketFixture);
       const pool = await ethers.getContractAt("EXNIHILOPool", poolAddress);
-      const airMeme = await ethers.getContractAt("AirToken", await pool.airMemeToken());
-      expect(await airMeme.name()).to.equal("airPEPE");
-      expect(await airMeme.symbol()).to.equal("airPEPE");
+      const airToken = await ethers.getContractAt("AirToken", await pool.airToken());
+      expect(await airToken.name()).to.equal("airPEPE");
+      expect(await airToken.symbol()).to.equal("airPEPE");
     });
 
     it("pool's airUsd token is named correctly", async function () {
@@ -378,60 +378,60 @@ describe("EXNIHILOFactory", function () {
     it("reverts when tokenAddress is the zero address", async function () {
       const { factory, creator } = await loadFixture(deployFactoryFixture);
       await expect(
-        factory.connect(creator).createMarket(ethers.ZeroAddress, INITIAL_USDC, INITIAL_MEME, 0n, 0n)
+        factory.connect(creator).createMarket(ethers.ZeroAddress, INITIAL_USDC, INITIAL_TOKEN, 0n, 0n)
       ).to.be.revertedWithCustomError(factory, "ZeroAddress");
     });
 
     it("reverts when usdcAmount is zero", async function () {
-      const { factory, creator, memeToken } = await loadFixture(deployFactoryFixture);
+      const { factory, creator, baseToken } = await loadFixture(deployFactoryFixture);
       await expect(
-        factory.connect(creator).createMarket(await memeToken.getAddress(), 0n, INITIAL_MEME, 0n, 0n)
+        factory.connect(creator).createMarket(await baseToken.getAddress(), 0n, INITIAL_TOKEN, 0n, 0n)
       ).to.be.revertedWithCustomError(factory, "ZeroAmount");
     });
 
     it("reverts when tokenAmount is zero", async function () {
-      const { factory, creator, memeToken } = await loadFixture(deployFactoryFixture);
+      const { factory, creator, baseToken } = await loadFixture(deployFactoryFixture);
       await expect(
-        factory.connect(creator).createMarket(await memeToken.getAddress(), INITIAL_USDC, 0n, 0n, 0n)
+        factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, 0n, 0n, 0n)
       ).to.be.revertedWithCustomError(factory, "ZeroAmount");
     });
 
     it("reverts when maxPositionBps is 5 (below minimum of 10)", async function () {
-      const { factory, creator, memeToken } = await loadFixture(deployFactoryFixture);
+      const { factory, creator, baseToken } = await loadFixture(deployFactoryFixture);
       await expect(
-        factory.connect(creator).createMarket(await memeToken.getAddress(), INITIAL_USDC, INITIAL_MEME, 0n, 5n)
+        factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 5n)
       ).to.be.revertedWithCustomError(factory, "InvalidMaxPositionBps");
     });
 
     it("reverts when maxPositionBps is 9901 (above maximum of 9900)", async function () {
-      const { factory, creator, memeToken } = await loadFixture(deployFactoryFixture);
+      const { factory, creator, baseToken } = await loadFixture(deployFactoryFixture);
       await expect(
-        factory.connect(creator).createMarket(await memeToken.getAddress(), INITIAL_USDC, INITIAL_MEME, 0n, 9901n)
+        factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 9901n)
       ).to.be.revertedWithCustomError(factory, "InvalidMaxPositionBps");
     });
 
     it("accepts maxPositionBps of 10 (minimum boundary)", async function () {
-      const { factory, creator, memeToken } = await loadFixture(deployFactoryFixture);
+      const { factory, creator, baseToken } = await loadFixture(deployFactoryFixture);
       await expect(
-        factory.connect(creator).createMarket(await memeToken.getAddress(), INITIAL_USDC, INITIAL_MEME, 0n, 10n)
+        factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 10n)
       ).to.emit(factory, "MarketCreated");
     });
 
     it("accepts maxPositionBps of 9900 (maximum boundary)", async function () {
       const { factory, creator, usdc } = await loadFixture(deployFactoryFixture);
       const MockF = await ethers.getContractFactory("MockERC20");
-      const meme2 = await MockF.deploy("DOGE", "DOGE", 18);
-      await (meme2 as unknown as MockERC20).mint(creator.address, INITIAL_MEME);
-      await (meme2 as any).connect(creator).approve(await factory.getAddress(), ethers.MaxUint256);
+      const token2 = await MockF.deploy("DOGE", "DOGE", 18);
+      await (token2 as unknown as MockERC20).mint(creator.address, INITIAL_TOKEN);
+      await (token2 as any).connect(creator).approve(await factory.getAddress(), ethers.MaxUint256);
       await expect(
-        factory.connect(creator).createMarket(await meme2.getAddress(), INITIAL_USDC, INITIAL_MEME, 0n, 9900n)
+        factory.connect(creator).createMarket(await token2.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 9900n)
       ).to.emit(factory, "MarketCreated");
     });
 
     it("accepts maxPositionBps of 0 (disabled)", async function () {
-      const { factory, creator, memeToken } = await loadFixture(deployFactoryFixture);
+      const { factory, creator, baseToken } = await loadFixture(deployFactoryFixture);
       await expect(
-        factory.connect(creator).createMarket(await memeToken.getAddress(), INITIAL_USDC, INITIAL_MEME, 0n, 0n)
+        factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n)
       ).to.emit(factory, "MarketCreated");
     });
   });
@@ -440,55 +440,55 @@ describe("EXNIHILOFactory", function () {
 
   describe("createMarket — multiple markets", function () {
     it("allPoolsLength increments for each market", async function () {
-      const { factory, creator, creator2, memeToken, usdc } =
+      const { factory, creator, creator2, baseToken, usdc } =
         await loadFixture(deployFactoryFixture);
 
       const MockF = await ethers.getContractFactory("MockERC20");
-      const meme2 = await MockF.deploy("DOGE", "DOGE", 18) as unknown as MockERC20;
-      await meme2.mint(creator2.address, INITIAL_MEME);
-      await meme2.connect(creator2).approve(await factory.getAddress(), ethers.MaxUint256);
+      const token2 = await MockF.deploy("DOGE", "DOGE", 18) as unknown as MockERC20;
+      await token2.mint(creator2.address, INITIAL_TOKEN);
+      await token2.connect(creator2).approve(await factory.getAddress(), ethers.MaxUint256);
 
-      await factory.connect(creator).createMarket(await memeToken.getAddress(), INITIAL_USDC, INITIAL_MEME, 0n, 0n);
+      await factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n);
       expect(await factory.allPoolsLength()).to.equal(1n);
 
-      await factory.connect(creator2).createMarket(await meme2.getAddress(), INITIAL_USDC, INITIAL_MEME, 0n, 0n);
+      await factory.connect(creator2).createMarket(await token2.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n);
       expect(await factory.allPoolsLength()).to.equal(2n);
     });
 
     it("LP NFT IDs increment (first = 0, second = 1)", async function () {
-      const { factory, creator, creator2, memeToken, usdc, lpNft } =
+      const { factory, creator, creator2, baseToken, usdc, lpNft } =
         await loadFixture(deployFactoryFixture);
 
-      await factory.connect(creator).createMarket(await memeToken.getAddress(), INITIAL_USDC, INITIAL_MEME, 0n, 0n);
+      await factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n);
       expect(await lpNft.ownerOf(0n)).to.equal(creator.address);
 
       const MockF = await ethers.getContractFactory("MockERC20");
-      const meme2 = await MockF.deploy("SHIB", "SHIB", 18) as unknown as MockERC20;
-      await meme2.mint(creator2.address, INITIAL_MEME);
-      await meme2.connect(creator2).approve(await factory.getAddress(), ethers.MaxUint256);
+      const token2 = await MockF.deploy("SHIB", "SHIB", 18) as unknown as MockERC20;
+      await token2.mint(creator2.address, INITIAL_TOKEN);
+      await token2.connect(creator2).approve(await factory.getAddress(), ethers.MaxUint256);
 
-      await factory.connect(creator2).createMarket(await meme2.getAddress(), INITIAL_USDC, INITIAL_MEME, 0n, 0n);
+      await factory.connect(creator2).createMarket(await token2.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n);
       expect(await lpNft.ownerOf(1n)).to.equal(creator2.address);
     });
 
     it("second market for the same token does NOT overwrite poolForToken", async function () {
-      const { factory, creator, creator2, memeToken } =
+      const { factory, creator, creator2, baseToken } =
         await loadFixture(deployFactoryFixture);
 
-      await factory.connect(creator).createMarket(await memeToken.getAddress(), INITIAL_USDC, INITIAL_MEME, 0n, 0n);
-      const firstPool = await factory.poolForToken(await memeToken.getAddress());
+      await factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n);
+      const firstPool = await factory.poolForToken(await baseToken.getAddress());
 
-      await factory.connect(creator2).createMarket(await memeToken.getAddress(), INITIAL_USDC, INITIAL_MEME, 0n, 0n);
+      await factory.connect(creator2).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n);
 
-      expect(await factory.poolForToken(await memeToken.getAddress())).to.equal(firstPool);
+      expect(await factory.poolForToken(await baseToken.getAddress())).to.equal(firstPool);
     });
 
     it("both pools are registered in isPool", async function () {
-      const { factory, creator, creator2, memeToken } =
+      const { factory, creator, creator2, baseToken } =
         await loadFixture(deployFactoryFixture);
 
-      await factory.connect(creator).createMarket(await memeToken.getAddress(), INITIAL_USDC, INITIAL_MEME, 0n, 0n);
-      await factory.connect(creator2).createMarket(await memeToken.getAddress(), INITIAL_USDC, INITIAL_MEME, 0n, 0n);
+      await factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n);
+      await factory.connect(creator2).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n);
 
       const pool1 = await factory.allPools(0n);
       const pool2 = await factory.allPools(1n);
@@ -520,20 +520,20 @@ describe("EXNIHILOFactory", function () {
   // ── 6. _safeSymbol / _safeDecimals fallback branches ──────────────────────
 
   describe("_safeSymbol / _safeDecimals fallback", function () {
-    it("falls back to 'TOKEN' when meme token has no symbol()", async function () {
+    it("falls back to 'TOKEN' when token has no symbol()", async function () {
       // NoMetaERC20 has no symbol() or decimals() — factory falls back to "TOKEN" / 18.
       const { factory, usdc, creator } = await loadFixture(deployFactoryFixture);
 
       const NoMetaF = await ethers.getContractFactory("NoMetaERC20");
       const noMeta  = await NoMetaF.deploy();
-      await (noMeta as any).mint(creator.address, INITIAL_MEME);
+      await (noMeta as any).mint(creator.address, INITIAL_TOKEN);
       await (noMeta as any).connect(creator).approve(await factory.getAddress(), ethers.MaxUint256);
       await usdc.connect(creator).approve(await factory.getAddress(), ethers.MaxUint256);
 
       const tx = await factory.connect(creator).createMarket(
         await noMeta.getAddress(),
         INITIAL_USDC,
-        INITIAL_MEME,
+        INITIAL_TOKEN,
         0n,
         0n
       );
@@ -544,11 +544,11 @@ describe("EXNIHILOFactory", function () {
         .find((l) => l?.name === "MarketCreated")!;
 
       const pool = await ethers.getContractAt("EXNIHILOPool", log.args.pool as string);
-      const airMeme = await ethers.getContractAt("AirToken", await pool.airMemeToken());
+      const airToken = await ethers.getContractAt("AirToken", await pool.airToken());
       const airUsd  = await ethers.getContractAt("AirToken", await pool.airUsdToken());
 
       // Fallback symbol used as name
-      expect(await airMeme.name()).to.equal("airTOKEN");
+      expect(await airToken.name()).to.equal("airTOKEN");
       expect(await airUsd.name()).to.equal("airTOKENUsd");
     });
   });

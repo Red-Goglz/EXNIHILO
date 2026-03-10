@@ -8,7 +8,7 @@ async function main() {
 
   // Deploy prerequisites
   const MockERC20F = await ethers.getContractFactory("MockERC20");
-  const memeToken = await MockERC20F.connect(deployer).deploy("PEPE", "PEPE", 18);
+  const baseToken = await MockERC20F.connect(deployer).deploy("PEPE", "PEPE", 18);
   const usdc = await MockERC20F.connect(deployer).deploy("USD Coin", "USDC", 6);
   const positionNFT = await (await ethers.getContractFactory("PositionNFT")).connect(deployer).deploy();
 

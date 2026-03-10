@@ -20,9 +20,9 @@ async function main() {
   for (let i = 0n; i < poolCount; i++) {
     const addr = await factory.allPools(i);
     const pool = await ethers.getContractAt("EXNIHILOPool", addr);
-    const memeAddr = await pool.underlyingMeme();
-    const meme = await ethers.getContractAt("MockERC20", memeAddr);
-    const sym = await meme.symbol();
+    const tokenAddr = await pool.underlyingToken();
+    const token = await ethers.getContractAt("MockERC20", tokenAddr);
+    const sym = await token.symbol();
     if (sym === TARGET_SYMBOL) { poolAddr = addr; break; }
   }
   if (!poolAddr) throw new Error(`No pool found for ${TARGET_SYMBOL}`);
@@ -31,15 +31,15 @@ async function main() {
   const pool = await ethers.getContractAt("EXNIHILOPool", poolAddr!);
 
   await usdc.approve(poolAddr!, ethers.MaxUint256);
-  const memeAddr = await pool.underlyingMeme();
-  const meme = await ethers.getContractAt("MockERC20", memeAddr);
-  await meme.approve(poolAddr!, ethers.MaxUint256);
+  const tokenAddr = await pool.underlyingToken();
+  const token = await ethers.getContractAt("MockERC20", tokenAddr);
+  await token.approve(poolAddr!, ethers.MaxUint256);
 
   // Open long FIRST at current price
   await pool.openLong(ethers.parseUnits("100", 6), 0n);
   console.log("Opened long position");
 
-  // Then pump price: big USDC→meme swap raises backedAirUsd → long is now in profit
+  // Then pump price: big USDC→token swap raises backedAirUsd → long is now in profit
   await pool.swap(ethers.parseUnits("5000", 6), 0n, false);
   console.log("Price pumped → long now in profit");
 

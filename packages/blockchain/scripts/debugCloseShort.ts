@@ -24,10 +24,10 @@ async function main() {
   const trader2 = signers[4];
 
   const USDC = 10_000n * 10n**6n;
-  const MEME = 1_000_000n * 10n**18n;
+  const TOKEN = 1_000_000n * 10n**18n;
 
   const MockERC20F = await ethers.getContractFactory("MockERC20");
-  const memeToken = await MockERC20F.connect(deployer).deploy("PEPE", "PEPE", 18);
+  const baseToken = await MockERC20F.connect(deployer).deploy("PEPE", "PEPE", 18);
   const usdc = await MockERC20F.connect(deployer).deploy("USD Coin", "USDC", 6);
   const positionNFT = await (await ethers.getContractFactory("PositionNFT")).connect(deployer).deploy();
 
@@ -38,12 +38,12 @@ async function main() {
 
   await patchImmutableAddress(await lpNft.getAddress(), throwaway.address, await factory.getAddress());
 
-  await memeToken.mint(deployer.address, MEME);
+  await baseToken.mint(deployer.address, TOKEN);
   await usdc.mint(deployer.address, USDC);
-  await memeToken.connect(deployer).approve(await factory.getAddress(), ethers.MaxUint256);
+  await baseToken.connect(deployer).approve(await factory.getAddress(), ethers.MaxUint256);
   await usdc.connect(deployer).approve(await factory.getAddress(), ethers.MaxUint256);
 
-  const tx = await factory.connect(deployer).createMarket(await memeToken.getAddress(), USDC, MEME, 0n, 0n);
+  const tx = await factory.connect(deployer).createMarket(await baseToken.getAddress(), USDC, TOKEN, 0n, 0n);
   const receipt = await tx.wait();
   const log = receipt!.logs.map(l => { try { return factory.interface.parseLog(l); } catch { return null; } }).find(l => l?.name === "MarketCreated")!;
   const poolAddr = log.args.pool;
@@ -57,21 +57,21 @@ async function main() {
   const shortLog = shortReceipt!.logs.map(l => { try { return pool.interface.parseLog(l); } catch { return null; } }).find(l => l?.name === "ShortOpened")!;
   const nftId = shortLog.args.nftId;
   console.log("Short opened. nftId:", nftId);
-  console.log("  airMemeMinted:", shortLog.args.airMemeMinted.toString());
+  console.log("  airTokenMinted:", shortLog.args.airTokenMinted.toString());
   console.log("  airUsdLocked:", shortLog.args.airUsdLocked.toString());
 
   const pos = await positionNFT.getPosition(nftId);
-  console.log("Position airMemeMinted:", pos.airMemeMinted.toString());
+  console.log("Position airTokenMinted:", pos.airTokenMinted.toString());
   console.log("Position lockedAmount (airUsd):", pos.lockedAmount.toString());
 
   const airUsdAddr = await pool.airUsdToken();
   const airUsd = await ethers.getContractAt("AirToken", airUsdAddr);
-  const airMemeAddr = await pool.airMemeToken();
-  const airMeme = await ethers.getContractAt("AirToken", airMemeAddr);
+  const airTokenAddr = await pool.airToken();
+  const airToken = await ethers.getContractAt("AirToken", airTokenAddr);
 
   console.log("airUsd.totalSupply():", (await airUsd.totalSupply()).toString());
-  console.log("airMeme.totalSupply():", (await airMeme.totalSupply()).toString());
-  console.log("backedAirMeme:", (await pool.backedAirMeme()).toString());
+  console.log("airToken.totalSupply():", (await airToken.totalSupply()).toString());
+  console.log("backedAirToken:", (await pool.backedAirToken()).toString());
   console.log("backedAirUsd:", (await pool.backedAirUsd()).toString());
 
   // Try to close without dump
@@ -84,14 +84,14 @@ async function main() {
   }
 
   // Now dump massively
-  const bigDump = ethers.parseEther("900000"); // 900k meme
-  await memeToken.mint(trader2.address, bigDump);
-  await memeToken.connect(trader2).approve(poolAddr, ethers.MaxUint256);
+  const bigDump = ethers.parseEther("900000"); // 900k tokens
+  await baseToken.mint(trader2.address, bigDump);
+  await baseToken.connect(trader2).approve(poolAddr, ethers.MaxUint256);
   await pool.connect(trader2).swap(bigDump, 0n, true);
   console.log("\nAfter massive dump:");
   console.log("airUsd.totalSupply():", (await airUsd.totalSupply()).toString());
-  console.log("airMeme.totalSupply():", (await airMeme.totalSupply()).toString());
-  console.log("backedAirMeme:", (await pool.backedAirMeme()).toString());
+  console.log("airToken.totalSupply():", (await airToken.totalSupply()).toString());
+  console.log("backedAirToken:", (await pool.backedAirToken()).toString());
   console.log("backedAirUsd:", (await pool.backedAirUsd()).toString());
 
   // Try to close after dump

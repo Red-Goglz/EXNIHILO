@@ -28,11 +28,11 @@ import "@openzeppelin/contracts/utils/Strings.sol";
  * release               →  msg.sender must equal positions[tokenId].pool.
  */
 interface IEXNIHILOPool {
-    function backedAirMeme()  external view returns (uint256);
+    function backedAirToken()  external view returns (uint256);
     function backedAirUsd()   external view returns (uint256);
-    function airMemeToken()   external view returns (address);
+    function airToken()   external view returns (address);
     function airUsdToken()    external view returns (address);
-    function underlyingMeme() external view returns (address);
+    function underlyingToken() external view returns (address);
 }
 
 interface ITokenMeta {
@@ -49,23 +49,23 @@ contract PositionNFT is ERC721Enumerable {
     struct Position {
         bool isLong;
         address pool;
-        /// @dev airMeme for longs, airUsd for shorts
+        /// @dev airToken for longs, airUsd for shorts
         address lockedToken;
-        /// @dev airMemeLocked for longs, airUsdLocked for shorts
+        /// @dev airTokenLocked for longs, airUsdLocked for shorts
         uint256 lockedAmount;
         /// @dev Long only: USDC notional used to open the position
         uint256 usdcIn;
         /// @dev Long only: synthetic airUsd debt minted at open
         uint256 airUsdMinted;
-        /// @dev Short only: synthetic airMeme debt minted at open
-        uint256 airMemeMinted;
+        /// @dev Short only: synthetic airToken debt minted at open
+        uint256 airTokenMinted;
         uint256 feesPaid;
         uint256 openedAt;
     }
 
     /// @dev Live pool data resolved at tokenURI call time.
     struct LiveData {
-        string memeSymbol;   // underlying meme token symbol, e.g. "PEPE"
+        string tokenSymbol;   // underlying token symbol, e.g. "PEPE"
         bool   pnlReady;     // false if pool state unavailable
         bool   pnlPositive;
         uint256 pnlAbs;      // abs PnL in USDC 6-dec units
@@ -127,25 +127,25 @@ contract PositionNFT is ERC721Enumerable {
     function mintLong(
         address to,
         address pool,
-        address airMemeToken,
+        address airToken,
         uint256 usdcIn,
         uint256 airUsdMinted,
-        uint256 airMemeLocked,
+        uint256 airTokenLocked,
         uint256 feesPaid
     ) external returns (uint256 tokenId) {
         if (msg.sender != pool) revert OnlyPool();
 
-        IERC20(airMemeToken).safeTransferFrom(pool, address(this), airMemeLocked);
+        IERC20(airToken).safeTransferFrom(pool, address(this), airTokenLocked);
 
         tokenId = _nextTokenId++;
         _positions[tokenId] = Position({
             isLong: true,
             pool: pool,
-            lockedToken: airMemeToken,
-            lockedAmount: airMemeLocked,
+            lockedToken: airToken,
+            lockedAmount: airTokenLocked,
             usdcIn: usdcIn,
             airUsdMinted: airUsdMinted,
-            airMemeMinted: 0,
+            airTokenMinted: 0,
             feesPaid: feesPaid,
             openedAt: block.timestamp
         });
@@ -157,7 +157,7 @@ contract PositionNFT is ERC721Enumerable {
         address to,
         address pool,
         address airUsdToken,
-        uint256 airMemeMinted,
+        uint256 airTokenMinted,
         uint256 airUsdLocked,
         uint256 feesPaid
     ) external returns (uint256 tokenId) {
@@ -173,7 +173,7 @@ contract PositionNFT is ERC721Enumerable {
             lockedAmount: airUsdLocked,
             usdcIn: 0,
             airUsdMinted: 0,
-            airMemeMinted: airMemeMinted,
+            airTokenMinted: airTokenMinted,
             feesPaid: feesPaid,
             openedAt: block.timestamp
         });
@@ -202,42 +202,42 @@ contract PositionNFT is ERC721Enumerable {
      *      due to pool state issues.
      *
      *      Long PnL:
-     *        airUsdOut = lockedAmount * backedAirUsd / airMeme.totalSupply()
+     *        airUsdOut = lockedAmount * backedAirUsd / airToken.totalSupply()
      *        pnl       = int(airUsdOut) - int(airUsdMinted)
      *
      *      Short PnL (cpAmountIn ceiling approximation):
-     *        denom     = backedAirMeme - airMemeMinted
-     *        cost      = ceil(airUsd.totalSupply() * airMemeMinted / denom)
+     *        denom     = backedAirToken - airTokenMinted
+     *        cost      = ceil(airUsd.totalSupply() * airTokenMinted / denom)
      *        pnl       = int(lockedAmount) - int(cost)
      */
     function _readLive(Position memory pos) internal view returns (LiveData memory ld) {
         // Token symbol (best-effort)
-        try IEXNIHILOPool(pos.pool).underlyingMeme() returns (address meme) {
-            try ITokenMeta(meme).symbol() returns (string memory sym) {
-                ld.memeSymbol = sym;
-            } catch { ld.memeSymbol = "TOKEN"; }
-        } catch { ld.memeSymbol = "TOKEN"; }
+        try IEXNIHILOPool(pos.pool).underlyingToken() returns (address token) {
+            try ITokenMeta(token).symbol() returns (string memory sym) {
+                ld.tokenSymbol = sym;
+            } catch { ld.tokenSymbol = "TOKEN"; }
+        } catch { ld.tokenSymbol = "TOKEN"; }
 
         // Pool reserves for PnL
-        try IEXNIHILOPool(pos.pool).backedAirMeme() returns (uint256 bam) {
+        try IEXNIHILOPool(pos.pool).backedAirToken() returns (uint256 bam) {
             uint256 bau         = IEXNIHILOPool(pos.pool).backedAirUsd();
-            address airMemeAddr = IEXNIHILOPool(pos.pool).airMemeToken();
+            address airTokenAddr = IEXNIHILOPool(pos.pool).airToken();
             address airUsdAddr  = IEXNIHILOPool(pos.pool).airUsdToken();
-            uint256 airMemeSup  = ITokenMeta(airMemeAddr).totalSupply();
+            uint256 airTokenSup  = ITokenMeta(airTokenAddr).totalSupply();
             uint256 airUsdSup   = ITokenMeta(airUsdAddr).totalSupply();
 
             if (pos.isLong) {
-                if (airMemeSup > 0) {
-                    uint256 airUsdOut = (pos.lockedAmount * bau) / airMemeSup;
+                if (airTokenSup > 0) {
+                    uint256 airUsdOut = (pos.lockedAmount * bau) / airTokenSup;
                     int256  raw       = int256(airUsdOut) - int256(pos.airUsdMinted);
                     ld.pnlReady    = true;
                     ld.pnlPositive = raw >= 0;
                     ld.pnlAbs      = raw >= 0 ? uint256(raw) : uint256(-raw);
                 }
             } else {
-                uint256 denom = bam > pos.airMemeMinted ? bam - pos.airMemeMinted : 0;
+                uint256 denom = bam > pos.airTokenMinted ? bam - pos.airTokenMinted : 0;
                 if (denom > 0) {
-                    uint256 cost = (airUsdSup * pos.airMemeMinted + denom - 1) / denom;
+                    uint256 cost = (airUsdSup * pos.airTokenMinted + denom - 1) / denom;
                     int256  raw  = int256(pos.lockedAmount) - int256(cost);
                     ld.pnlReady    = true;
                     ld.pnlPositive = raw >= 0;
@@ -335,7 +335,7 @@ contract PositionNFT is ERC721Enumerable {
     }
 
     function _svgLongData(Position memory pos, LiveData memory ld) internal pure returns (bytes memory) {
-        string memory lockedLabel = string(abi.encodePacked("LOCKED ", ld.memeSymbol));
+        string memory lockedLabel = string(abi.encodePacked("LOCKED ", ld.tokenSymbol));
         return abi.encodePacked(
             '<text x="20"  y="136" class="f lbl">POSITION SIZE</text>',
             '<text x="210" y="136" class="f lbl">', lockedLabel, "</text>",

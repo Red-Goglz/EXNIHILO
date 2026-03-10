@@ -7,11 +7,11 @@ async function main() {
   const pool = await ethers.getContractAt("EXNIHILOPool", poolAddr);
 
   // Current pool state
-  const backedMeme = await pool.backedAirMeme();
+  const backedToken = await pool.backedAirToken();
   const backedUsd  = await pool.backedAirUsd();
   const lpFees     = await pool.lpFeesAccumulated();
   console.log(`\n=== Current Pool State ===`);
-  console.log(`  backedAirMeme:       ${ethers.formatUnits(backedMeme, 18)} PEPE`);
+  console.log(`  backedAirToken:       ${ethers.formatUnits(backedToken, 18)} PEPE`);
   console.log(`  backedAirUsd:        ${ethers.formatUnits(backedUsd, 6)} USDC`);
   console.log(`  lpFeesAccumulated:   ${ethers.formatUnits(lpFees, 6)} USDC`);
 

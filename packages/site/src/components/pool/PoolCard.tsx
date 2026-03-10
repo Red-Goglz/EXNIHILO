@@ -102,51 +102,51 @@ export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
 
   const { data } = useReadContracts({
     contracts: [
-      { ...poolContract, functionName: "backedAirMeme" },      // 0
+      { ...poolContract, functionName: "backedAirToken" },      // 0
       { ...poolContract, functionName: "backedAirUsd" },       // 1
       { ...poolContract, functionName: "openPositionCount" },  // 2
-      { ...poolContract, functionName: "underlyingMeme" },     // 3
+      { ...poolContract, functionName: "underlyingToken" },     // 3
       { ...poolContract, functionName: "longOpenInterest" },   // 4
       { ...poolContract, functionName: "shortOpenInterest" },  // 5
     ],
   });
 
-  const backedAirMeme      = data?.[0]?.result as bigint | undefined;
+  const backedAirToken      = data?.[0]?.result as bigint | undefined;
   const backedAirUsd       = data?.[1]?.result as bigint | undefined;
   const openPositionCount  = data?.[2]?.result as bigint | undefined;
-  const underlyingMeme     = data?.[3]?.result as `0x${string}` | undefined;
+  const underlyingToken     = data?.[3]?.result as `0x${string}` | undefined;
   const longOpenInterest   = data?.[4]?.result as bigint | undefined;
   const shortOpenInterest  = data?.[5]?.result as bigint | undefined;
 
   const { data: metaData } = useReadContracts({
-    contracts: underlyingMeme
+    contracts: underlyingToken
       ? [
-          { address: underlyingMeme, abi: erc20Abi, functionName: "symbol" },
-          { address: underlyingMeme, abi: erc20Abi, functionName: "decimals" },
+          { address: underlyingToken, abi: erc20Abi, functionName: "symbol" },
+          { address: underlyingToken, abi: erc20Abi, functionName: "decimals" },
         ]
       : [],
-    query: { enabled: !!underlyingMeme },
+    query: { enabled: !!underlyingToken },
   });
 
   const symbol   = (metaData?.[0]?.result as string | undefined) ?? "…";
   const decimals = (metaData?.[1]?.result as number | undefined) ?? 18;
 
   const priceRaw =
-    backedAirMeme !== undefined &&
-    backedAirMeme > 0n &&
+    backedAirToken !== undefined &&
+    backedAirToken > 0n &&
     backedAirUsd !== undefined
-      ? (backedAirUsd * 10n ** BigInt(decimals)) / backedAirMeme
+      ? (backedAirUsd * 10n ** BigInt(decimals)) / backedAirToken
       : undefined;
 
   const price = priceRaw !== undefined ? formatUsdc(priceRaw) : "—";
 
-  const memeValueRaw =
-    backedAirMeme !== undefined && priceRaw !== undefined
-      ? (backedAirMeme * priceRaw) / 10n ** BigInt(decimals)
+  const tokenValueRaw =
+    backedAirToken !== undefined && priceRaw !== undefined
+      ? (backedAirToken * priceRaw) / 10n ** BigInt(decimals)
       : undefined;
   const totalTvlRaw =
-    memeValueRaw !== undefined && backedAirUsd !== undefined
-      ? memeValueRaw + backedAirUsd
+    tokenValueRaw !== undefined && backedAirUsd !== undefined
+      ? tokenValueRaw + backedAirUsd
       : undefined;
   const totalTvl = totalTvlRaw !== undefined ? formatUsdcCompact(totalTvlRaw) : "—";
 

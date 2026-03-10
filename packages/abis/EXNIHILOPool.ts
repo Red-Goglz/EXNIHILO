@@ -3,7 +3,7 @@ export const exnihiloPoolAbi = [
     "inputs": [
       {
         "internalType": "address",
-        "name": "airMemeToken_",
+        "name": "airToken_",
         "type": "address"
       },
       {
@@ -13,7 +13,7 @@ export const exnihiloPoolAbi = [
       },
       {
         "internalType": "address",
-        "name": "underlyingMeme_",
+        "name": "underlyingToken_",
         "type": "address"
       },
       {
@@ -230,7 +230,7 @@ export const exnihiloPoolAbi = [
       {
         "indexed": false,
         "internalType": "uint256",
-        "name": "memeAmount",
+        "name": "tokenAmount",
         "type": "uint256"
       },
       {
@@ -242,7 +242,7 @@ export const exnihiloPoolAbi = [
       {
         "indexed": false,
         "internalType": "uint256",
-        "name": "backedAirMeme",
+        "name": "backedAirToken",
         "type": "uint256"
       },
       {
@@ -267,7 +267,7 @@ export const exnihiloPoolAbi = [
       {
         "indexed": false,
         "internalType": "uint256",
-        "name": "memeAmount",
+        "name": "tokenAmount",
         "type": "uint256"
       },
       {
@@ -341,7 +341,7 @@ export const exnihiloPoolAbi = [
       {
         "indexed": false,
         "internalType": "uint256",
-        "name": "airMemeLocked",
+        "name": "airTokenLocked",
         "type": "uint256"
       },
       {
@@ -378,7 +378,7 @@ export const exnihiloPoolAbi = [
       {
         "indexed": false,
         "internalType": "uint256",
-        "name": "memeDelivered",
+        "name": "tokenDelivered",
         "type": "uint256"
       }
     ],
@@ -459,7 +459,7 @@ export const exnihiloPoolAbi = [
       {
         "indexed": false,
         "internalType": "uint256",
-        "name": "airMemeBurned",
+        "name": "airTokenBurned",
         "type": "uint256"
       }
     ],
@@ -484,7 +484,7 @@ export const exnihiloPoolAbi = [
       {
         "indexed": false,
         "internalType": "uint256",
-        "name": "airMemeMinted",
+        "name": "airTokenMinted",
         "type": "uint256"
       },
       {
@@ -521,7 +521,7 @@ export const exnihiloPoolAbi = [
       {
         "indexed": false,
         "internalType": "uint256",
-        "name": "memePaid",
+        "name": "tokenPaid",
         "type": "uint256"
       },
       {
@@ -575,7 +575,7 @@ export const exnihiloPoolAbi = [
     "inputs": [
       {
         "internalType": "uint256",
-        "name": "memeAmount",
+        "name": "tokenAmount",
         "type": "uint256"
       },
       {
@@ -591,7 +591,7 @@ export const exnihiloPoolAbi = [
   },
   {
     "inputs": [],
-    "name": "airMemeToken",
+    "name": "airToken",
     "outputs": [
       {
         "internalType": "contract IAirToken",
@@ -617,7 +617,7 @@ export const exnihiloPoolAbi = [
   },
   {
     "inputs": [],
-    "name": "backedAirMeme",
+    "name": "backedAirToken",
     "outputs": [
       {
         "internalType": "uint256",
@@ -835,7 +835,7 @@ export const exnihiloPoolAbi = [
       },
       {
         "internalType": "uint256",
-        "name": "minAirMemeOut",
+        "name": "minAirTokenOut",
         "type": "uint256"
       }
     ],
@@ -910,7 +910,7 @@ export const exnihiloPoolAbi = [
       },
       {
         "internalType": "bool",
-        "name": "memeToUsdc",
+        "name": "tokenToUsdc",
         "type": "bool"
       }
     ],
@@ -1026,7 +1026,7 @@ export const exnihiloPoolAbi = [
       },
       {
         "internalType": "bool",
-        "name": "memeToUsdc",
+        "name": "tokenToUsdc",
         "type": "bool"
       }
     ],
@@ -1050,7 +1050,7 @@ export const exnihiloPoolAbi = [
   },
   {
     "inputs": [],
-    "name": "underlyingMeme",
+    "name": "underlyingToken",
     "outputs": [
       {
         "internalType": "contract IERC20",

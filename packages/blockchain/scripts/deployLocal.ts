@@ -78,10 +78,10 @@ async function main() {
   }
   console.log("Factory:     ", factoryAddress, "(LpNFT.factory matches — no patch needed)");
 
-  // 5. Deploy meme tokens
-  const memeTokens: { name: string; symbol: string; contract: any; address: string }[] = [];
+  // 5. Deploy base tokens
+  const baseTokens: { name: string; symbol: string; contract: any; address: string }[] = [];
 
-  const memeSpecs = [
+  const tokenSpecs = [
     { name: "Arena Token",         symbol: "ARENA"   },
     { name: "No Chill Token",     symbol: "NOCHILL" },
     { name: "Ragoogle",           symbol: "RGOGLZ"  },
@@ -89,11 +89,11 @@ async function main() {
     { name: "Wrapped AVAX",       symbol: "WAVAX"   },
   ];
 
-  for (const spec of memeSpecs) {
+  for (const spec of tokenSpecs) {
     const token = await MockERC20F.connect(deployer).deploy(spec.name, spec.symbol, 18);
     await token.waitForDeployment();
     const addr = await token.getAddress();
-    memeTokens.push({ ...spec, contract: token, address: addr });
+    baseTokens.push({ ...spec, contract: token, address: addr });
     console.log(`Mock${spec.symbol.padEnd(7)}: `, addr);
   }
 
@@ -103,15 +103,15 @@ async function main() {
   const recipients = [deployer, treasury, user1, user2];
 
   const USDC_MINT  = 10_000_000n * 1_000_000n;        // 10M USDC (6 dec)
-  const TOKEN_MINT = 10_000_000n * 10n ** 18n;         // 10M of each meme (18 dec)
+  const TOKEN_MINT = 10_000_000n * 10n ** 18n;         // 10M of each token (18 dec)
 
   for (const r of recipients) {
     await (usdc as any).connect(deployer).mint(r.address, USDC_MINT);
-    for (const t of memeTokens) {
+    for (const t of baseTokens) {
       await (t.contract as any).connect(deployer).mint(r.address, TOKEN_MINT);
     }
   }
-  console.log("Minted 10M USDC + 10M of each meme token to deployer, treasury, user1, user2");
+  console.log("Minted 10M USDC + 10M of each base token to deployer, treasury, user1, user2");
 
   // 7. Create markets with varied LP sizes
   //    Each market is seeded by deployer (who becomes the LP NFT holder).
@@ -134,10 +134,10 @@ async function main() {
   const poolAddresses: Record<string, string> = {};
 
   for (const [symbol, usdcSeed, tokenSeed, feeBps] of marketSpecs) {
-    const meme = memeTokens.find(t => t.symbol === symbol)!;
+    const baseToken = baseTokens.find(t => t.symbol === symbol)!;
 
     await usdc.connect(deployer).approve(factoryAddress, usdcSeed);
-    await meme.contract.connect(deployer).approve(factoryAddress, tokenSeed);
+    await baseToken.contract.connect(deployer).approve(factoryAddress, tokenSeed);
 
     // createMarket uses the factory's defaultSwapFeeBps unless overridden.
     // We re-deploy the factory without per-market fee override, so set it via
@@ -146,7 +146,7 @@ async function main() {
     // factory default (100 bps = 1%) for all except WAVAX which we leave at 1%
     // (minor difference — fee tiers would need factory support to differentiate).
     const tx = await factory.connect(deployer).createMarket(
-      meme.address,
+      baseToken.address,
       usdcSeed,
       tokenSeed,
       0n, // maxPositionUsd — no cap
@@ -176,7 +176,7 @@ async function main() {
     positionNFT: positionNFTAddress,
     lpNFT:       lpNFTAddress,
     usdc:        usdcAddress,
-    testMeme:    memeTokens[0].address, // ARENA as the "default" test meme
+    testToken:   baseTokens[0].address, // ARENA as the "default" test token
     treasury:    treasury.address,
     deployer:    deployer.address,
   };
@@ -212,7 +212,7 @@ async function main() {
     console.log(`\n${w.label}`);
     console.log(`  Address : ${w.address}`);
     console.log(`  Key     : ${w.key}`);
-    console.log(`  Balance : 10,000 ETH (native) · 10,000,000 USDC · 10M of each meme`);
+    console.log(`  Balance : 10,000 ETH (native) · 10,000,000 USDC · 10M of each token`);
   }
   console.log("\n  Network : localhost:8545  (chain ID 31337)");
   console.log("─────────────────────────────────────────────────────────");

@@ -25,31 +25,31 @@ function CreateContent() {
   const queryClient = useQueryClient();
   const addrs = getAddresses(chainId);
 
-  const [memeAddress, setMemeAddress] = useState("");
+  const [tokenAddress, setTokenAddress] = useState("");
   const [seedUsdc, setSeedUsdc] = useState("");
-  const [seedMeme, setSeedMeme] = useState("");
+  const [seedToken, setSeedToken] = useState("");
   const [maxPositionUsd, setMaxPositionUsd] = useState("");
   const [maxPositionBps, setMaxPositionBps] = useState("");
 
-  const memeAddr = (isAddress(memeAddress) ? memeAddress : undefined) as
+  const tokenAddr = (isAddress(tokenAddress) ? tokenAddress : undefined) as
     | `0x${string}`
     | undefined;
 
   const { data: tokenMeta } = useReadContracts({
-    contracts: memeAddr
+    contracts: tokenAddr
       ? [
-          { address: memeAddr, abi: erc20Abi, functionName: "symbol" },
-          { address: memeAddr, abi: erc20Abi, functionName: "decimals" },
+          { address: tokenAddr, abi: erc20Abi, functionName: "symbol" },
+          { address: tokenAddr, abi: erc20Abi, functionName: "decimals" },
         ]
       : [],
-    query: { enabled: !!memeAddr },
+    query: { enabled: !!tokenAddr },
   });
 
-  const memeSymbol = (tokenMeta?.[0]?.result as string | undefined) ?? "???";
-  const memeDecimals = (tokenMeta?.[1]?.result as number | undefined) ?? 18;
+  const tokenSymbol = (tokenMeta?.[0]?.result as string | undefined) ?? "???";
+  const tokenDecimals = (tokenMeta?.[1]?.result as number | undefined) ?? 18;
 
   const seedUsdcRaw = parseUnits(seedUsdc, 6);
-  const seedMemeRaw = parseUnits(seedMeme, memeDecimals);
+  const seedTokenRaw = parseUnits(seedToken, tokenDecimals);
   const maxPosUsdRaw = parseUnits(maxPositionUsd || "0", 6);
   const maxPosBpsRaw = BigInt(maxPositionBps || "0");
 
@@ -57,7 +57,7 @@ function CreateContent() {
 
   const { data: allowances, refetch: refetchAllowances } = useReadContracts({
     contracts:
-      address && memeAddr
+      address && tokenAddr
         ? [
             {
               address: addrs.usdc,
@@ -66,38 +66,38 @@ function CreateContent() {
               args: [address, factoryAddr],
             },
             {
-              address: memeAddr,
+              address: tokenAddr,
               abi: erc20Abi,
               functionName: "allowance",
               args: [address, factoryAddr],
             },
           ]
         : [],
-    query: { enabled: !!address && !!memeAddr },
+    query: { enabled: !!address && !!tokenAddr },
   });
 
   const usdcAllowance = allowances?.[0]?.result as bigint | undefined;
-  const memeAllowance = allowances?.[1]?.result as bigint | undefined;
-  const allowancesLoaded = usdcAllowance !== undefined && memeAllowance !== undefined;
+  const tokenAllowance = allowances?.[1]?.result as bigint | undefined;
+  const allowancesLoaded = usdcAllowance !== undefined && tokenAllowance !== undefined;
 
   const needsUsdcApproval = allowancesLoaded && seedUsdcRaw > usdcAllowance!;
-  const needsMemeApproval = allowancesLoaded && seedMemeRaw > memeAllowance!;
+  const needsTokenApproval = allowancesLoaded && seedTokenRaw > tokenAllowance!;
 
   const { writeContract: writeUsdcApprove, data: usdcApproveHash, isPending: usdcApprovePending } = useWriteContract();
   const { isLoading: usdcApproveConfirming, isSuccess: usdcApproveSuccess } =
     useWaitForTransactionReceipt({ hash: usdcApproveHash });
 
-  const { writeContract: writeMemeApprove, data: memeApproveHash, isPending: memeApprovePending } = useWriteContract();
-  const { isLoading: memeApproveConfirming, isSuccess: memeApproveSuccess } =
-    useWaitForTransactionReceipt({ hash: memeApproveHash });
+  const { writeContract: writeTokenApprove, data: tokenApproveHash, isPending: tokenApprovePending } = useWriteContract();
+  const { isLoading: tokenApproveConfirming, isSuccess: tokenApproveSuccess } =
+    useWaitForTransactionReceipt({ hash: tokenApproveHash });
 
   useEffect(() => {
     if (usdcApproveSuccess) refetchAllowances();
   }, [usdcApproveSuccess]);
 
   useEffect(() => {
-    if (memeApproveSuccess) refetchAllowances();
-  }, [memeApproveSuccess]);
+    if (tokenApproveSuccess) refetchAllowances();
+  }, [tokenApproveSuccess]);
 
   const {
     writeContract: writeCreate,
@@ -139,11 +139,11 @@ function CreateContent() {
     ? "success"
     : "idle";
 
-  const memeApproveStatus = memeApprovePending
+  const tokenApproveStatus = tokenApprovePending
     ? "pending"
-    : memeApproveConfirming
+    : tokenApproveConfirming
     ? "confirming"
-    : memeApproveSuccess
+    : tokenApproveSuccess
     ? "success"
     : "idle";
 
@@ -155,24 +155,24 @@ function CreateContent() {
     ? "success"
     : "idle";
 
-  const isValid = memeAddr !== undefined && seedUsdcRaw > 0n && seedMemeRaw > 0n;
+  const isValid = tokenAddr !== undefined && seedUsdcRaw > 0n && seedTokenRaw > 0n;
 
   const impliedPrice =
-    seedUsdcRaw > 0n && seedMemeRaw > 0n
-      ? formatUsdc((seedUsdcRaw * 10n ** BigInt(memeDecimals)) / seedMemeRaw)
+    seedUsdcRaw > 0n && seedTokenRaw > 0n
+      ? formatUsdc((seedUsdcRaw * 10n ** BigInt(tokenDecimals)) / seedTokenRaw)
       : null;
 
   const showUsdcApprove = isValid && allowancesLoaded && needsUsdcApproval;
-  const showMemeApprove =
-    isValid && allowancesLoaded && !needsUsdcApproval && needsMemeApproval;
+  const showTokenApprove =
+    isValid && allowancesLoaded && !needsUsdcApproval && needsTokenApproval;
   const showCreate =
-    isValid && allowancesLoaded && !needsUsdcApproval && !needsMemeApproval;
+    isValid && allowancesLoaded && !needsUsdcApproval && !needsTokenApproval;
   const showFillIn = !isValid;
   const showLoadingApproval = isValid && !allowancesLoaded;
 
-  const testMemeAddr =
+  const testTokenAddr =
     chainId === HARDHAT_CHAIN_ID
-      ? (addrs as Record<string, string>).testMeme ?? null
+      ? (addrs as Record<string, string>).testToken ?? null
       : null;
 
   return (
@@ -199,12 +199,12 @@ function CreateContent() {
           marginBottom: 24,
         }}
       >
-        Launch a permissionless meme/USDC trading pool. You set the initial
+        Launch a permissionless token/USDC trading pool. You set the initial
         price ratio with seed liquidity.
       </p>
 
       {/* Dev hint banner */}
-      {testMemeAddr && (
+      {testTokenAddr && (
         <div
           style={{
             background: "rgba(255,59,48,0.06)",
@@ -232,10 +232,10 @@ function CreateContent() {
               marginBottom: 8,
             }}
           >
-            {testMemeAddr}
+            {testTokenAddr}
           </p>
           <button
-            onClick={() => setMemeAddress(testMemeAddr)}
+            onClick={() => setTokenAddress(testTokenAddr)}
             style={{
               fontFamily: "var(--font-mono)",
               fontSize: "0.6rem",
@@ -291,7 +291,7 @@ function CreateContent() {
           }}
         />
 
-        {/* Meme token address */}
+        {/* Token address */}
         <div className="flex flex-col gap-2">
           <label
             style={{
@@ -302,17 +302,17 @@ function CreateContent() {
               textTransform: "uppercase",
             }}
           >
-            Meme Token Address
+            Token Address
           </label>
           <input
             type="text"
-            value={memeAddress}
-            onChange={(e) => setMemeAddress(e.target.value)}
+            value={tokenAddress}
+            onChange={(e) => setTokenAddress(e.target.value)}
             placeholder="0x…"
             className="input-terminal"
             style={{ letterSpacing: "0.05em" }}
           />
-          {memeAddr && memeSymbol !== "???" && (
+          {tokenAddr && tokenSymbol !== "???" && (
             <p
               style={{
                 fontFamily: "var(--font-mono)",
@@ -321,10 +321,10 @@ function CreateContent() {
                 letterSpacing: "0.05em",
               }}
             >
-              ✓ {memeSymbol} ({memeDecimals} decimals)
+              ✓ {tokenSymbol} ({tokenDecimals} decimals)
             </p>
           )}
-          {memeAddress && !memeAddr && (
+          {tokenAddress && !tokenAddr && (
             <p
               style={{
                 fontFamily: "var(--font-mono)",
@@ -348,14 +348,14 @@ function CreateContent() {
           symbol="USDC"
         />
 
-        {/* Seed Meme */}
+        {/* Seed Token */}
         <TokenInput
-          label={`Seed ${memeSymbol}`}
-          value={seedMeme}
-          onChange={setSeedMeme}
-          tokenAddress={memeAddr}
-          decimals={memeDecimals}
-          symbol={memeSymbol}
+          label={`Seed ${tokenSymbol}`}
+          value={seedToken}
+          onChange={setSeedToken}
+          tokenAddress={tokenAddr}
+          decimals={tokenDecimals}
+          symbol={tokenSymbol}
         />
 
         {/* Implied price */}
@@ -392,7 +392,7 @@ function CreateContent() {
               <span
                 style={{ color: "var(--muted)", fontSize: "0.65rem" }}
               >
-                per {memeSymbol}
+                per {tokenSymbol}
               </span>
             </span>
           </div>
@@ -494,16 +494,16 @@ function CreateContent() {
           />
         )}
 
-        {showMemeApprove && (
+        {showTokenApprove && (
           <TxButton
-            idleLabel={`Approve ${memeSymbol}`}
-            status={memeApproveStatus}
+            idleLabel={`Approve ${tokenSymbol}`}
+            status={tokenApproveStatus}
             onClick={() =>
-              writeMemeApprove({
-                address: memeAddr!,
+              writeTokenApprove({
+                address: tokenAddr!,
                 abi: erc20Abi,
                 functionName: "approve",
-                args: [factoryAddr, seedMemeRaw],
+                args: [factoryAddr, seedTokenRaw],
               })
             }
             style={{ width: "100%", justifyContent: "center" }}
@@ -520,7 +520,7 @@ function CreateContent() {
                 address: factoryAddr,
                 abi: exnihiloFactoryAbi,
                 functionName: "createMarket",
-                args: [memeAddr!, seedUsdcRaw, seedMemeRaw, maxPosUsdRaw, maxPosBpsRaw],
+                args: [tokenAddr!, seedUsdcRaw, seedTokenRaw, maxPosUsdRaw, maxPosBpsRaw],
               })
             }
             style={{ width: "100%", justifyContent: "center" }}

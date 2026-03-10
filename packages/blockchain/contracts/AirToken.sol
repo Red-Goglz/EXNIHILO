@@ -6,7 +6,7 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 /**
  * @title AirToken
  * @notice ERC-20 wrapper token used inside an EXNIHILO pool.
- *         Deployed twice per market: once as airMeme, once as airUsd.
+ *         Deployed twice per market: once as airToken, once as airUsd.
  *         Only the owning pool may mint or burn tokens.
  *
  * Deployment flow (handled by Factory):
@@ -43,7 +43,7 @@ contract AirToken is ERC20 {
     /**
      * @param name_     Token name  (e.g. "airPEPE" or "airPEPEUsd")
      * @param symbol_   Token symbol (same convention as name)
-     * @param decimals_ Decimals matching the underlying asset (18 for meme, 6 for USDC)
+     * @param decimals_ Decimals matching the underlying asset (18 for token, 6 for USDC)
      */
     constructor(
         string memory name_,

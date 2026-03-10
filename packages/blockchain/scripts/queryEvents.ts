@@ -9,8 +9,8 @@ async function main() {
   const swaps = await pool.queryFilter(pool.filters.Swap(), 0);
   console.log(`\n=== Swaps (${swaps.length}) ===`);
   for (const e of swaps) {
-    const { amountIn, amountOut, memeToUsdc } = e.args;
-    if (memeToUsdc) {
+    const { amountIn, amountOut, tokenToUsdc } = e.args;
+    if (tokenToUsdc) {
       console.log(`  PEPE→USDC  in=${ethers.formatUnits(amountIn, 18)} PEPE  out=${ethers.formatUnits(amountOut, 6)} USDC  (block ${e.blockNumber})`);
     } else {
       console.log(`  USDC→PEPE  in=${ethers.formatUnits(amountIn, 6)} USDC  out=${ethers.formatUnits(amountOut, 18)} PEPE  (block ${e.blockNumber})`);
@@ -20,8 +20,8 @@ async function main() {
   const longs = await pool.queryFilter(pool.filters.LongOpened(), 0);
   console.log(`\n=== LongOpened (${longs.length}) ===`);
   for (const e of longs) {
-    const { nftId, usdcFee, lockedAirMeme } = e.args;
-    console.log(`  nftId=${nftId}  fee=${ethers.formatUnits(usdcFee, 6)} USDC  locked=${ethers.formatUnits(lockedAirMeme, 18)} airMeme`);
+    const { nftId, usdcFee, lockedAirToken } = e.args;
+    console.log(`  nftId=${nftId}  fee=${ethers.formatUnits(usdcFee, 6)} USDC  locked=${ethers.formatUnits(lockedAirToken, 18)} airToken`);
   }
 
   const closes = await pool.queryFilter(pool.filters.LongClosed(), 0);

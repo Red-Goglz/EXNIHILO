@@ -26,10 +26,10 @@ interface IAirToken is IERC20 {
  *      it without import gymnastics.
  *
  *      Fields used per side:
- *        Long  — lockedToken = airMeme, lockedAmount = airMemeLocked,
+ *        Long  — lockedToken = airToken, lockedAmount = airTokenLocked,
  *                usdcIn, airUsdMinted, feesPaid
  *        Short — lockedToken = airUsd,  lockedAmount = airUsdLocked,
- *                airMemeMinted, feesPaid
+ *                airTokenMinted, feesPaid
  */
 struct Position {
     bool    isLong;
@@ -38,7 +38,7 @@ struct Position {
     uint256 lockedAmount;
     uint256 usdcIn;
     uint256 airUsdMinted;
-    uint256 airMemeMinted;
+    uint256 airTokenMinted;
     uint256 feesPaid;
     uint256 openedAt;
 }
@@ -50,10 +50,10 @@ interface IPositionNFT {
     function mintLong(
         address to,
         address pool,
-        address airMemeToken,
+        address airToken,
         uint256 usdcIn,
         uint256 airUsdMinted,
-        uint256 airMemeLocked,
+        uint256 airTokenLocked,
         uint256 feesPaid
     ) external returns (uint256 tokenId);
 
@@ -61,7 +61,7 @@ interface IPositionNFT {
         address to,
         address pool,
         address airUsdToken,
-        uint256 airMemeMinted,
+        uint256 airTokenMinted,
         uint256 airUsdLocked,
         uint256 feesPaid
     ) external returns (uint256 tokenId);
@@ -88,32 +88,32 @@ interface ILpNFT {
  * @title  EXNIHILOPool
  * @author EXNIHILO
  * @notice Single-market AMM pool for the EXNIHILO "Out of Thin Air" trade
- *         platform. One pool is created per meme/USDC market by the factory.
+ *         platform. One pool is created per token/USDC market by the factory.
  *
  * ── AMM Modes ────────────────────────────────────────────────────────────────
  *
  *   x and y denote the two pool RESERVES (not trade direction — either side
  *   can be input or output depending on the operation).
  *
- *   SWAP-1  Normal swap          x = backedAirMeme,          y = backedAirUsd
- *   SWAP-2  Long-open/Short-close x = backedAirMeme,         y = airUsd.totalSupply()
- *   SWAP-3  Short-open/Long-close x = airMeme.totalSupply(), y = backedAirUsd
+ *   SWAP-1  Normal swap          x = backedAirToken,          y = backedAirUsd
+ *   SWAP-2  Long-open/Short-close x = backedAirToken,         y = airUsd.totalSupply()
+ *   SWAP-3  Short-open/Long-close x = airToken.totalSupply(), y = backedAirUsd
  *
  *   All three modes use the standard constant-product formula:
  *     amountOut = amountIn * reserveOut / (reserveIn + amountIn)
  *
  * ── Reserve Accounting ───────────────────────────────────────────────────────
  *
- *   backedAirMeme  Tracks the amount of airMeme that has real underlying meme
- *                  collateral behind it.  Increases on LP deposits and on meme
- *                  token swaps-in; decreases on meme swaps-out and on openLong
+ *   backedAirToken  Tracks the amount of airToken that has real underlying token
+ *                  collateral behind it.  Increases on LP deposits and on token
+ *                  swaps-in; decreases on token swaps-out and on openLong
  *                  (collateral leaves to PositionNFT custody).
  *
  *   backedAirUsd   Same for the airUsd / USDC side.  Increases on LP deposits
  *                  and USDC swaps-in; decreases on USDC swaps-out and on
  *                  openShort (collateral leaves to PositionNFT custody).
  *
- *   Synthetic mints (openLong mints airUsd, openShort mints airMeme) do NOT
+ *   Synthetic mints (openLong mints airUsd, openShort mints airToken) do NOT
  *   touch the backed reserves — they inflate totalSupply only.
  *
  * ── Fee Structure ────────────────────────────────────────────────────────────
@@ -131,7 +131,7 @@ interface ILpNFT {
  *
  *   - ReentrancyGuard  on every state-changing external function.
  *   - CEI pattern      throughout: state written before any external call.
- *   - Reserve invariant: backedAirMeme ≤ airMeme.totalSupply() and vice versa,
+ *   - Reserve invariant: backedAirToken ≤ airToken.totalSupply() and vice versa,
  *                        checked after every operation that touches backed reserves.
  *   - Slippage guards  (minAmountOut) on swap, openLong, openShort.
  */
@@ -152,14 +152,14 @@ contract EXNIHILOPool is ReentrancyGuard {
 
     // ── Immutables ────────────────────────────────────────────────────────────
 
-    /// @notice AirToken wrapping the meme asset (typically 18 decimals).
-    IAirToken public immutable airMemeToken;
+    /// @notice AirToken wrapping the underlying asset (typically 18 decimals).
+    IAirToken public immutable airToken;
 
     /// @notice AirToken wrapping USDC (6 decimals).
     IAirToken public immutable airUsdToken;
 
-    /// @notice Raw meme ERC-20 held as collateral by this pool.
-    IERC20 public immutable underlyingMeme;
+    /// @notice Raw underlying ERC-20 held as collateral by this pool.
+    IERC20 public immutable underlyingToken;
 
     /// @notice USDC ERC-20 (6 decimals) held as collateral by this pool.
     IERC20 public immutable underlyingUsdc;
@@ -190,8 +190,8 @@ contract EXNIHILOPool is ReentrancyGuard {
 
     // ── Mutable state ─────────────────────────────────────────────────────────
 
-    /// @notice airMeme backed 1 : 1 by deposited underlying meme tokens.
-    uint256 public backedAirMeme;
+    /// @notice airToken backed 1 : 1 by deposited underlying tokens.
+    uint256 public backedAirToken;
 
     /// @notice airUsd backed 1 : 1 by deposited underlying USDC.
     uint256 public backedAirUsd;
@@ -234,15 +234,15 @@ contract EXNIHILOPool is ReentrancyGuard {
 
     event LiquidityAdded(
         address indexed provider,
-        uint256 memeAmount,
+        uint256 tokenAmount,
         uint256 usdcAmount,
-        uint256 backedAirMeme,
+        uint256 backedAirToken,
         uint256 backedAirUsd
     );
 
     event LiquidityRemoved(
         address indexed provider,
-        uint256 memeAmount,
+        uint256 tokenAmount,
         uint256 usdcAmount
     );
 
@@ -259,7 +259,7 @@ contract EXNIHILOPool is ReentrancyGuard {
         address indexed holder,
         uint256 usdcIn,
         uint256 airUsdMinted,
-        uint256 airMemeLocked,
+        uint256 airTokenLocked,
         uint256 feesPaid
     );
 
@@ -273,7 +273,7 @@ contract EXNIHILOPool is ReentrancyGuard {
     event ShortOpened(
         uint256 indexed nftId,
         address indexed holder,
-        uint256 airMemeMinted,
+        uint256 airTokenMinted,
         uint256 airUsdLocked,
         uint256 feesPaid
     );
@@ -282,7 +282,7 @@ contract EXNIHILOPool is ReentrancyGuard {
         uint256 indexed nftId,
         address indexed holder,
         uint256 profit,
-        uint256 airMemeBurned
+        uint256 airTokenBurned
     );
 
     event PositionForceRealized(
@@ -299,13 +299,13 @@ contract EXNIHILOPool is ReentrancyGuard {
         uint256 indexed nftId,
         address indexed holder,
         uint256 usdcPaid,     // == airUsdMinted (synthetic debt settled at par)
-        uint256 memeDelivered
+        uint256 tokenDelivered
     );
 
     event ShortRealized(
         uint256 indexed nftId,
         address indexed holder,
-        uint256 memePaid,     // == airMemeMinted (synthetic debt settled at par)
+        uint256 tokenPaid,     // == airTokenMinted (synthetic debt settled at par)
         uint256 usdcDelivered
     );
 
@@ -337,9 +337,9 @@ contract EXNIHILOPool is ReentrancyGuard {
     // ── Constructor ───────────────────────────────────────────────────────────
 
     /**
-     * @param airMemeToken_     AirToken wrapper for the meme asset.
+     * @param airToken_     AirToken wrapper for the underlying asset.
      * @param airUsdToken_      AirToken wrapper for USDC.
-     * @param underlyingMeme_   Raw meme ERC-20 deposited by LP.
+     * @param underlyingToken_   Raw underlying ERC-20 deposited by LP.
      * @param underlyingUsdc_   USDC ERC-20 (6 dec) deposited by LP.
      * @param positionNFT_      Shared PositionNFT contract.
      * @param lpNftContract_    Shared LpNFT contract.
@@ -350,9 +350,9 @@ contract EXNIHILOPool is ReentrancyGuard {
      * @param swapFeeBps_       Swap fee in bps for all AMM modes (e.g. 100 = 1 %).
      */
     constructor(
-        address airMemeToken_,
+        address airToken_,
         address airUsdToken_,
-        address underlyingMeme_,
+        address underlyingToken_,
         address underlyingUsdc_,
         address positionNFT_,
         address lpNftContract_,
@@ -362,9 +362,9 @@ contract EXNIHILOPool is ReentrancyGuard {
         uint256 maxPositionBps_,
         uint256 swapFeeBps_
     ) {
-        if (airMemeToken_     == address(0)) revert ZeroAddress();
+        if (airToken_     == address(0)) revert ZeroAddress();
         if (airUsdToken_      == address(0)) revert ZeroAddress();
-        if (underlyingMeme_   == address(0)) revert ZeroAddress();
+        if (underlyingToken_   == address(0)) revert ZeroAddress();
         if (underlyingUsdc_   == address(0)) revert ZeroAddress();
         if (positionNFT_      == address(0)) revert ZeroAddress();
         if (lpNftContract_    == address(0)) revert ZeroAddress();
@@ -374,9 +374,9 @@ contract EXNIHILOPool is ReentrancyGuard {
         }
         if (swapFeeBps_ >= BPS_DENOM) revert InvalidSwapFeeBps();
 
-        airMemeToken     = IAirToken(airMemeToken_);
+        airToken     = IAirToken(airToken_);
         airUsdToken      = IAirToken(airUsdToken_);
-        underlyingMeme   = IERC20(underlyingMeme_);
+        underlyingToken   = IERC20(underlyingToken_);
         underlyingUsdc   = IERC20(underlyingUsdc_);
         positionNFT      = IPositionNFT(positionNFT_);
         lpNftContract    = ILpNFT(lpNftContract_);
@@ -388,11 +388,11 @@ contract EXNIHILOPool is ReentrancyGuard {
     }
 
     // =========================================================================
-    // SWAP  (SWAP-1: x = backedAirMeme, y = backedAirUsd)
+    // SWAP  (SWAP-1: x = backedAirToken, y = backedAirUsd)
     // =========================================================================
 
     /**
-     * @notice Swap raw meme tokens for USDC or vice versa.
+     * @notice Swap raw underlying tokens for USDC or vice versa.
      *
      *         The pool auto-wraps the inbound raw token into the matching
      *         airToken (increasing that side's backed reserve) and auto-unwraps
@@ -401,22 +401,22 @@ contract EXNIHILOPool is ReentrancyGuard {
      *         reducing the output-side backed reserve by the fee amount, which
      *         passively grows LP value over time.
      *
-     * @param amountIn     Raw token amount in (meme decimals or USDC 6 dec).
+     * @param amountIn     Raw token amount in (token decimals or USDC 6 dec).
      * @param minAmountOut Slippage guard on the raw output amount.
-     * @param memeToUsdc   true = meme → USDC, false = USDC → meme.
+     * @param tokenToUsdc   true = token → USDC, false = USDC → token.
      */
     function swap(
         uint256 amountIn,
         uint256 minAmountOut,
-        bool memeToUsdc
+        bool tokenToUsdc
     ) external nonReentrant {
         if (amountIn == 0) revert ZeroAmount();
-        if (backedAirMeme == 0 || backedAirUsd == 0) revert InsufficientBackedReserves();
+        if (backedAirToken == 0 || backedAirUsd == 0) revert InsufficientBackedReserves();
 
-        if (memeToUsdc) {
-            _swapMemeToUsdc(amountIn, minAmountOut);
+        if (tokenToUsdc) {
+            _swapTokenToUsdc(amountIn, minAmountOut);
         } else {
-            _swapUsdcToMeme(amountIn, minAmountOut);
+            _swapUsdcToToken(amountIn, minAmountOut);
         }
     }
 
@@ -425,32 +425,32 @@ contract EXNIHILOPool is ReentrancyGuard {
     // =========================================================================
 
     /**
-     * @notice Open a leveraged long on the meme token.
+     * @notice Open a leveraged long on the underlying token.
      *
      *   How leverage works
      *   ──────────────────
      *   The pool mints `usdcAmount` of synthetic airUsd without adding any USDC
      *   backing (totalSupply grows, backedAirUsd stays flat). SWAP-2 then prices
-     *   airMeme against this inflated airUsd supply, so the trader receives more
-     *   airMeme per USDC than the backed ratio would give — that is the leverage.
-     *   The minted airMeme leaves the pool's backed reserves and is locked in the
+     *   airToken against this inflated airUsd supply, so the trader receives more
+     *   airToken per USDC than the backed ratio would give — that is the leverage.
+     *   The minted airToken leaves the pool's backed reserves and is locked in the
      *   PositionNFT. The synthetic airUsd remains as an outstanding debt in
      *   totalSupply until the position is closed or realized.
      *
      *   State changes
      *   ─────────────
-     *     backedAirMeme  −= airMemeOut  (collateral locked away)
+     *     backedAirToken  −= airTokenOut  (collateral locked away)
      *     airUsd supply  += usdcAmount  (synthetic debt created; NOT backed)
      *
      * @param usdcAmount    USDC notional (6 dec). A 5 % fee is charged on top.
-     * @param minAirMemeOut Slippage guard on the airMeme locked in the NFT.
+     * @param minAirTokenOut Slippage guard on the airToken locked in the NFT.
      */
     function openLong(
         uint256 usdcAmount,
-        uint256 minAirMemeOut
+        uint256 minAirTokenOut
     ) external nonReentrant {
         if (usdcAmount == 0) revert ZeroAmount();
-        if (backedAirMeme == 0 || backedAirUsd == 0) revert InsufficientBackedReserves();
+        if (backedAirToken == 0 || backedAirUsd == 0) revert InsufficientBackedReserves();
 
         _checkLeverageCap(usdcAmount);
 
@@ -464,18 +464,18 @@ contract EXNIHILOPool is ReentrancyGuard {
             lpFee       = MIN_POSITION_FEE - protocolFee;
         }
 
-        // SWAP-2: compute airMeme output before any state changes.
+        // SWAP-2: compute airToken output before any state changes.
         // reserveIn  = airUsd.totalSupply() before the synthetic mint below.
-        // reserveOut = backedAirMeme
-        uint256 airMemeOut = _cpAmountOut(
+        // reserveOut = backedAirToken
+        uint256 airTokenOut = _cpAmountOut(
             usdcAmount,
             airUsdToken.totalSupply(),
-            backedAirMeme
+            backedAirToken
         );
 
-        if (airMemeOut == 0) revert ZeroAmount();
-        if (airMemeOut < minAirMemeOut) revert InsufficientOutput(airMemeOut, minAirMemeOut);
-        if (airMemeOut > backedAirMeme) revert InsufficientBackedReserves();
+        if (airTokenOut == 0) revert ZeroAmount();
+        if (airTokenOut < minAirTokenOut) revert InsufficientOutput(airTokenOut, minAirTokenOut);
+        if (airTokenOut > backedAirToken) revert InsufficientBackedReserves();
 
         // ── EFFECTS ───────────────────────────────────────────────────────────
         openPositionCount++;
@@ -488,7 +488,7 @@ contract EXNIHILOPool is ReentrancyGuard {
         airUsdToken.mint(address(this), usdcAmount);
 
         // Collateral leaves the pool's backed reserves into PositionNFT custody.
-        backedAirMeme -= airMemeOut;
+        backedAirToken -= airTokenOut;
 
         // ── INTERACTIONS ──────────────────────────────────────────────────────
         // The notional is NOT pulled — it is represented synthetically by the
@@ -496,24 +496,24 @@ contract EXNIHILOPool is ReentrancyGuard {
         _transferIn(underlyingUsdc, msg.sender, totalFee);
         underlyingUsdc.safeTransfer(protocolTreasury, protocolFee);
 
-        airMemeToken.forceApprove(address(positionNFT), airMemeOut);
+        airToken.forceApprove(address(positionNFT), airTokenOut);
 
         uint256 nftId = positionNFT.mintLong(
             msg.sender,
             address(this),
-            address(airMemeToken),
+            address(airToken),
             usdcAmount,   // usdcIn
             usdcAmount,   // airUsdMinted — synthetic debt owed
-            airMemeOut,   // airMemeLocked
+            airTokenOut,   // airTokenLocked
             totalFee
         );
 
         // Clear any residual approval.
-        airMemeToken.forceApprove(address(positionNFT), 0);
+        airToken.forceApprove(address(positionNFT), 0);
 
         _assertReserveInvariant();
 
-        emit LongOpened(nftId, msg.sender, usdcAmount, usdcAmount, airMemeOut, totalFee);
+        emit LongOpened(nftId, msg.sender, usdcAmount, usdcAmount, airTokenOut, totalFee);
     }
 
     /**
@@ -521,22 +521,22 @@ contract EXNIHILOPool is ReentrancyGuard {
      *
      *   Settlement
      *   ──────────
-     *   The locked airMeme returns from PositionNFT. SWAP-3 prices it against
-     *   (airMeme.totalSupply() − lockedAmount, backedAirUsd). If the resulting
+     *   The locked airToken returns from PositionNFT. SWAP-3 prices it against
+     *   (airToken.totalSupply() − lockedAmount, backedAirUsd). If the resulting
      *   airUsd ≥ the synthetic debt (airUsdMinted), the surplus is unwrapped and
      *   sent to the holder as USDC. The synthetic debt is burned; the returned
-     *   airMeme stays in the pool as fully-backed LP collateral.
+     *   airToken stays in the pool as fully-backed LP collateral.
      *
      *   State changes
      *   ─────────────
-     *     backedAirMeme  += lockedAmount  (airMeme collateral returns to LP reserves)
+     *     backedAirToken  += lockedAmount  (airToken collateral returns to LP reserves)
      *     backedAirUsd   −= surplus       (only the profit USDC exits the pool's backing)
      *     airUsd supply  −= airUsdMinted  (synthetic debt cancelled)
      *     airUsd supply  −= surplus       (backed wrappers burned for USDC paid to holder)
      *
-     *   Note: airMeme wrappers are NOT burned. The underlying meme never left the
-     *   pool, so the returned airMeme wrappers correctly represent LP's restored
-     *   claim on that meme. Burning them would orphan the underlying tokens.
+     *   Note: airToken wrappers are NOT burned. The underlying token never left the
+     *   pool, so the returned airToken wrappers correctly represent LP's restored
+     *   claim on that token. Burning them would orphan the underlying tokens.
      *
      * @param nftId      Position NFT token ID.
      * @param minUsdcOut Slippage guard on USDC profit (surplus after debt).
@@ -550,13 +550,13 @@ contract EXNIHILOPool is ReentrancyGuard {
         if (!pos.isLong) revert PositionNotLong();
 
         // ── CHECKS (before any interaction) ──────────────────────────────────
-        // release() only transfers airMeme; it does not mint or burn, so
+        // release() only transfers airToken; it does not mint or burn, so
         // totalSupply() is identical before and after — safe to compute here.
-        uint256 airMemeSupply = airMemeToken.totalSupply();
-        if (airMemeSupply < pos.lockedAmount) revert PositionUnderwater();
+        uint256 airTokenSupply = airToken.totalSupply();
+        if (airTokenSupply < pos.lockedAmount) revert PositionUnderwater();
         uint256 airUsdOut = _cpAmountOut(
             pos.lockedAmount,
-            airMemeSupply - pos.lockedAmount,
+            airTokenSupply - pos.lockedAmount,
             backedAirUsd
         );
         if (airUsdOut < pos.airUsdMinted) revert PositionUnderwater();
@@ -568,10 +568,10 @@ contract EXNIHILOPool is ReentrancyGuard {
         // ── EFFECTS ───────────────────────────────────────────────────────────
         openPositionCount--;
         longOpenInterest -= pos.airUsdMinted;
-        // The meme collateral returns to LP's backed reserves. The underlying
-        // meme never left the pool, so restoring backedAirMeme correctly
-        // reconciles the returned airMeme wrappers with their real backing.
-        backedAirMeme += pos.lockedAmount;
+        // The token collateral returns to LP's backed reserves. The underlying
+        // token never left the pool, so restoring backedAirToken correctly
+        // reconciles the returned airToken wrappers with their real backing.
+        backedAirToken += pos.lockedAmount;
         // The full surplus exits the pool's backed reserve; it is split between
         // the holder (netSurplus) and the protocol treasury (closeFee).
         backedAirUsd  -= surplus;
@@ -592,19 +592,19 @@ contract EXNIHILOPool is ReentrancyGuard {
 
     /**
      * @notice Realize a long position at par — the holder pays the USDC debt
-     *         and receives the locked meme tokens at whatever price they were
+     *         and receives the locked underlying tokens at whatever price they were
      *         acquired, regardless of market movements.
      *
-     *   This is a non-speculative exit path: no profit or loss on meme price,
+     *   This is a non-speculative exit path: no profit or loss on token price,
      *   the trader simply converts their synthetic debt into real USDC and
-     *   receives the raw meme tokens.
+     *   receives the raw underlying tokens.
      *
      *   State changes
      *   ─────────────
      *     backedAirUsd  += usdcPaid   (synthetic airUsd from openLong now has real backing)
      *     airUsd supply  unchanged    (minted at openLong; stays — now fully backed)
-     *     backedAirMeme  unchanged    (was reduced at open; meme delivered to holder)
-     *     airMeme supply −= locked    (burned on unwrap)
+     *     backedAirToken  unchanged    (was reduced at open; token delivered to holder)
+     *     airToken supply −= locked    (burned on unwrap)
      *
      * @param nftId  Position NFT token ID.
      */
@@ -627,14 +627,14 @@ contract EXNIHILOPool is ReentrancyGuard {
         // EFFECT — safe to write now that the USDC is confirmed received.
         backedAirUsd += pos.airUsdMinted;
 
-        // Release NFT: returns lockedAmount of airMeme to pool.
+        // Release NFT: returns lockedAmount of airToken to pool.
         positionNFT.release(nftId);
 
-        // Burn airMeme wrapper and deliver raw meme to holder.
-        // backedAirMeme was reduced at open; no adjustment needed here because
-        // the delivered meme comes from the LP's original collateral pool.
-        airMemeToken.burn(address(this), pos.lockedAmount);
-        underlyingMeme.safeTransfer(holder, pos.lockedAmount);
+        // Burn airToken wrapper and deliver raw underlying token to holder.
+        // backedAirToken was reduced at open; no adjustment needed here because
+        // the delivered token comes from the LP's original collateral pool.
+        airToken.burn(address(this), pos.lockedAmount);
+        underlyingToken.safeTransfer(holder, pos.lockedAmount);
 
         _assertReserveInvariant();
 
@@ -646,19 +646,19 @@ contract EXNIHILOPool is ReentrancyGuard {
     // =========================================================================
 
     /**
-     * @notice Open a leveraged short on the meme token.
+     * @notice Open a leveraged short on the underlying token.
      *
      *   How leverage works
      *   ──────────────────
-     *   The pool mints synthetic airMeme proportional to the USDC notional at
-     *   the current backed rate. This inflates airMeme totalSupply.
+     *   The pool mints synthetic airToken proportional to the USDC notional at
+     *   the current backed rate. This inflates airToken totalSupply.
      *   The resulting airUsd (real, from backedAirUsd) is locked in
-     *   the PositionNFT. The synthetic airMeme remains as outstanding debt in
+     *   the PositionNFT. The synthetic airToken remains as outstanding debt in
      *   totalSupply until the position is closed or realized.
      *
      *   State changes
      *   ─────────────
-     *     airMeme supply += airMemeMinted  (synthetic debt; NOT backed)
+     *     airToken supply += airTokenMinted  (synthetic debt; NOT backed)
      *     backedAirUsd   -= airUsdOut      (real airUsd locked)
      *
      * @param usdcNotional  Notional size in USDC terms (6 dec). A 5 % fee is charged on top.
@@ -669,7 +669,7 @@ contract EXNIHILOPool is ReentrancyGuard {
         uint256 minAirUsdOut
     ) external nonReentrant {
         if (usdcNotional == 0) revert ZeroAmount();
-        if (backedAirMeme == 0 || backedAirUsd == 0) revert InsufficientBackedReserves();
+        if (backedAirToken == 0 || backedAirUsd == 0) revert InsufficientBackedReserves();
 
         _checkLeverageCap(usdcNotional);
 
@@ -683,19 +683,19 @@ contract EXNIHILOPool is ReentrancyGuard {
             lpFee       = MIN_POSITION_FEE - protocolFee;
         }
 
-        // Compute synthetic airMeme to mint using the current SWAP-1 reference rate:
-        //   airMemeMinted = usdcNotional * airMeme.totalSupply() / backedAirUsd
-        // This gives the airMeme amount that is worth usdcNotional at backed prices.
-        uint256 airMemeSupplyBefore = airMemeToken.totalSupply();
-        if (airMemeSupplyBefore == 0) revert InsufficientBackedReserves();
+        // Compute synthetic airToken to mint using the current SWAP-1 reference rate:
+        //   airTokenMinted = usdcNotional * airToken.totalSupply() / backedAirUsd
+        // This gives the airToken amount that is worth usdcNotional at backed prices.
+        uint256 airTokenSupplyBefore = airToken.totalSupply();
+        if (airTokenSupplyBefore == 0) revert InsufficientBackedReserves();
 
-        uint256 airMemeMinted = (usdcNotional * airMemeSupplyBefore) / backedAirUsd;
-        if (airMemeMinted == 0) revert ZeroAmount();
+        uint256 airTokenMinted = (usdcNotional * airTokenSupplyBefore) / backedAirUsd;
+        if (airTokenMinted == 0) revert ZeroAmount();
 
         // SWAP-3: compute airUsd output before any state changes.
-        // reserveIn  = airMeme.totalSupply() before the synthetic mint below.
+        // reserveIn  = airToken.totalSupply() before the synthetic mint below.
         // reserveOut = backedAirUsd
-        uint256 airUsdOut = _cpAmountOut(airMemeMinted, airMemeSupplyBefore, backedAirUsd);
+        uint256 airUsdOut = _cpAmountOut(airTokenMinted, airTokenSupplyBefore, backedAirUsd);
 
         if (airUsdOut == 0) revert ZeroAmount();
         if (airUsdOut < minAirUsdOut) revert InsufficientOutput(airUsdOut, minAirUsdOut);
@@ -706,15 +706,15 @@ contract EXNIHILOPool is ReentrancyGuard {
         shortOpenInterest += airUsdOut;
         lpFeesAccumulated += lpFee;
 
-        // Mint synthetic airMeme: inflates totalSupply, no new meme backing.
-        airMemeToken.mint(address(this), airMemeMinted);
+        // Mint synthetic airToken: inflates totalSupply, no new token backing.
+        airToken.mint(address(this), airTokenMinted);
 
         // Real airUsd leaves the pool's backed reserves into PositionNFT custody.
         backedAirUsd -= airUsdOut;
 
         // ── INTERACTIONS ──────────────────────────────────────────────────────
         // The notional is NOT pulled — it is represented synthetically by the
-        // airMeme minted above.  Only the 5 % fee is collected from the trader.
+        // airToken minted above.  Only the 5 % fee is collected from the trader.
         _transferIn(underlyingUsdc, msg.sender, totalFee);
         underlyingUsdc.safeTransfer(protocolTreasury, protocolFee);
 
@@ -724,7 +724,7 @@ contract EXNIHILOPool is ReentrancyGuard {
             msg.sender,
             address(this),
             address(airUsdToken),
-            airMemeMinted,
+            airTokenMinted,
             airUsdOut,
             totalFee
         );
@@ -733,7 +733,7 @@ contract EXNIHILOPool is ReentrancyGuard {
 
         _assertReserveInvariant();
 
-        emit ShortOpened(nftId, msg.sender, airMemeMinted, airUsdOut, totalFee);
+        emit ShortOpened(nftId, msg.sender, airTokenMinted, airUsdOut, totalFee);
     }
 
     /**
@@ -742,13 +742,13 @@ contract EXNIHILOPool is ReentrancyGuard {
      *   Settlement
      *   ──────────
      *   The locked airUsd returns from PositionNFT. SWAP-2 (inverse formula)
-     *   computes how much airUsd it costs to buy back exactly airMemeMinted
-     *   airMeme. If the locked airUsd covers that cost, the surplus airUsd is
+     *   computes how much airUsd it costs to buy back exactly airTokenMinted
+     *   airToken. If the locked airUsd covers that cost, the surplus airUsd is
      *   unwrapped and sent to the holder as USDC.
      *
      *   State changes
      *   ─────────────
-     *     airMeme supply −= airMemeMinted   (synthetic debt cancelled)
+     *     airToken supply −= airTokenMinted   (synthetic debt cancelled)
      *     backedAirUsd   += airUsdCostForDebt (cost of buyback restores backing)
      *     airUsd supply  −= lockedAmount    (locked airUsd burned in full)
      *
@@ -772,11 +772,11 @@ contract EXNIHILOPool is ReentrancyGuard {
         uint256 totalBuyable = _cpAmountOut(
             pos.lockedAmount,
             airUsdToken.totalSupply(),
-            backedAirMeme
+            backedAirToken
         );
-        if (totalBuyable == 0 || totalBuyable < pos.airMemeMinted) revert PositionUnderwater();
+        if (totalBuyable == 0 || totalBuyable < pos.airTokenMinted) revert PositionUnderwater();
         uint256 airUsdCostForDebt =
-            (pos.lockedAmount * pos.airMemeMinted + totalBuyable - 1) / totalBuyable;
+            (pos.lockedAmount * pos.airTokenMinted + totalBuyable - 1) / totalBuyable;
         uint256 surplus    = pos.lockedAmount - airUsdCostForDebt;
         uint256 closeFee   = (surplus * CLOSE_FEE_BPS) / BPS_DENOM;
         uint256 netSurplus = surplus - closeFee;
@@ -789,7 +789,7 @@ contract EXNIHILOPool is ReentrancyGuard {
 
         // ── INTERACTIONS ──────────────────────────────────────────────────────
         positionNFT.release(nftId);
-        airMemeToken.burn(address(this), pos.airMemeMinted);
+        airToken.burn(address(this), pos.airTokenMinted);
         // Burn the surplus airUsd. The airUsdCostForDebt portion stays as backed
         // airUsd in the pool (reflected in backedAirUsd += above). The surplus
         // is split between the holder (netSurplus) and protocol (closeFee).
@@ -799,18 +799,18 @@ contract EXNIHILOPool is ReentrancyGuard {
 
         _assertReserveInvariant();
 
-        emit ShortClosed(nftId, holder, netSurplus, pos.airMemeMinted);
+        emit ShortClosed(nftId, holder, netSurplus, pos.airTokenMinted);
     }
 
     /**
-     * @notice Realize a short position at par — the holder delivers the meme
-     *         tokens to cover the synthetic airMeme debt and receives the locked
-     *         USDC (unwrapped from airUsd) regardless of current meme price.
+     * @notice Realize a short position at par — the holder delivers the underlying
+     *         tokens to cover the synthetic airToken debt and receives the locked
+     *         USDC (unwrapped from airUsd) regardless of current token price.
      *
      *   State changes
      *   ─────────────
-     *     backedAirMeme  += memePaid  (synthetic airMeme from openShort now has real backing)
-     *     airMeme supply  unchanged   (minted at openShort; stays — now fully backed)
+     *     backedAirToken  += tokenPaid  (synthetic airToken from openShort now has real backing)
+     *     airToken supply  unchanged   (minted at openShort; stays — now fully backed)
      *     backedAirUsd    unchanged   (was reduced at open; USDC delivered to holder)
      *     airUsd supply  −= locked    (burned on unwrap)
      *
@@ -828,11 +828,11 @@ contract EXNIHILOPool is ReentrancyGuard {
         openPositionCount--;
         shortOpenInterest -= pos.lockedAmount;
 
-        // The incoming MEME will back what was previously synthetic airMeme.
-        backedAirMeme += pos.airMemeMinted;
+        // The incoming tokens will back what was previously synthetic airToken.
+        backedAirToken += pos.airTokenMinted;
 
-        // Pull raw meme from caller (== holder, verified above).
-        _transferIn(underlyingMeme, msg.sender, pos.airMemeMinted);
+        // Pull raw token from caller (== holder, verified above).
+        _transferIn(underlyingToken, msg.sender, pos.airTokenMinted);
 
         // Release NFT: returns lockedAmount of airUsd to pool.
         positionNFT.release(nftId);
@@ -845,7 +845,7 @@ contract EXNIHILOPool is ReentrancyGuard {
 
         _assertReserveInvariant();
 
-        emit ShortRealized(nftId, holder, pos.airMemeMinted, pos.lockedAmount);
+        emit ShortRealized(nftId, holder, pos.airTokenMinted, pos.lockedAmount);
     }
 
     // =========================================================================
@@ -856,40 +856,40 @@ contract EXNIHILOPool is ReentrancyGuard {
      * @notice Deposit liquidity on both sides of the pool.
      *
      *         For non-empty pools the deposit must match the current
-     *         backedAirMeme : backedAirUsd ratio (within 0.01 % rounding
+     *         backedAirToken : backedAirUsd ratio (within 0.01 % rounding
      *         tolerance) to avoid shifting the AMM price.
      *
      *         Only the direct owner of the LP NFT may call this — not approved
      *         operators. This is intentional: ownership is the gate.
      *
-     * @param memeAmount  Raw meme tokens to deposit.
+     * @param tokenAmount  Raw underlying tokens to deposit.
      * @param usdcAmount  USDC to deposit (6 dec).
      */
-    function addLiquidity(uint256 memeAmount, uint256 usdcAmount) external nonReentrant onlyLpHolder {
-        if (memeAmount == 0 || usdcAmount == 0) revert ZeroAmount();
+    function addLiquidity(uint256 tokenAmount, uint256 usdcAmount) external nonReentrant onlyLpHolder {
+        if (tokenAmount == 0 || usdcAmount == 0) revert ZeroAmount();
 
         // Ratio check for non-empty pools (cross-multiplication avoids precision loss).
-        if (backedAirMeme != 0 && backedAirUsd != 0) {
-            uint256 lhs       = memeAmount * backedAirUsd;
-            uint256 rhs       = usdcAmount * backedAirMeme;
+        if (backedAirToken != 0 && backedAirUsd != 0) {
+            uint256 lhs       = tokenAmount * backedAirUsd;
+            uint256 rhs       = usdcAmount * backedAirToken;
             uint256 tolerance = (lhs > rhs ? lhs : rhs) / 10_000 + 1;
             if (lhs > rhs + tolerance || rhs > lhs + tolerance) revert RatioMismatch();
         }
 
         // ── EFFECTS ───────────────────────────────────────────────────────────
-        backedAirMeme += memeAmount;
+        backedAirToken += tokenAmount;
         backedAirUsd  += usdcAmount;
 
         // ── INTERACTIONS ──────────────────────────────────────────────────────
-        _transferIn(underlyingMeme, msg.sender, memeAmount);
+        _transferIn(underlyingToken, msg.sender, tokenAmount);
         _transferIn(underlyingUsdc, msg.sender, usdcAmount);
 
-        airMemeToken.mint(address(this), memeAmount);
+        airToken.mint(address(this), tokenAmount);
         airUsdToken.mint(address(this), usdcAmount);
 
         _assertReserveInvariant();
 
-        emit LiquidityAdded(msg.sender, memeAmount, usdcAmount, backedAirMeme, backedAirUsd);
+        emit LiquidityAdded(msg.sender, tokenAmount, usdcAmount, backedAirToken, backedAirUsd);
     }
 
     /**
@@ -900,18 +900,18 @@ contract EXNIHILOPool is ReentrancyGuard {
      */
     function removeLiquidity() external nonReentrant onlyLpHolder {
         if (openPositionCount != 0) revert OpenPositionsExist(openPositionCount);
-        if (backedAirMeme == 0 && backedAirUsd == 0) revert ZeroLiquidity();
+        if (backedAirToken == 0 && backedAirUsd == 0) revert ZeroLiquidity();
 
-        uint256 memeOut = backedAirMeme;
+        uint256 tokenOut = backedAirToken;
         uint256 usdcOut = backedAirUsd;
 
         // EFFECTS before interactions.
-        backedAirMeme = 0;
+        backedAirToken = 0;
         backedAirUsd  = 0;
 
-        if (memeOut > 0) {
-            airMemeToken.burn(address(this), memeOut);
-            underlyingMeme.safeTransfer(msg.sender, memeOut);
+        if (tokenOut > 0) {
+            airToken.burn(address(this), tokenOut);
+            underlyingToken.safeTransfer(msg.sender, tokenOut);
         }
 
         if (usdcOut > 0) {
@@ -919,7 +919,7 @@ contract EXNIHILOPool is ReentrancyGuard {
             underlyingUsdc.safeTransfer(msg.sender, usdcOut);
         }
 
-        emit LiquidityRemoved(msg.sender, memeOut, usdcOut);
+        emit LiquidityRemoved(msg.sender, tokenOut, usdcOut);
     }
 
     /**
@@ -948,8 +948,8 @@ contract EXNIHILOPool is ReentrancyGuard {
      *         receives whatever locked collateral remains (at a loss).
      *
      *         The position must genuinely be underwater:
-     *           Long  — SWAP-3 on lockedAirMeme would produce < airUsdMinted.
-     *           Short — SWAP-2 cost to buy back airMemeMinted > lockedAirUsd.
+     *           Long  — SWAP-3 on lockedAirToken would produce < airUsdMinted.
+     *           Short — SWAP-2 cost to buy back airTokenMinted > lockedAirUsd.
      *
      * @param nftId  Position NFT to force-realize.
      */
@@ -972,14 +972,14 @@ contract EXNIHILOPool is ReentrancyGuard {
 
     /**
      * @notice Current AMM spot price.
-     *         Returns raw USDC units per whole meme token — i.e. the human-readable
+     *         Returns raw USDC units per whole underlying token — i.e. the human-readable
      *         USD price multiplied by 1e6 (USDC's decimal factor).
      *         Divide the result by 1e6 to obtain the price in USD.
      *         Uses SWAP-1 backed reserves. Returns 0 when reserves are empty.
      */
     function spotPrice() external view returns (uint256) {
-        if (backedAirMeme == 0) return 0;
-        return (backedAirUsd * 1e18) / backedAirMeme;
+        if (backedAirToken == 0) return 0;
+        return (backedAirUsd * 1e18) / backedAirToken;
     }
 
     /**
@@ -990,16 +990,16 @@ contract EXNIHILOPool is ReentrancyGuard {
      */
     function quoteSwap(
         uint256 amountIn,
-        bool memeToUsdc
+        bool tokenToUsdc
     ) external view returns (uint256 grossOut, uint256 fee, uint256 netOut) {
-        if (amountIn == 0 || backedAirMeme == 0 || backedAirUsd == 0) return (0, 0, 0);
+        if (amountIn == 0 || backedAirToken == 0 || backedAirUsd == 0) return (0, 0, 0);
 
-        if (memeToUsdc) {
-            grossOut = (amountIn * backedAirUsd) / (backedAirMeme + amountIn);
-            fee      = (amountIn * backedAirUsd * swapFeeBps) / (backedAirMeme * BPS_DENOM);
+        if (tokenToUsdc) {
+            grossOut = (amountIn * backedAirUsd) / (backedAirToken + amountIn);
+            fee      = (amountIn * backedAirUsd * swapFeeBps) / (backedAirToken * BPS_DENOM);
         } else {
-            grossOut = (amountIn * backedAirMeme) / (backedAirUsd + amountIn);
-            fee      = (amountIn * backedAirMeme * swapFeeBps) / (backedAirUsd * BPS_DENOM);
+            grossOut = (amountIn * backedAirToken) / (backedAirUsd + amountIn);
+            fee      = (amountIn * backedAirToken * swapFeeBps) / (backedAirUsd * BPS_DENOM);
         }
         netOut = grossOut > fee ? grossOut - fee : 0;
     }
@@ -1022,7 +1022,7 @@ contract EXNIHILOPool is ReentrancyGuard {
 
     /**
      * @notice Returns true if a short position is currently underwater (not profitable to close).
-     *         Uses SWAP-2 cpOut(lockedAmount, airUsd.totalSupply(), backedAirMeme) < airMemeMinted.
+     *         Uses SWAP-2 cpOut(lockedAmount, airUsd.totalSupply(), backedAirToken) < airTokenMinted.
      */
     function isShortUnderwater(uint256 nftId) external view returns (bool) {
         return _shortIsUnderwater(positionNFT.getPosition(nftId));
@@ -1033,52 +1033,52 @@ contract EXNIHILOPool is ReentrancyGuard {
     // =========================================================================
 
     /**
-     * @dev Execute a meme → USDC SWAP-1.
+     * @dev Execute a token → USDC SWAP-1.
      *      Extracted to a dedicated function to keep swap()'s stack frame lean.
      */
-    function _swapMemeToUsdc(uint256 amountIn, uint256 minAmountOut) internal {
+    function _swapTokenToUsdc(uint256 amountIn, uint256 minAmountOut) internal {
         // ── CHECK (against pre-swap reserves) ─────────────────────────────────
-        uint256 netOut = _cpAmountOut(amountIn, backedAirMeme, backedAirUsd);
+        uint256 netOut = _cpAmountOut(amountIn, backedAirToken, backedAirUsd);
         if (netOut < minAmountOut) revert InsufficientOutput(netOut, minAmountOut);
 
         // ── EFFECTS ───────────────────────────────────────────────────────────
-        backedAirMeme += amountIn;
+        backedAirToken += amountIn;
         backedAirUsd  -= netOut;
 
         // ── INTERACTIONS ──────────────────────────────────────────────────────
-        // Pull raw meme from caller; wrap to airMeme; unwrap output airUsd → USDC; deliver.
-        _transferIn(underlyingMeme, msg.sender, amountIn);
-        airMemeToken.mint(address(this), amountIn);
+        // Pull raw token from caller; wrap to airToken; unwrap output airUsd → USDC; deliver.
+        _transferIn(underlyingToken, msg.sender, amountIn);
+        airToken.mint(address(this), amountIn);
         airUsdToken.burn(address(this), netOut);
         underlyingUsdc.safeTransfer(msg.sender, netOut);
 
         _assertReserveInvariant();
 
-        emit Swap(msg.sender, address(underlyingMeme), amountIn, address(underlyingUsdc), netOut);
+        emit Swap(msg.sender, address(underlyingToken), amountIn, address(underlyingUsdc), netOut);
     }
 
     /**
-     * @dev Execute a USDC → meme SWAP-1.
+     * @dev Execute a USDC → token SWAP-1.
      */
-    function _swapUsdcToMeme(uint256 amountIn, uint256 minAmountOut) internal {
+    function _swapUsdcToToken(uint256 amountIn, uint256 minAmountOut) internal {
         // ── CHECK (against pre-swap reserves) ─────────────────────────────────
-        uint256 netOut = _cpAmountOut(amountIn, backedAirUsd, backedAirMeme);
+        uint256 netOut = _cpAmountOut(amountIn, backedAirUsd, backedAirToken);
         if (netOut < minAmountOut) revert InsufficientOutput(netOut, minAmountOut);
 
         // ── EFFECTS ───────────────────────────────────────────────────────────
         backedAirUsd  += amountIn;
-        backedAirMeme -= netOut;
+        backedAirToken -= netOut;
 
         // ── INTERACTIONS ──────────────────────────────────────────────────────
-        // Pull USDC from caller; wrap to airUsd; unwrap output airMeme → raw meme; deliver.
+        // Pull USDC from caller; wrap to airUsd; unwrap output airToken → raw token; deliver.
         _transferIn(underlyingUsdc, msg.sender, amountIn);
         airUsdToken.mint(address(this), amountIn);
-        airMemeToken.burn(address(this), netOut);
-        underlyingMeme.safeTransfer(msg.sender, netOut);
+        airToken.burn(address(this), netOut);
+        underlyingToken.safeTransfer(msg.sender, netOut);
 
         _assertReserveInvariant();
 
-        emit Swap(msg.sender, address(underlyingUsdc), amountIn, address(underlyingMeme), netOut);
+        emit Swap(msg.sender, address(underlyingUsdc), amountIn, address(underlyingToken), netOut);
     }
 
     // =========================================================================
@@ -1087,7 +1087,7 @@ contract EXNIHILOPool is ReentrancyGuard {
 
     /**
      * @dev Force-realize an underwater long position.
-     *      LP pays airUsdMinted in USDC; original holder receives locked meme.
+     *      LP pays airUsdMinted in USDC; original holder receives locked token.
      */
     function _forceRealizeLong(uint256 nftId, Position memory pos, address originalHolder) internal {
         // Verify position is genuinely underwater via SWAP-3.
@@ -1104,13 +1104,13 @@ contract EXNIHILOPool is ReentrancyGuard {
         backedAirUsd += pos.airUsdMinted;
         _transferIn(underlyingUsdc, msg.sender, pos.airUsdMinted);
 
-        // Release NFT: locked airMeme returns to pool.
+        // Release NFT: locked airToken returns to pool.
         positionNFT.release(nftId);
 
-        // Deliver the underlying meme to the original holder (at a loss).
-        // Burn the airMeme wrapper first; underlying meme is already in contract.
-        airMemeToken.burn(address(this), pos.lockedAmount);
-        underlyingMeme.safeTransfer(originalHolder, pos.lockedAmount);
+        // Deliver the underlying token to the original holder (at a loss).
+        // Burn the airToken wrapper first; underlying token is already in contract.
+        airToken.burn(address(this), pos.lockedAmount);
+        underlyingToken.safeTransfer(originalHolder, pos.lockedAmount);
 
         _assertReserveInvariant();
 
@@ -1119,7 +1119,7 @@ contract EXNIHILOPool is ReentrancyGuard {
 
     /**
      * @dev Force-realize an underwater short position.
-     *      LP pays airMemeMinted in raw meme; original holder receives locked USDC.
+     *      LP pays airTokenMinted in raw token; original holder receives locked USDC.
      */
     function _forceRealizeShort(uint256 nftId, Position memory pos, address originalHolder) internal {
         // Verify position is genuinely underwater via SWAP-2 inverse.
@@ -1129,12 +1129,12 @@ contract EXNIHILOPool is ReentrancyGuard {
         openPositionCount--;
         shortOpenInterest -= pos.lockedAmount;
 
-        // LP pays the synthetic airMeme debt with raw meme tokens.
-        // The real meme converts the previously synthetic airMeme to backed airMeme,
+        // LP pays the synthetic airToken debt with raw underlying tokens.
+        // The real token converts the previously synthetic airToken to backed airToken,
         // mirroring _forceRealizeLong's backedAirUsd += pos.airUsdMinted.
-        backedAirMeme += pos.airMemeMinted;
+        backedAirToken += pos.airTokenMinted;
 
-        _transferIn(underlyingMeme, msg.sender, pos.airMemeMinted);
+        _transferIn(underlyingToken, msg.sender, pos.airTokenMinted);
 
         // Release NFT: locked airUsd returns to pool.
         positionNFT.release(nftId);
@@ -1145,7 +1145,7 @@ contract EXNIHILOPool is ReentrancyGuard {
 
         _assertReserveInvariant();
 
-        emit PositionForceRealized(nftId, msg.sender, pos.airMemeMinted);
+        emit PositionForceRealized(nftId, msg.sender, pos.airTokenMinted);
     }
 
     // =========================================================================
@@ -1153,23 +1153,23 @@ contract EXNIHILOPool is ReentrancyGuard {
     // =========================================================================
 
     function _longIsUnderwater(Position memory pos) internal view returns (bool) {
-        uint256 airMemeSupply = airMemeToken.totalSupply();
-        if (airMemeSupply < pos.lockedAmount) return true;
+        uint256 airTokenSupply = airToken.totalSupply();
+        if (airTokenSupply < pos.lockedAmount) return true;
         uint256 airUsdOut = _cpAmountOut(
             pos.lockedAmount,
-            airMemeSupply - pos.lockedAmount,
+            airTokenSupply - pos.lockedAmount,
             backedAirUsd
         );
         return airUsdOut < pos.airUsdMinted;
     }
 
     function _shortIsUnderwater(Position memory pos) internal view returns (bool) {
-        // A short is underwater when the locked USDC can no longer buy back the synthetic airMeme debt.
+        // A short is underwater when the locked USDC can no longer buy back the synthetic airToken debt.
         return _cpAmountOut(
             pos.lockedAmount,
             airUsdToken.totalSupply(),
-            backedAirMeme
-        ) < pos.airMemeMinted;
+            backedAirToken
+        ) < pos.airTokenMinted;
     }
 
     // =========================================================================
@@ -1257,7 +1257,7 @@ contract EXNIHILOPool is ReentrancyGuard {
      *      than exists, which is impossible and signals an accounting bug.
      */
     function _assertReserveInvariant() internal view {
-        if (backedAirMeme > airMemeToken.totalSupply()) revert ReserveInvariantViolated();
+        if (backedAirToken > airToken.totalSupply()) revert ReserveInvariantViolated();
         if (backedAirUsd  > airUsdToken.totalSupply())  revert ReserveInvariantViolated();
     }
 }

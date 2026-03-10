@@ -13,15 +13,15 @@ const MIN_POSITION_FEE = 50_000n; // 0.05 USDC (6 dec)
 interface LongShortPanelProps {
   poolAddress: `0x${string}`;
   underlyingUsdc: `0x${string}`;
-  memeSymbol: string;
-  memeDecimals: number;
+  tokenSymbol: string;
+  tokenDecimals: number;
 }
 
 export default function LongShortPanel({
   poolAddress,
   underlyingUsdc,
-  memeSymbol,
-  memeDecimals,
+  tokenSymbol,
+  tokenDecimals,
 }: LongShortPanelProps) {
   const { address } = useAccount();
   const queryClient = useQueryClient();
@@ -37,12 +37,12 @@ export default function LongShortPanel({
 
   const { data } = useReadContracts({
     contracts: [
-      { ...poolContract, functionName: "backedAirMeme" },
+      { ...poolContract, functionName: "backedAirToken" },
       { ...poolContract, functionName: "backedAirUsd" },
       { ...poolContract, functionName: "spotPrice" },
       { ...poolContract, functionName: "effectiveLeverageCap" },
       { ...poolContract, functionName: "swapFeeBps" },
-      { ...poolContract, functionName: "airMemeToken" },
+      { ...poolContract, functionName: "airToken" },
       { ...poolContract, functionName: "airUsdToken" },
       {
         address: underlyingUsdc,
@@ -53,55 +53,55 @@ export default function LongShortPanel({
     ],
   });
 
-  const backedAirMeme = data?.[0]?.result as bigint | undefined;
+  const backedAirToken = data?.[0]?.result as bigint | undefined;
   const backedAirUsd = data?.[1]?.result as bigint | undefined;
   const leverageCap = data?.[3]?.result as bigint | undefined;
   const swapFeeBps = data?.[4]?.result as bigint | undefined;
-  const airMemeAddress = data?.[5]?.result as `0x${string}` | undefined;
+  const airTokenAddress = data?.[5]?.result as `0x${string}` | undefined;
   const airUsdAddress = data?.[6]?.result as `0x${string}` | undefined;
   const allowance = data?.[7]?.result as bigint | undefined;
 
   const { data: supplyData } = useReadContracts({
     contracts:
-      airMemeAddress && airUsdAddress
+      airTokenAddress && airUsdAddress
         ? [
-            { address: airMemeAddress, abi: erc20Abi, functionName: "totalSupply" as const },
+            { address: airTokenAddress, abi: erc20Abi, functionName: "totalSupply" as const },
             { address: airUsdAddress,  abi: erc20Abi, functionName: "totalSupply" as const },
           ]
         : [],
-    query: { enabled: !!airMemeAddress && !!airUsdAddress },
+    query: { enabled: !!airTokenAddress && !!airUsdAddress },
   });
 
-  const airMemeTotalSupply = supplyData?.[0]?.result as bigint | undefined;
+  const airTokenTotalSupply = supplyData?.[0]?.result as bigint | undefined;
   const airUsdTotalSupply = supplyData?.[1]?.result as bigint | undefined;
 
   let previewOut: bigint | undefined;
   if (
     usdcRaw > 0n &&
-    backedAirMeme !== undefined &&
+    backedAirToken !== undefined &&
     backedAirUsd !== undefined &&
-    airMemeTotalSupply !== undefined &&
+    airTokenTotalSupply !== undefined &&
     airUsdTotalSupply !== undefined &&
     swapFeeBps !== undefined
   ) {
     if (isLong) {
-      previewOut = quoteLong(usdcRaw, airUsdTotalSupply, backedAirMeme, swapFeeBps);
+      previewOut = quoteLong(usdcRaw, airUsdTotalSupply, backedAirToken, swapFeeBps);
     } else {
-      previewOut = quoteShort(usdcRaw, airMemeTotalSupply, backedAirUsd, swapFeeBps);
+      previewOut = quoteShort(usdcRaw, airTokenTotalSupply, backedAirUsd, swapFeeBps);
     }
   }
 
   // Price impact: amountIn / (reserveIn + amountIn), in bps
   // Long: reserveIn = airUsd.totalSupply (SWAP-2 virtual reserve)
-  // Short: reserveIn = airMeme.totalSupply (SWAP-3 virtual reserve)
+  // Short: reserveIn = airToken.totalSupply (SWAP-3 virtual reserve)
   const priceImpactBps = (() => {
     if (usdcRaw === 0n) return 0n;
     if (isLong) {
       if (!airUsdTotalSupply || airUsdTotalSupply === 0n) return 0n;
       return (usdcRaw * 10_000n) / (airUsdTotalSupply + usdcRaw);
     } else {
-      if (!airMemeTotalSupply || airMemeTotalSupply === 0n) return 0n;
-      return (usdcRaw * 10_000n) / (airMemeTotalSupply + usdcRaw);
+      if (!airTokenTotalSupply || airTokenTotalSupply === 0n) return 0n;
+      return (usdcRaw * 10_000n) / (airTokenTotalSupply + usdcRaw);
     }
   })();
 
@@ -167,7 +167,7 @@ export default function LongShortPanel({
             transition: "all 0.15s",
           }}
         >
-          ▲ LONG {memeSymbol}
+          ▲ LONG {tokenSymbol}
         </button>
         <button
           onClick={() => { setIsLong(false); setUsdcInput(""); }}
@@ -185,7 +185,7 @@ export default function LongShortPanel({
             transition: "all 0.15s",
           }}
         >
-          ▼ SHORT {memeSymbol}
+          ▼ SHORT {tokenSymbol}
         </button>
       </div>
 
@@ -341,10 +341,10 @@ export default function LongShortPanel({
         >
           <div className="flex justify-between">
             <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.62rem", color: "var(--muted)", letterSpacing: "0.1em" }}>
-              {isLong ? `EST. ${memeSymbol} LOCKED` : "EST. USDC LOCKED"}
+              {isLong ? `EST. ${tokenSymbol} LOCKED` : "EST. USDC LOCKED"}
             </span>
             <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.78rem", color: isLong ? "var(--green)" : "var(--red)" }}>
-              {formatToken(previewOut, isLong ? memeDecimals : 6)} {isLong ? memeSymbol : "USDC"}
+              {formatToken(previewOut, isLong ? tokenDecimals : 6)} {isLong ? tokenSymbol : "USDC"}
             </span>
           </div>
           <div className="flex justify-between">
@@ -352,7 +352,7 @@ export default function LongShortPanel({
               MIN ({slippagePctDisplay} SLIP)
             </span>
             <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.78rem", color: "#f59e0b" }}>
-              {formatToken(minOut, isLong ? memeDecimals : 6)} {isLong ? memeSymbol : "USDC"}
+              {formatToken(minOut, isLong ? tokenDecimals : 6)} {isLong ? tokenSymbol : "USDC"}
             </span>
           </div>
         </div>
@@ -375,7 +375,7 @@ export default function LongShortPanel({
         />
       ) : (
         <TxButton
-          idleLabel={isLong ? `Open Long ${memeSymbol}` : `Open Short ${memeSymbol}`}
+          idleLabel={isLong ? `Open Long ${tokenSymbol}` : `Open Short ${tokenSymbol}`}
           status={openStatus}
           variant={isLong ? "green" : "red"}
           onClick={() => {

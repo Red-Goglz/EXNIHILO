@@ -9,24 +9,24 @@ import TxButton from "../shared/TxButton.tsx";
 interface LpPanelProps {
   poolAddress: `0x${string}`;
   lpNftAddress: `0x${string}`;
-  underlyingMeme: `0x${string}`;
+  underlyingToken: `0x${string}`;
   underlyingUsdc: `0x${string}`;
-  memeSymbol: string;
-  memeDecimals: number;
+  tokenSymbol: string;
+  tokenDecimals: number;
 }
 
 export default function LpPanel({
   poolAddress,
   lpNftAddress,
-  underlyingMeme,
+  underlyingToken,
   underlyingUsdc,
-  memeSymbol,
-  memeDecimals,
+  tokenSymbol,
+  tokenDecimals,
 }: LpPanelProps) {
   const { address } = useAccount();
   const queryClient = useQueryClient();
 
-  const [memeInput, setMemeInput] = useState("");
+  const [tokenInput, setTokenInput] = useState("");
   const [usdcInput, setUsdcInput] = useState("");
   const [capsUsdInput, setCapsUsdInput] = useState("");
   const [capsBpsInput, setCapsBpsInput] = useState("");
@@ -36,7 +36,7 @@ export default function LpPanel({
   const { data } = useReadContracts({
     contracts: [
       { ...poolContract, functionName: "lpNftId" },
-      { ...poolContract, functionName: "backedAirMeme" },
+      { ...poolContract, functionName: "backedAirToken" },
       { ...poolContract, functionName: "backedAirUsd" },
       { ...poolContract, functionName: "lpFeesAccumulated" },
       { ...poolContract, functionName: "openPositionCount" },
@@ -46,7 +46,7 @@ export default function LpPanel({
   });
 
   const lpNftId = data?.[0]?.result as bigint | undefined;
-  const backedAirMeme = data?.[1]?.result as bigint | undefined;
+  const backedAirToken = data?.[1]?.result as bigint | undefined;
   const backedAirUsd = data?.[2]?.result as bigint | undefined;
   const lpFees = data?.[3]?.result as bigint | undefined;
   const openPositionCount = data?.[4]?.result as bigint | undefined;
@@ -64,14 +64,14 @@ export default function LpPanel({
   const owner = lpOwner?.[0]?.result as `0x${string}` | undefined;
   const isLpHolder = owner?.toLowerCase() === address?.toLowerCase();
 
-  const memeRaw = parseUnits(memeInput, memeDecimals);
+  const tokenRaw = parseUnits(tokenInput, tokenDecimals);
   const usdcRaw = parseUnits(usdcInput, 6);
 
   const { data: allowances } = useReadContracts({
     contracts: address
       ? [
           {
-            address: underlyingMeme,
+            address: underlyingToken,
             abi: erc20Abi,
             functionName: "allowance",
             args: [address, poolAddress],
@@ -87,9 +87,9 @@ export default function LpPanel({
     query: { enabled: !!address },
   });
 
-  const memeAllowance = allowances?.[0]?.result as bigint | undefined;
+  const tokenAllowance = allowances?.[0]?.result as bigint | undefined;
   const usdcAllowance = allowances?.[1]?.result as bigint | undefined;
-  const needsMemeApproval = memeAllowance !== undefined && memeRaw > memeAllowance;
+  const needsTokenApproval = tokenAllowance !== undefined && tokenRaw > tokenAllowance;
   const needsUsdcApproval = usdcAllowance !== undefined && usdcRaw > usdcAllowance;
 
   const hasOpenPositions = openPositionCount !== undefined && openPositionCount > 0n;
@@ -131,7 +131,7 @@ export default function LpPanel({
 
   const handleSuccess = () => {
     queryClient.invalidateQueries();
-    setMemeInput("");
+    setTokenInput("");
     setUsdcInput("");
   };
 
@@ -161,11 +161,11 @@ export default function LpPanel({
       {/* Pool stats */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
         <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", padding: "10px 12px" }}>
-          <div className="stat-label">BACKED MEME</div>
+          <div className="stat-label">BACKED TOKEN</div>
           <div style={{ fontSize: "0.75rem", color: "var(--body)" }}>
-            {backedAirMeme !== undefined ? formatToken(backedAirMeme, memeDecimals) : "—"}
+            {backedAirToken !== undefined ? formatToken(backedAirToken, tokenDecimals) : "—"}
             <span style={{ color: "var(--muted)", marginLeft: 4, fontSize: "0.65rem" }}>
-              {memeSymbol}
+              {tokenSymbol}
             </span>
           </div>
         </div>
@@ -221,12 +221,12 @@ export default function LpPanel({
           ADD LIQUIDITY
         </div>
         <TokenInput
-          label={memeSymbol}
-          value={memeInput}
-          onChange={setMemeInput}
-          tokenAddress={underlyingMeme}
-          decimals={memeDecimals}
-          symbol={memeSymbol}
+          label={tokenSymbol}
+          value={tokenInput}
+          onChange={setTokenInput}
+          tokenAddress={underlyingToken}
+          decimals={tokenDecimals}
+          symbol={tokenSymbol}
         />
         <TokenInput
           label="USDC"
@@ -237,17 +237,17 @@ export default function LpPanel({
           symbol="USDC"
         />
 
-        {(needsMemeApproval || needsUsdcApproval) && (
+        {(needsTokenApproval || needsUsdcApproval) && (
           <TxButton
-            idleLabel={`Approve ${needsMemeApproval ? memeSymbol : "USDC"}`}
+            idleLabel={`Approve ${needsTokenApproval ? tokenSymbol : "USDC"}`}
             status={txStatus}
             onClick={() => {
-              if (needsMemeApproval) {
+              if (needsTokenApproval) {
                 writeContract({
-                  address: underlyingMeme,
+                  address: underlyingToken,
                   abi: erc20Abi,
                   functionName: "approve",
-                  args: [poolAddress, memeRaw],
+                  args: [poolAddress, tokenRaw],
                 });
               } else {
                 writeContract({
@@ -258,12 +258,12 @@ export default function LpPanel({
                 });
               }
             }}
-            disabled={memeRaw === 0n || usdcRaw === 0n}
+            disabled={tokenRaw === 0n || usdcRaw === 0n}
             style={{ width: "100%", justifyContent: "center" }}
           />
         )}
 
-        {!needsMemeApproval && !needsUsdcApproval && (
+        {!needsTokenApproval && !needsUsdcApproval && (
           <TxButton
             idleLabel="Add Liquidity"
             status={txStatus}
@@ -274,12 +274,12 @@ export default function LpPanel({
                   address: poolAddress,
                   abi: exnihiloPoolAbi,
                   functionName: "addLiquidity",
-                  args: [memeRaw, usdcRaw],
+                  args: [tokenRaw, usdcRaw],
                 },
                 { onSuccess: handleSuccess }
               )
             }
-            disabled={memeRaw === 0n || usdcRaw === 0n}
+            disabled={tokenRaw === 0n || usdcRaw === 0n}
             style={{ width: "100%", justifyContent: "center" }}
           />
         )}
@@ -306,11 +306,11 @@ export default function LpPanel({
           REMOVE LIQUIDITY
         </div>
         <TokenInput
-          label={memeSymbol}
-          value={memeInput}
-          onChange={setMemeInput}
-          decimals={memeDecimals}
-          symbol={memeSymbol}
+          label={tokenSymbol}
+          value={tokenInput}
+          onChange={setTokenInput}
+          decimals={tokenDecimals}
+          symbol={tokenSymbol}
         />
         <TokenInput
           label="USDC"

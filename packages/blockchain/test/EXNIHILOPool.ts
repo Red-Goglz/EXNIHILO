@@ -46,9 +46,9 @@ function cpOut(
 // ─────────────────────────────────────────────────────────────────────────────
 
 const INITIAL_USDC  = ethers.parseUnits("10000", 6); // 10,000 USDC (6 dec)
-const INITIAL_MEME  = ethers.parseEther("1000000");  // 1,000,000 meme (18 dec)
+const INITIAL_TOKEN  = ethers.parseEther("1000000");  // 1,000,000 token (18 dec)
 const TRADER_USDC   = ethers.parseUnits("1000", 6);  // 1,000 USDC per trader
-const TRADER_MEME   = ethers.parseEther("10000");    // 10,000 meme per trader
+const TRADER_TOKEN   = ethers.parseEther("10000");    // 10,000 token per trader
 const SWAP_FEE_BPS  = 100n;                          // 1 %
 const BPS_DENOM     = 10_000n;
 const LP_FEE_BPS    = 300n;                          // 3 %
@@ -154,7 +154,7 @@ async function deployPoolFixture() {
 
   // Deploy tokens and PositionNFT from deployer (signers[0])
   const MockERC20F = await ethers.getContractFactory("MockERC20");
-  const memeToken = (await MockERC20F.connect(deployer).deploy("PEPE", "PEPE", 18)) as unknown as MockERC20;
+  const baseToken = (await MockERC20F.connect(deployer).deploy("PEPE", "PEPE", 18)) as unknown as MockERC20;
   const usdc      = (await MockERC20F.connect(deployer).deploy("USD Coin", "USDC", 6)) as unknown as MockERC20;
   const positionNFT = (await (await ethers.getContractFactory("PositionNFT"))
     .connect(deployer).deploy()) as unknown as PositionNFT;
@@ -169,15 +169,15 @@ async function deployPoolFixture() {
   const factoryAddr = await factory.getAddress();
 
   // Fund creator, approve factory, create market
-  await memeToken.mint(creator.address, INITIAL_MEME);
+  await baseToken.mint(creator.address, INITIAL_TOKEN);
   await usdc.mint(creator.address, INITIAL_USDC);
-  await memeToken.connect(creator).approve(factoryAddr, ethers.MaxUint256);
+  await baseToken.connect(creator).approve(factoryAddr, ethers.MaxUint256);
   await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
 
   const tx = await factory.connect(creator).createMarket(
-    await memeToken.getAddress(),
+    await baseToken.getAddress(),
     INITIAL_USDC,
-    INITIAL_MEME,
+    INITIAL_TOKEN,
     MAX_POS_USD,
     MAX_POS_BPS
   );
@@ -193,12 +193,12 @@ async function deployPoolFixture() {
 
   const pool = (await ethers.getContractAt("EXNIHILOPool", poolAddress)) as EXNIHILOPool;
 
-  // Fund traders with USDC + meme; approve pool
+  // Fund traders with USDC + token; approve pool
   for (const trader of [trader1, trader2, trader3]) {
     await usdc.mint(trader.address, TRADER_USDC * 10n);   // ample balance
-    await memeToken.mint(trader.address, TRADER_MEME * 10n);
+    await baseToken.mint(trader.address, TRADER_TOKEN * 10n);
     await usdc.connect(trader).approve(poolAddress, ethers.MaxUint256);
-    await memeToken.connect(trader).approve(poolAddress, ethers.MaxUint256);
+    await baseToken.connect(trader).approve(poolAddress, ethers.MaxUint256);
   }
 
   return {
@@ -206,7 +206,7 @@ async function deployPoolFixture() {
     factory,
     positionNFT,
     lpNft,
-    memeToken,
+    baseToken,
     usdc,
     deployer,
     treasury,
@@ -260,38 +260,38 @@ describe("EXNIHILOPool", function () {
 
   describe("1. Normal Swap (SWAP-1)", function () {
 
-    it("meme→USDC: caller receives USDC, backed reserves update correctly", async function () {
-      const { pool, memeToken, usdc, trader1 } = await loadFixture(deployPoolFixture);
+    it("token→USDC: caller receives USDC, backed reserves update correctly", async function () {
+      const { pool, baseToken, usdc, trader1 } = await loadFixture(deployPoolFixture);
 
-      const swapIn     = ethers.parseEther("10000"); // 10,000 meme
-      const backedMeme = await pool.backedAirMeme();
+      const swapIn     = ethers.parseEther("10000"); // 10,000 token
+      const backedToken = await pool.backedAirToken();
       const backedUsd  = await pool.backedAirUsd();
 
       // Use the Uniswap V2 fee-on-input formula that the contract uses.
-      const netOut = cpOut(swapIn, backedMeme, backedUsd);
+      const netOut = cpOut(swapIn, backedToken, backedUsd);
 
       const usdcBefore = await usdc.balanceOf(trader1.address);
       await pool.connect(trader1).swap(swapIn, netOut, true);
 
       expect(await usdc.balanceOf(trader1.address)).to.equal(usdcBefore + netOut);
       expect(await pool.backedAirUsd()).to.equal(backedUsd - netOut);
-      expect(await pool.backedAirMeme()).to.equal(backedMeme + swapIn);
+      expect(await pool.backedAirToken()).to.equal(backedToken + swapIn);
     });
 
-    it("USDC→meme: caller receives meme tokens", async function () {
-      const { pool, memeToken, usdc, trader1 } = await loadFixture(deployPoolFixture);
+    it("USDC→token: caller receives tokens", async function () {
+      const { pool, baseToken, usdc, trader1 } = await loadFixture(deployPoolFixture);
 
       const swapIn     = ethers.parseUnits("100", 6);
-      const backedMeme = await pool.backedAirMeme();
+      const backedToken = await pool.backedAirToken();
       const backedUsd  = await pool.backedAirUsd();
 
       // Use the Uniswap V2 fee-on-input formula that the contract uses.
-      const netOut = cpOut(swapIn, backedUsd, backedMeme);
+      const netOut = cpOut(swapIn, backedUsd, backedToken);
 
-      const memeBefore = await memeToken.balanceOf(trader1.address);
+      const tokenBefore = await baseToken.balanceOf(trader1.address);
       await pool.connect(trader1).swap(swapIn, netOut, false);
 
-      expect(await memeToken.balanceOf(trader1.address)).to.equal(memeBefore + netOut);
+      expect(await baseToken.balanceOf(trader1.address)).to.equal(tokenBefore + netOut);
     });
 
     it("reverts when netOut < minAmountOut (slippage guard)", async function () {
@@ -308,14 +308,14 @@ describe("EXNIHILOPool", function () {
       ).to.be.revertedWithCustomError(pool, "ZeroAmount");
     });
 
-    it("emits Swap event for meme→USDC", async function () {
-      const { pool, memeToken, usdc, trader1 } = await loadFixture(deployPoolFixture);
+    it("emits Swap event for token→USDC", async function () {
+      const { pool, baseToken, usdc, trader1 } = await loadFixture(deployPoolFixture);
       const swapIn = ethers.parseEther("1000");
       await expect(pool.connect(trader1).swap(swapIn, 0n, true))
         .to.emit(pool, "Swap")
         .withArgs(
           trader1.address,
-          await memeToken.getAddress(),
+          await baseToken.getAddress(),
           swapIn,
           await usdc.getAddress(),
           (v: bigint) => v > 0n
@@ -362,12 +362,12 @@ describe("EXNIHILOPool", function () {
       expect(await pool.backedAirUsd()).to.equal(backedBefore);
     });
 
-    it("backedAirMeme decreases by airMemeOut (collateral locked)", async function () {
+    it("backedAirToken decreases by airTokenOut (collateral locked)", async function () {
       const { pool, positionNFT, trader1 } = await loadFixture(deployPoolFixture);
-      const backedBefore = await pool.backedAirMeme();
+      const backedBefore = await pool.backedAirToken();
       const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
       const pos = await positionNFT.getPosition(nftId);
-      expect(await pool.backedAirMeme()).to.equal(backedBefore - pos.lockedAmount);
+      expect(await pool.backedAirToken()).to.equal(backedBefore - pos.lockedAmount);
     });
 
     it("increments openPositionCount", async function () {
@@ -386,7 +386,7 @@ describe("EXNIHILOPool", function () {
       );
     });
 
-    it("reverts when slippage guard triggers (minAirMemeOut too high)", async function () {
+    it("reverts when slippage guard triggers (minAirTokenOut too high)", async function () {
       const { pool, trader1 } = await loadFixture(deployPoolFixture);
       await expect(
         pool.connect(trader1).openLong(ethers.parseUnits("100", 6), ethers.MaxUint256)
@@ -411,15 +411,15 @@ describe("EXNIHILOPool", function () {
   describe("3. Close Long", function () {
 
     /**
-     * Opens a long position then pumps the meme price so the position is
-     * in profit when closed.  Pumping is done by having trader2 swap USDC→meme,
-     * which reduces meme supply relative to USDC backing.
+     * Opens a long position then pumps the token price so the position is
+     * in profit when closed.  Pumping is done by having trader2 swap USDC→token,
+     * which reduces token supply relative to USDC backing.
      */
     async function withProfitableLongFixture() {
       const base = await deployPoolFixture();
       const nftId = await openLong(base.pool, base.trader1, ethers.parseUnits("100", 6));
 
-      // Pump meme price: trader2 buys meme with 500 USDC (USDC→meme swap).
+      // Pump token price: trader2 buys token with 500 USDC (USDC→token swap).
       const pumpUsdc = ethers.parseUnits("500", 6);
       await base.usdc.mint(base.trader2.address, pumpUsdc);
       await base.usdc.connect(base.trader2).approve(await base.pool.getAddress(), ethers.MaxUint256);
@@ -448,14 +448,14 @@ describe("EXNIHILOPool", function () {
     });
 
     it("reverts when position is underwater", async function () {
-      const { pool, memeToken, usdc, trader1, trader2 } = await loadFixture(deployPoolFixture);
+      const { pool, baseToken, usdc, trader1, trader2 } = await loadFixture(deployPoolFixture);
 
       const nftId = await openLong(pool, trader1, ethers.parseUnits("500", 6));
 
-      // Crash price by dumping meme
+      // Crash price by dumping token
       const dump = ethers.parseEther("5000000");
-      await memeToken.mint(trader2.address, dump);
-      await memeToken.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
+      await baseToken.mint(trader2.address, dump);
+      await baseToken.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
       await pool.connect(trader2).swap(dump, 0n, true);
 
       await expect(
@@ -488,18 +488,18 @@ describe("EXNIHILOPool", function () {
       return { ...base, nftId };
     }
 
-    it("trader pays airUsdMinted USDC and receives locked meme", async function () {
-      const { pool, usdc, memeToken, positionNFT, trader1, nftId } =
+    it("trader pays airUsdMinted USDC and receives locked token", async function () {
+      const { pool, usdc, baseToken, positionNFT, trader1, nftId } =
         await loadFixture(withLongFixture);
 
       const pos = await positionNFT.getPosition(nftId);
       await usdc.mint(trader1.address, pos.airUsdMinted);
-      const memeBefore = await memeToken.balanceOf(trader1.address);
+      const tokenBefore = await baseToken.balanceOf(trader1.address);
 
       await pool.connect(trader1).realizeLong(nftId);
 
-      expect(await memeToken.balanceOf(trader1.address)).to.equal(
-        memeBefore + pos.lockedAmount
+      expect(await baseToken.balanceOf(trader1.address)).to.equal(
+        tokenBefore + pos.lockedAmount
       );
     });
 
@@ -577,12 +577,12 @@ describe("EXNIHILOPool", function () {
       expect(await positionNFT.ownerOf(nftId)).to.equal(trader1.address);
     });
 
-    it("inflates airMeme totalSupply (synthetic debt)", async function () {
+    it("inflates airToken totalSupply (synthetic debt)", async function () {
       const { pool, trader1 } = await loadFixture(deployPoolFixture);
-      const airMeme = await ethers.getContractAt("AirToken", await pool.airMemeToken());
-      const supplyBefore = await airMeme.totalSupply();
+      const airToken = await ethers.getContractAt("AirToken", await pool.airToken());
+      const supplyBefore = await airToken.totalSupply();
       await openShort(pool, trader1, ethers.parseUnits("100", 6));
-      expect(await airMeme.totalSupply()).to.be.gt(supplyBefore);
+      expect(await airToken.totalSupply()).to.be.gt(supplyBefore);
     });
 
     it("backedAirUsd decreases by airUsdOut (collateral locked)", async function () {
@@ -593,11 +593,11 @@ describe("EXNIHILOPool", function () {
       expect(await pool.backedAirUsd()).to.equal(backedBefore - pos.lockedAmount);
     });
 
-    it("backedAirMeme does NOT change on openShort", async function () {
+    it("backedAirToken does NOT change on openShort", async function () {
       const { pool, trader1 } = await loadFixture(deployPoolFixture);
-      const backedBefore = await pool.backedAirMeme();
+      const backedBefore = await pool.backedAirToken();
       await openShort(pool, trader1, ethers.parseUnits("100", 6));
-      expect(await pool.backedAirMeme()).to.equal(backedBefore);
+      expect(await pool.backedAirToken()).to.equal(backedBefore);
     });
 
     it("increments openPositionCount", async function () {
@@ -634,9 +634,9 @@ describe("EXNIHILOPool", function () {
 
   // ── 6. Close Short ────────────────────────────────────────────────────────
   //
-  // Note: closeShort checks whether cpAmountOut(lockedAmount, airUsdSupply, backedAirMeme)
-  // covers the airMemeMinted debt.  For standard 18-decimal meme / 6-decimal USDC
-  // pools the lockedAmount (6 dec, small) buys back far fewer airMeme (18 dec) than
+  // Note: closeShort checks whether cpAmountOut(lockedAmount, airUsdSupply, backedAirToken)
+  // covers the airTokenMinted debt.  For standard 18-decimal token / 6-decimal USDC
+  // pools the lockedAmount (6 dec, small) buys back far fewer airToken (18 dec) than
   // the debt, so positions are permanently underwater.  All tests below reflect the
   // actual contract behaviour.
 
@@ -648,20 +648,20 @@ describe("EXNIHILOPool", function () {
       return { ...base, nftId };
     }
 
-    it("always reverts with PositionUnderwater for 18-dec meme / 6-dec USDC", async function () {
-      // lockedAmount (6-dec units) buys back far fewer airMeme (18-dec) than the debt → underwater.
+    it("always reverts with PositionUnderwater for 18-dec token / 6-dec USDC", async function () {
+      // lockedAmount (6-dec units) buys back far fewer airToken (18-dec) than the debt → underwater.
       const { pool, trader1, nftId } = await loadFixture(withShortFixture);
       await expect(
         pool.connect(trader1).closeShort(nftId, 0n)
       ).to.be.revertedWithCustomError(pool, "PositionUnderwater");
     });
 
-    it("short remains underwater after a price pump (meme more expensive to buy back)", async function () {
-      // A price pump increases the cost to buy back the airMeme debt,
+    it("short remains underwater after a price pump (token more expensive to buy back)", async function () {
+      // A price pump increases the cost to buy back the airToken debt,
       // which pushes a short further underwater.
       const { pool, usdc, trader1, trader2, nftId } = await loadFixture(withShortFixture);
 
-      // Pump price by buying meme with large USDC
+      // Pump price by buying token with large USDC
       const pumpUsdc = ethers.parseUnits("8000", 6);
       await usdc.mint(trader2.address, pumpUsdc);
       await usdc.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
@@ -673,11 +673,11 @@ describe("EXNIHILOPool", function () {
     });
 
     it("reverts when position is underwater due to price pump", async function () {
-      const { pool, usdc, memeToken, trader1, trader2 } = await loadFixture(deployPoolFixture);
+      const { pool, usdc, baseToken, trader1, trader2 } = await loadFixture(deployPoolFixture);
 
       const nftId = await openShort(pool, trader1, ethers.parseUnits("500", 6));
 
-      // Pump price by buying meme with large USDC
+      // Pump price by buying token with large USDC
       const pumpUsdc = ethers.parseUnits("5000", 6);
       await usdc.mint(trader2.address, pumpUsdc);
       await usdc.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
@@ -708,12 +708,12 @@ describe("EXNIHILOPool", function () {
       return { ...base, nftId };
     }
 
-    it("trader pays airMemeMinted meme and receives locked USDC", async function () {
-      const { pool, usdc, memeToken, positionNFT, trader1, nftId } =
+    it("trader pays airTokenMinted token and receives locked USDC", async function () {
+      const { pool, usdc, baseToken, positionNFT, trader1, nftId } =
         await loadFixture(withShortFixture);
 
       const pos = await positionNFT.getPosition(nftId);
-      await memeToken.mint(trader1.address, pos.airMemeMinted);
+      await baseToken.mint(trader1.address, pos.airTokenMinted);
       const usdcBefore = await usdc.balanceOf(trader1.address);
 
       await pool.connect(trader1).realizeShort(nftId);
@@ -724,21 +724,21 @@ describe("EXNIHILOPool", function () {
     });
 
     it("NFT is burned after realizeShort", async function () {
-      const { pool, memeToken, positionNFT, trader1, nftId } =
+      const { pool, baseToken, positionNFT, trader1, nftId } =
         await loadFixture(withShortFixture);
 
       const pos = await positionNFT.getPosition(nftId);
-      await memeToken.mint(trader1.address, pos.airMemeMinted);
+      await baseToken.mint(trader1.address, pos.airTokenMinted);
       await pool.connect(trader1).realizeShort(nftId);
       await expect(positionNFT.ownerOf(nftId)).to.be.reverted;
     });
 
     it("openPositionCount decrements after realizeShort", async function () {
-      const { pool, memeToken, positionNFT, trader1, nftId } =
+      const { pool, baseToken, positionNFT, trader1, nftId } =
         await loadFixture(withShortFixture);
 
       const pos = await positionNFT.getPosition(nftId);
-      await memeToken.mint(trader1.address, pos.airMemeMinted);
+      await baseToken.mint(trader1.address, pos.airTokenMinted);
       await pool.connect(trader1).realizeShort(nftId);
       expect(await pool.openPositionCount()).to.equal(0n);
     });
@@ -751,14 +751,14 @@ describe("EXNIHILOPool", function () {
     });
 
     it("emits ShortRealized event", async function () {
-      const { pool, memeToken, positionNFT, trader1, nftId } =
+      const { pool, baseToken, positionNFT, trader1, nftId } =
         await loadFixture(withShortFixture);
 
       const pos = await positionNFT.getPosition(nftId);
-      await memeToken.mint(trader1.address, pos.airMemeMinted);
+      await baseToken.mint(trader1.address, pos.airTokenMinted);
       await expect(pool.connect(trader1).realizeShort(nftId))
         .to.emit(pool, "ShortRealized")
-        .withArgs(nftId, trader1.address, pos.airMemeMinted, pos.lockedAmount);
+        .withArgs(nftId, trader1.address, pos.airTokenMinted, pos.lockedAmount);
     });
   });
 
@@ -767,21 +767,21 @@ describe("EXNIHILOPool", function () {
   describe("8. LP: addLiquidity", function () {
 
     it("LP holder can add liquidity in the correct ratio", async function () {
-      const { pool, memeToken, usdc, creator } = await loadFixture(deployPoolFixture);
+      const { pool, baseToken, usdc, creator } = await loadFixture(deployPoolFixture);
 
-      const backedMeme = await pool.backedAirMeme();
+      const backedToken = await pool.backedAirToken();
       const backedUsd  = await pool.backedAirUsd();
-      const addMeme    = ethers.parseEther("100000");
-      const addUsd     = (addMeme * backedUsd) / backedMeme;
+      const addToken    = ethers.parseEther("100000");
+      const addUsd     = (addToken * backedUsd) / backedToken;
 
-      await memeToken.mint(creator.address, addMeme);
+      await baseToken.mint(creator.address, addToken);
       await usdc.mint(creator.address, addUsd);
-      await memeToken.connect(creator).approve(await pool.getAddress(), addMeme);
+      await baseToken.connect(creator).approve(await pool.getAddress(), addToken);
       await usdc.connect(creator).approve(await pool.getAddress(), addUsd);
 
-      await pool.connect(creator).addLiquidity(addMeme, addUsd);
+      await pool.connect(creator).addLiquidity(addToken, addUsd);
 
-      expect(await pool.backedAirMeme()).to.equal(backedMeme + addMeme);
+      expect(await pool.backedAirToken()).to.equal(backedToken + addToken);
       // Allow ±2 wei rounding in USDC side
       const newBacked = await pool.backedAirUsd();
       expect(newBacked).to.be.gte(backedUsd + addUsd - 2n);
@@ -789,30 +789,30 @@ describe("EXNIHILOPool", function () {
     });
 
     it("reverts when called by non-LP-holder", async function () {
-      const { pool, memeToken, usdc, other } = await loadFixture(deployPoolFixture);
-      await memeToken.mint(other.address, INITIAL_MEME);
+      const { pool, baseToken, usdc, other } = await loadFixture(deployPoolFixture);
+      await baseToken.mint(other.address, INITIAL_TOKEN);
       await usdc.mint(other.address, INITIAL_USDC);
-      await memeToken.connect(other).approve(await pool.getAddress(), ethers.MaxUint256);
+      await baseToken.connect(other).approve(await pool.getAddress(), ethers.MaxUint256);
       await usdc.connect(other).approve(await pool.getAddress(), ethers.MaxUint256);
       await expect(
-        pool.connect(other).addLiquidity(INITIAL_MEME, INITIAL_USDC)
+        pool.connect(other).addLiquidity(INITIAL_TOKEN, INITIAL_USDC)
       ).to.be.revertedWithCustomError(pool, "OnlyLpHolder");
     });
 
     it("reverts when ratio is wrong", async function () {
-      const { pool, memeToken, usdc, creator } = await loadFixture(deployPoolFixture);
-      const addMeme = ethers.parseEther("100000");
+      const { pool, baseToken, usdc, creator } = await loadFixture(deployPoolFixture);
+      const addToken = ethers.parseEther("100000");
       const badUsd  = ethers.parseUnits("1", 6);
-      await memeToken.mint(creator.address, addMeme);
+      await baseToken.mint(creator.address, addToken);
       await usdc.mint(creator.address, badUsd);
-      await memeToken.connect(creator).approve(await pool.getAddress(), addMeme);
+      await baseToken.connect(creator).approve(await pool.getAddress(), addToken);
       await usdc.connect(creator).approve(await pool.getAddress(), badUsd);
       await expect(
-        pool.connect(creator).addLiquidity(addMeme, badUsd)
+        pool.connect(creator).addLiquidity(addToken, badUsd)
       ).to.be.revertedWithCustomError(pool, "RatioMismatch");
     });
 
-    it("reverts when memeAmount is zero", async function () {
+    it("reverts when tokenAmount is zero", async function () {
       const { pool, creator } = await loadFixture(deployPoolFixture);
       await expect(
         pool.connect(creator).addLiquidity(0n, INITIAL_USDC)
@@ -820,23 +820,23 @@ describe("EXNIHILOPool", function () {
     });
 
     it("emits LiquidityAdded event", async function () {
-      const { pool, memeToken, usdc, creator } = await loadFixture(deployPoolFixture);
+      const { pool, baseToken, usdc, creator } = await loadFixture(deployPoolFixture);
 
-      const backedMeme = await pool.backedAirMeme();
+      const backedToken = await pool.backedAirToken();
       const backedUsd  = await pool.backedAirUsd();
-      const addMeme    = ethers.parseEther("100000");
-      const addUsd     = (addMeme * backedUsd) / backedMeme;
+      const addToken    = ethers.parseEther("100000");
+      const addUsd     = (addToken * backedUsd) / backedToken;
 
-      await memeToken.mint(creator.address, addMeme);
+      await baseToken.mint(creator.address, addToken);
       await usdc.mint(creator.address, addUsd);
-      await memeToken.connect(creator).approve(await pool.getAddress(), addMeme);
+      await baseToken.connect(creator).approve(await pool.getAddress(), addToken);
       await usdc.connect(creator).approve(await pool.getAddress(), addUsd);
 
-      await expect(pool.connect(creator).addLiquidity(addMeme, addUsd))
+      await expect(pool.connect(creator).addLiquidity(addToken, addUsd))
         .to.emit(pool, "LiquidityAdded")
         .withArgs(
-          creator.address, addMeme, addUsd,
-          backedMeme + addMeme,
+          creator.address, addToken, addUsd,
+          backedToken + addToken,
           (v: bigint) => v > 0n
         );
     });
@@ -847,23 +847,23 @@ describe("EXNIHILOPool", function () {
   describe("9. LP: removeLiquidity", function () {
 
     it("returns both assets to the LP holder when no positions are open", async function () {
-      const { pool, memeToken, usdc, creator } = await loadFixture(deployPoolFixture);
+      const { pool, baseToken, usdc, creator } = await loadFixture(deployPoolFixture);
 
-      const backedMeme = await pool.backedAirMeme();
+      const backedToken = await pool.backedAirToken();
       const backedUsd  = await pool.backedAirUsd();
-      const memeBefore = await memeToken.balanceOf(creator.address);
+      const tokenBefore = await baseToken.balanceOf(creator.address);
       const usdcBefore = await usdc.balanceOf(creator.address);
 
       await pool.connect(creator).removeLiquidity();
 
-      expect(await memeToken.balanceOf(creator.address)).to.equal(memeBefore + backedMeme);
+      expect(await baseToken.balanceOf(creator.address)).to.equal(tokenBefore + backedToken);
       expect(await usdc.balanceOf(creator.address)).to.equal(usdcBefore + backedUsd);
     });
 
     it("sets backed reserves to zero after remove", async function () {
       const { pool, creator } = await loadFixture(deployPoolFixture);
       await pool.connect(creator).removeLiquidity();
-      expect(await pool.backedAirMeme()).to.equal(0n);
+      expect(await pool.backedAirToken()).to.equal(0n);
       expect(await pool.backedAirUsd()).to.equal(0n);
     });
 
@@ -884,11 +884,11 @@ describe("EXNIHILOPool", function () {
 
     it("emits LiquidityRemoved event", async function () {
       const { pool, creator } = await loadFixture(deployPoolFixture);
-      const backedMeme = await pool.backedAirMeme();
+      const backedToken = await pool.backedAirToken();
       const backedUsd  = await pool.backedAirUsd();
       await expect(pool.connect(creator).removeLiquidity())
         .to.emit(pool, "LiquidityRemoved")
-        .withArgs(creator.address, backedMeme, backedUsd);
+        .withArgs(creator.address, backedToken, backedUsd);
     });
   });
 
@@ -946,8 +946,8 @@ describe("EXNIHILOPool", function () {
 
   describe("11. LP: forceRealize", function () {
 
-    it("force-realize underwater long: LP pays USDC, holder receives meme", async function () {
-      const { pool, usdc, memeToken, positionNFT, creator, trader1, trader2 } =
+    it("force-realize underwater long: LP pays USDC, holder receives token", async function () {
+      const { pool, usdc, baseToken, positionNFT, creator, trader1, trader2 } =
         await loadFixture(deployPoolFixture);
 
       const nftId = await openLong(pool, trader1, ethers.parseUnits("500", 6));
@@ -955,26 +955,26 @@ describe("EXNIHILOPool", function () {
 
       // Crash price
       const dump = ethers.parseEther("5000000");
-      await memeToken.mint(trader2.address, dump);
-      await memeToken.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
+      await baseToken.mint(trader2.address, dump);
+      await baseToken.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
       await pool.connect(trader2).swap(dump, 0n, true);
 
       // LP pays USDC debt
       await usdc.mint(creator.address, pos.airUsdMinted);
       await usdc.connect(creator).approve(await pool.getAddress(), pos.airUsdMinted);
 
-      const memeBefore = await memeToken.balanceOf(trader1.address);
+      const tokenBefore = await baseToken.balanceOf(trader1.address);
       await pool.connect(creator).forceRealize(nftId);
 
-      expect(await memeToken.balanceOf(trader1.address)).to.equal(
-        memeBefore + pos.lockedAmount
+      expect(await baseToken.balanceOf(trader1.address)).to.equal(
+        tokenBefore + pos.lockedAmount
       );
       await expect(positionNFT.ownerOf(nftId)).to.be.reverted;
       expect(await pool.openPositionCount()).to.equal(0n);
     });
 
-    it("force-realize underwater short: LP pays meme, holder receives USDC", async function () {
-      const { pool, usdc, memeToken, positionNFT, creator, trader1, trader2 } =
+    it("force-realize underwater short: LP pays token, holder receives USDC", async function () {
+      const { pool, usdc, baseToken, positionNFT, creator, trader1, trader2 } =
         await loadFixture(deployPoolFixture);
 
       const nftId = await openShort(pool, trader1, ethers.parseUnits("500", 6));
@@ -986,9 +986,9 @@ describe("EXNIHILOPool", function () {
       await usdc.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
       await pool.connect(trader2).swap(pumpUsdc, 0n, false);
 
-      // LP pays meme debt
-      await memeToken.mint(creator.address, pos.airMemeMinted);
-      await memeToken.connect(creator).approve(await pool.getAddress(), pos.airMemeMinted);
+      // LP pays token debt
+      await baseToken.mint(creator.address, pos.airTokenMinted);
+      await baseToken.connect(creator).approve(await pool.getAddress(), pos.airTokenMinted);
 
       const usdcBefore = await usdc.balanceOf(trader1.address);
       await pool.connect(creator).forceRealize(nftId);
@@ -1002,7 +1002,7 @@ describe("EXNIHILOPool", function () {
       const { pool, usdc, creator, trader1, trader2 } = await loadFixture(deployPoolFixture);
       const nftId = await openLong(pool, trader1, ethers.parseUnits("50", 6));
 
-      // Pump the meme price so the long position is in profit.
+      // Pump the token price so the long position is in profit.
       const pumpUsdc = ethers.parseUnits("500", 6);
       await usdc.mint(trader2.address, pumpUsdc);
       await usdc.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
@@ -1014,14 +1014,14 @@ describe("EXNIHILOPool", function () {
     });
 
     it("reverts when called by non-LP-holder", async function () {
-      const { pool, memeToken, usdc, positionNFT, trader1, trader2, other } =
+      const { pool, baseToken, usdc, positionNFT, trader1, trader2, other } =
         await loadFixture(deployPoolFixture);
 
       const nftId = await openLong(pool, trader1, ethers.parseUnits("500", 6));
 
       const dump = ethers.parseEther("5000000");
-      await memeToken.mint(trader2.address, dump);
-      await memeToken.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
+      await baseToken.mint(trader2.address, dump);
+      await baseToken.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
       await pool.connect(trader2).swap(dump, 0n, true);
 
       await expect(
@@ -1030,15 +1030,15 @@ describe("EXNIHILOPool", function () {
     });
 
     it("emits PositionForceRealized for an underwater long", async function () {
-      const { pool, usdc, memeToken, positionNFT, creator, trader1, trader2 } =
+      const { pool, usdc, baseToken, positionNFT, creator, trader1, trader2 } =
         await loadFixture(deployPoolFixture);
 
       const nftId = await openLong(pool, trader1, ethers.parseUnits("500", 6));
       const pos   = await positionNFT.getPosition(nftId);
 
       const dump = ethers.parseEther("5000000");
-      await memeToken.mint(trader2.address, dump);
-      await memeToken.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
+      await baseToken.mint(trader2.address, dump);
+      await baseToken.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
       await pool.connect(trader2).swap(dump, 0n, true);
 
       await usdc.mint(creator.address, pos.airUsdMinted);
@@ -1074,15 +1074,15 @@ describe("EXNIHILOPool", function () {
       expect(cap).to.be.lte(MAX_POS_USD);
     });
 
-    it("quoteSwap USDC→meme direction returns nonzero netOut", async function () {
-      const { pool, memeToken, trader1 } = await loadFixture(deployPoolFixture);
+    it("quoteSwap USDC→token direction returns nonzero netOut", async function () {
+      const { pool, baseToken, trader1 } = await loadFixture(deployPoolFixture);
       const swapIn = ethers.parseUnits("100", 6);
       const [, , netOut] = await pool.quoteSwap(swapIn, false);
       expect(netOut).to.be.gt(0n);
       // Verify quote matches actual swap output.
-      const memeBefore = await memeToken.balanceOf(trader1.address);
+      const tokenBefore = await baseToken.balanceOf(trader1.address);
       await pool.connect(trader1).swap(swapIn, 0n, false);
-      expect(await memeToken.balanceOf(trader1.address) - memeBefore).to.equal(netOut);
+      expect(await baseToken.balanceOf(trader1.address) - tokenBefore).to.equal(netOut);
     });
 
     it("quoteSwap returns (0,0,0) when amountIn is zero", async function () {
@@ -1101,9 +1101,9 @@ describe("EXNIHILOPool", function () {
 
     it("effectiveLeverageCap returns max when both caps disabled", async function () {
       // Deploy a pool with both maxPositionUsd=0 and maxPositionBps=0.
-      const { factory, usdc, memeToken, creator } = await loadFixture(deployFactoryFixtureForPool);
+      const { factory, usdc, baseToken, creator } = await loadFixture(deployFactoryFixtureForPool);
       const tx = await factory.connect(creator).createMarket(
-        await memeToken.getAddress(), INITIAL_USDC, INITIAL_MEME, 0n, 0n
+        await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n
       );
       const receipt = await tx.wait();
       const log = receipt!.logs
@@ -1116,9 +1116,9 @@ describe("EXNIHILOPool", function () {
     it("effectiveLeverageCap when only maxPositionBps is set (bps cap binds)", async function () {
       // Deploy a pool with maxPositionUsd=0 and maxPositionBps=100 (1 %).
       // The cap should equal 1 % of backedAirUsd.
-      const { factory, usdc, memeToken, creator } = await loadFixture(deployFactoryFixtureForPool);
+      const { factory, usdc, baseToken, creator } = await loadFixture(deployFactoryFixtureForPool);
       const tx = await factory.connect(creator).createMarket(
-        await memeToken.getAddress(), INITIAL_USDC, INITIAL_MEME, 0n, 100n // 1% bps
+        await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 100n // 1% bps
       );
       const receipt = await tx.wait();
       const log = receipt!.logs
@@ -1132,9 +1132,9 @@ describe("EXNIHILOPool", function () {
 
     it("effectiveLeverageCap when bpsCap < usdCap (bps binds)", async function () {
       // maxPositionBps=10 (0.1%), maxPositionUsd=very large → bps cap binds.
-      const { factory, usdc, memeToken, creator } = await loadFixture(deployFactoryFixtureForPool);
+      const { factory, usdc, baseToken, creator } = await loadFixture(deployFactoryFixtureForPool);
       const tx = await factory.connect(creator).createMarket(
-        await memeToken.getAddress(), INITIAL_USDC, INITIAL_MEME,
+        await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN,
         ethers.parseUnits("9999", 6), // large USD cap
         10n                           // 0.1% bps cap (binding)
       );
@@ -1173,10 +1173,10 @@ describe("EXNIHILOPool", function () {
       expect(await pool.isLongUnderwater(nftId)).to.equal(true);
     });
 
-    it("isLongUnderwater returns false after the meme price pumps sufficiently", async function () {
+    it("isLongUnderwater returns false after the token price pumps sufficiently", async function () {
       const { pool, usdc, trader1, trader2 } = await loadFixture(deployPoolFixture);
       const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
-      // Pump meme price with a large USDC→meme swap.
+      // Pump token price with a large USDC→token swap.
       const pumpUsdc = ethers.parseUnits("500", 6);
       await usdc.mint(trader2.address, pumpUsdc);
       await usdc.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
@@ -1185,8 +1185,8 @@ describe("EXNIHILOPool", function () {
     });
 
     it("isShortUnderwater returns true for a standard 18-dec/6-dec pool short", async function () {
-      // For 18-dec meme / 6-dec USDC, lockedAmount (6-dec) can never buy back
-      // airMemeMinted (18-dec) → always underwater.
+      // For 18-dec token / 6-dec USDC, lockedAmount (6-dec) can never buy back
+      // airTokenMinted (18-dec) → always underwater.
       const { pool, trader1 } = await loadFixture(deployPoolFixture);
       const nftId = await openShort(pool, trader1, ethers.parseUnits("100", 6));
       expect(await pool.isShortUnderwater(nftId)).to.equal(true);
@@ -1194,9 +1194,9 @@ describe("EXNIHILOPool", function () {
 
     it("openLong reverts with bps cap when only maxPositionBps is set", async function () {
       // Pool with maxPositionBps=10 (0.1 %), maxPositionUsd=0.
-      const { factory, usdc, memeToken, creator, trader1 } = await loadFixture(deployFactoryFixtureForPool);
+      const { factory, usdc, baseToken, creator, trader1 } = await loadFixture(deployFactoryFixtureForPool);
       await factory.connect(creator).createMarket(
-        await memeToken.getAddress(), INITIAL_USDC, INITIAL_MEME, 0n, 10n
+        await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 10n
       );
       const poolAddr = await factory.allPools(0n);
       const pool = await ethers.getContractAt("EXNIHILOPool", poolAddr);
@@ -1224,38 +1224,38 @@ describe("EXNIHILOPool", function () {
 
     /**
      * The full 4-step sequence on the STANDARD pool (10,000 USDC / 1,000,000 PEPE):
-     *   1. openLong($10):  pays $0.50 fee; SWAP-2 locks ~989 airMeme collateral.
-     *   2. swap($9,999 USDC→PEPE):  burns ~497k airMeme; price roughly doubles.
+     *   1. openLong($10):  pays $0.50 fee; SWAP-2 locks ~989 airToken collateral.
+     *   2. swap($9,999 USDC→PEPE):  burns ~497k airToken; price roughly doubles.
      *   3. closeLong: SWAP-3 returns ~$29 profit (price up but supply only halved).
      *   4. swap(PEPE→USDC):  ~$9,882 back.
      *
      *   Net ≈ −$0.50 − $9,999 + $29 + $9,882 = −$88 (negative — pool protected).
      *
      * Why thin pools (e.g. 1,000/1,000) are dangerous:
-     *   The same swap burns ~90% of airMeme supply instead of ~50%, collapsing
+     *   The same swap burns ~90% of airToken supply instead of ~50%, collapsing
      *   SWAP-3's (totalSupply − locked) denominator to ~91 tokens and inflating
      *   the profit to ~$1,051 → net ≈ +$68, draining the LP.
      *   Pool creators should seed with adequate liquidity; the leverage cap
      *   further limits the exploitable position-to-pool ratio.
      */
     it("full sequence is net NEGATIVE — standard pool cannot be drained by pump-and-dump", async function () {
-      const { pool, memeToken, usdc, trader1 } = await loadFixture(deployPoolFixture);
+      const { pool, baseToken, usdc, trader1 } = await loadFixture(deployPoolFixture);
 
       const usdcBefore = await usdc.balanceOf(trader1.address);
-      const memeBefore = await memeToken.balanceOf(trader1.address);
+      const tokenBefore = await baseToken.balanceOf(trader1.address);
 
       // Step 1: open $10 long (pays only $0.50 fee upfront)
       const nftId = await openLong(pool, trader1, LONG_NOTIONAL);
 
       // Step 2: pump — $9,999 USDC → PEPE
       await pool.connect(trader1).swap(SWAP_IN_USDC, 0n, false);
-      const memeReceived = (await memeToken.balanceOf(trader1.address)) - memeBefore;
+      const tokenReceived = (await baseToken.balanceOf(trader1.address)) - tokenBefore;
 
       // Step 3: close long (collects profit from the price increase)
       await pool.connect(trader1).closeLong(nftId, 0n);
 
       // Step 4: dump — sell all received PEPE back to USDC
-      await pool.connect(trader1).swap(memeReceived, 0n, true);
+      await pool.connect(trader1).swap(tokenReceived, 0n, true);
 
       const netGain = (await usdc.balanceOf(trader1.address)) - usdcBefore;
 
@@ -1273,25 +1273,25 @@ describe("EXNIHILOPool", function () {
      * as SWAP-1, so the 1% swap fee bites in both directions.
      *
      * Effect of the fee:
-     *   SWAP-2: fewer airMeme tokens locked (fee reduces output)
+     *   SWAP-2: fewer airToken tokens locked (fee reduces output)
      *   SWAP-3: less airUsd returned to the trader (fee reduces output)
      *
      * At pool creation, airUsd.totalSupply() == backedAirUsd (LP holds all
      * airUsd), so backedAirUsd is a valid stand-in for the SWAP-2 reserveIn.
-     * After a single USDC→PEPE swap, backedAirMeme == airMeme.totalSupply()
-     * minus the locked amount (one open position), so backedAirMeme is a
+     * After a single USDC→PEPE swap, backedAirToken == airToken.totalSupply()
+     * minus the locked amount (one open position), so backedAirToken is a
      * valid stand-in for the SWAP-3 reserveIn.
      */
     it("SWAP-2 and SWAP-3 apply the 1% swapFee (same _cpAmountOut as SWAP-1)", async function () {
       const { pool, usdc, positionNFT, trader1 } = await loadFixture(deployPoolFixture);
 
-      const backedMeme = await pool.backedAirMeme(); // = airMeme.totalSupply() initially
+      const backedToken = await pool.backedAirToken(); // = airToken.totalSupply() initially
       const backedUsd  = await pool.backedAirUsd();  // = airUsd.totalSupply() initially
 
       // ── SWAP-2 fee verification ──────────────────────────────────────────
       // With 1% fee the locked amount is strictly less than the fee-free amount
-      const lockedWithFee    = cpOut(LONG_NOTIONAL, backedUsd,  backedMeme);      // 100 bps
-      const lockedWithoutFee = cpOut(LONG_NOTIONAL, backedUsd,  backedMeme, 0n);  //   0 bps
+      const lockedWithFee    = cpOut(LONG_NOTIONAL, backedUsd,  backedToken);      // 100 bps
+      const lockedWithoutFee = cpOut(LONG_NOTIONAL, backedUsd,  backedToken, 0n);  //   0 bps
       expect(lockedWithFee).to.be.lt(lockedWithoutFee);
 
       // The contract must produce the fee-reduced amount
@@ -1304,9 +1304,9 @@ describe("EXNIHILOPool", function () {
 
       // ── SWAP-3 fee verification ──────────────────────────────────────────
       // After one open position + one USDC→PEPE swap:
-      //   backedAirMeme = airMeme.totalSupply() − lockedAmount  (identity holds)
-      // so backedAirMeme is the correct SWAP-3 reserveIn.
-      const reserveIn  = await pool.backedAirMeme();
+      //   backedAirToken = airToken.totalSupply() − lockedAmount  (identity holds)
+      // so backedAirToken is the correct SWAP-3 reserveIn.
+      const reserveIn  = await pool.backedAirToken();
       const reserveOut = await pool.backedAirUsd();
 
       const airUsdWithFee    = cpOut(pos.lockedAmount, reserveIn, reserveOut);      // 100 bps
@@ -1332,20 +1332,20 @@ describe("EXNIHILOPool", function () {
       expect(usdcBefore - await usdc.balanceOf(trader1.address)).to.equal(LONG_FEE);
     });
 
-    it("step 2 — USDC→PEPE swap burns airMeme, reducing totalSupply by ~50%", async function () {
-      const { pool, memeToken, usdc, trader1 } = await loadFixture(deployPoolFixture);
+    it("step 2 — USDC→PEPE swap burns airToken, reducing totalSupply by ~50%", async function () {
+      const { pool, baseToken, usdc, trader1 } = await loadFixture(deployPoolFixture);
 
       await openLong(pool, trader1, LONG_NOTIONAL);
-      const backedMemeBefore = await pool.backedAirMeme();
+      const backedTokenBefore = await pool.backedAirToken();
 
-      const memeBefore = await memeToken.balanceOf(trader1.address);
+      const tokenBefore = await baseToken.balanceOf(trader1.address);
       await pool.connect(trader1).swap(SWAP_IN_USDC, 0n, false);
-      const memeOut = (await memeToken.balanceOf(trader1.address)) - memeBefore;
+      const tokenOut = (await baseToken.balanceOf(trader1.address)) - tokenBefore;
 
       // ~497k PEPE out of ~999k backed (standard pool handles the swap without
       // supply implosion — contrast with thin pool where >90% is consumed)
-      expect(memeOut).to.be.gt(ethers.parseEther("400000"));
-      expect(memeOut).to.be.lt(backedMemeBefore); // cannot exceed what was backed
+      expect(tokenOut).to.be.gt(ethers.parseEther("400000"));
+      expect(tokenOut).to.be.lt(backedTokenBefore); // cannot exceed what was backed
 
       // USDC side grew by the full swap input
       expect(await pool.backedAirUsd()).to.be.gt(ethers.parseUnits("19000", 6));
@@ -1362,24 +1362,24 @@ describe("EXNIHILOPool", function () {
       const profit = (await usdc.balanceOf(trader1.address)) - usdcBeforeClose;
 
       // Profit is positive (price roughly doubled) but small (~$28):
-      // airMeme supply only halved so SWAP-3's denominator is still large.
+      // airToken supply only halved so SWAP-3's denominator is still large.
       // This is what keeps the full sequence net negative.
       expect(profit).to.be.gt(0n);
       expect(profit).to.be.lt(ethers.parseUnits("100", 6));
     });
 
     it("step 4 — PEPE reswap recovers most but not all of the swap cost", async function () {
-      const { pool, memeToken, usdc, trader1 } = await loadFixture(deployPoolFixture);
+      const { pool, baseToken, usdc, trader1 } = await loadFixture(deployPoolFixture);
 
-      const memeBefore = await memeToken.balanceOf(trader1.address);
+      const tokenBefore = await baseToken.balanceOf(trader1.address);
       const nftId      = await openLong(pool, trader1, LONG_NOTIONAL);
       await pool.connect(trader1).swap(SWAP_IN_USDC, 0n, false);
-      const memeReceived = (await memeToken.balanceOf(trader1.address)) - memeBefore;
+      const tokenReceived = (await baseToken.balanceOf(trader1.address)) - tokenBefore;
 
       await pool.connect(trader1).closeLong(nftId, 0n);
 
       const usdcBeforeReswap = await usdc.balanceOf(trader1.address);
-      await pool.connect(trader1).swap(memeReceived, 0n, true);
+      await pool.connect(trader1).swap(tokenReceived, 0n, true);
       const usdcFromReswap = (await usdc.balanceOf(trader1.address)) - usdcBeforeReswap;
 
       // Round-trip slippage means the reswap always returns less than was put in
@@ -1398,7 +1398,7 @@ async function deployFactoryFixtureForPool() {
   const [deployer, treasury, creator, trader1] = await ethers.getSigners();
 
   const MockERC20F = await ethers.getContractFactory("MockERC20");
-  const memeToken = (await MockERC20F.connect(deployer).deploy("PEPE", "PEPE", 18)) as MockERC20;
+  const baseToken = (await MockERC20F.connect(deployer).deploy("PEPE", "PEPE", 18)) as MockERC20;
   const usdc      = (await MockERC20F.connect(deployer).deploy("USD Coin", "USDC", 6)) as MockERC20;
   const positionNFT = (await (await ethers.getContractFactory("PositionNFT"))
     .connect(deployer).deploy()) as PositionNFT;
@@ -1406,12 +1406,12 @@ async function deployFactoryFixtureForPool() {
   const { factory, lpNft } = await deploySystem(treasury.address, await positionNFT.getAddress(), await usdc.getAddress());
   const factoryAddr = await factory.getAddress();
 
-  await memeToken.mint(creator.address, INITIAL_MEME * 5n);
+  await baseToken.mint(creator.address, INITIAL_TOKEN * 5n);
   await usdc.mint(creator.address, INITIAL_USDC * 5n);
-  await memeToken.connect(creator).approve(factoryAddr, ethers.MaxUint256);
+  await baseToken.connect(creator).approve(factoryAddr, ethers.MaxUint256);
   await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
 
   await usdc.mint(trader1.address, INITIAL_USDC * 2n);
 
-  return { factory, positionNFT, lpNft, memeToken, usdc, deployer, treasury, creator, trader1 };
+  return { factory, positionNFT, lpNft, baseToken, usdc, deployer, treasury, creator, trader1 };
 }

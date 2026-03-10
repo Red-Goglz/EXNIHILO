@@ -12,7 +12,7 @@ async function main() {
   for (const e of swaps) {
     const inRaw = e.args.amountIn as bigint;
     const outRaw = e.args.amountOut as bigint;
-    const mtou = e.args.memeToUsdc as boolean;
+    const mtou = e.args.tokenToUsdc as boolean;
     if (mtou) {
       console.log(`  block ${e.blockNumber}: PEPE→USDC  in=${ethers.formatUnits(inRaw, 18)} PEPE  out=${ethers.formatUnits(outRaw, 6)} USDC`);
     } else {
@@ -23,7 +23,7 @@ async function main() {
   const longs = await pool.queryFilter(pool.filters.LongOpened(), 0);
   console.log(`\n=== LongOpened ===`);
   for (const e of longs) {
-    console.log(`  block ${e.blockNumber}: nftId=${e.args.nftId}  usdcFee=${ethers.formatUnits(e.args.usdcFee ?? e.args[2], 6)} USDC  locked=${ethers.formatUnits(e.args.lockedAirMeme ?? e.args[3], 18)} airMeme`);
+    console.log(`  block ${e.blockNumber}: nftId=${e.args.nftId}  usdcFee=${ethers.formatUnits(e.args.usdcFee ?? e.args[2], 6)} USDC  locked=${ethers.formatUnits(e.args.lockedAirToken ?? e.args[3], 18)} airToken`);
   }
 
   const closes = await pool.queryFilter(pool.filters.LongClosed(), 0);

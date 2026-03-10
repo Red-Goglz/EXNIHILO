@@ -1,8 +1,8 @@
 /**
  * Parametric.ts — Parametric test suite for the "LP + openLong + Swap + Close" sequence.
  *
- * One wallet (trader) performs: openLong → USDC→meme pump swap → closeLong (or
- * realizeLong if underwater) → sell meme back.
+ * One wallet (trader) performs: openLong → USDC→token pump swap → closeLong (or
+ * realizeLong if underwater) → sell token back.
  *
  * LP is a separate wallet.  Assertions after each run:
  *   - All positions settled (openPositionCount == 0)
@@ -34,7 +34,7 @@ const PROTO_FEE_BPS = 200n;
 const OPEN_FEE_BPS  = LP_FEE_BPS + PROTO_FEE_BPS; // 5 % total
 const BPS_DENOM     = 10_000n;
 const E6            = 10n ** 6n;   // 1 USDC
-const E18           = 10n ** 18n;  // 1 meme token
+const E18           = 10n ** 18n;  // 1 token
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Off-chain AMM math — mirrors _cpAmountOut
@@ -93,10 +93,10 @@ async function patchImmutableAddress(
 
 interface Params {
   label:    string;
-  lpMeme:   bigint; // initial LP meme seed (18 dec)
+  lpToken:   bigint; // initial LP token seed (18 dec)
   lpUsdc:   bigint; // initial LP USDC seed (6 dec)
   longUsdc: bigint; // USDC notional for openLong (6 dec)
-  swapUsdc: bigint; // USDC amount for USDC→meme pump swap (6 dec); 0 = no pump
+  swapUsdc: bigint; // USDC amount for USDC→token pump swap (6 dec); 0 = no pump
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -106,56 +106,56 @@ interface Params {
 const FIXED_CASES: Params[] = [
   {
     label:    "standard pool, small long, moderate pump",
-    lpMeme:   1_000_000n * E18,
+    lpToken:   1_000_000n * E18,
     lpUsdc:   10_000n * E6,
     longUsdc: 100n * E6,
     swapUsdc: 200n * E6,
   },
   {
     label:    "standard pool, large long, heavy pump",
-    lpMeme:   1_000_000n * E18,
+    lpToken:   1_000_000n * E18,
     lpUsdc:   10_000n * E6,
     longUsdc: 500n * E6,
     swapUsdc: 1_000n * E6,
   },
   {
     label:    "thin pool, moderate long, moderate pump",
-    lpMeme:   10_000n * E18,
+    lpToken:   10_000n * E18,
     lpUsdc:   100n * E6,
     longUsdc: 10n * E6,
     swapUsdc: 15n * E6,
   },
   {
     label:    "deep pool, micro long, no pump → realizeLong",
-    lpMeme:   10_000_000n * E18,
+    lpToken:   10_000_000n * E18,
     lpUsdc:   100_000n * E6,
     longUsdc: 1n * E6,
     swapUsdc: 0n,
   },
   {
     label:    "deep pool, large long, heavy pump",
-    lpMeme:   5_000_000n * E18,
+    lpToken:   5_000_000n * E18,
     lpUsdc:   50_000n * E6,
     longUsdc: 2_000n * E6,
     swapUsdc: 5_000n * E6,
   },
   {
-    label:    "equal-value pool (1 meme ≈ 1 USDC), medium long, medium pump",
-    lpMeme:   1_000_000n * E18,
+    label:    "equal-value pool (1 token ≈ 1 USDC), medium long, medium pump",
+    lpToken:   1_000_000n * E18,
     lpUsdc:   1_000_000n * E6,
     longUsdc: 500n * E6,
     swapUsdc: 300n * E6,
   },
   {
     label:    "very thin pool, minimal long, small pump",
-    lpMeme:   1_000n * E18,
+    lpToken:   1_000n * E18,
     lpUsdc:   10n * E6,
     longUsdc: 1n * E6,
     swapUsdc: 2n * E6,
   },
   {
     label:    "large long, tiny pump (borderline: closeLong or realizeLong)",
-    lpMeme:   500_000n * E18,
+    lpToken:   500_000n * E18,
     lpUsdc:   5_000n * E6,
     longUsdc: 1_000n * E6,
     swapUsdc: 5n * E6,
@@ -163,61 +163,61 @@ const FIXED_CASES: Params[] = [
 
   // ── High-leverage stress cases ──────────────────────────────────────────────
   // longUsdc must stay below 99× lpUsdc (1% fee zero-output boundary).
-  // swapUsdc has no hard limit — an enormous pump just gives near-zero meme
+  // swapUsdc has no hard limit — an enormous pump just gives near-zero token
   // output but does not revert (minAmountOut = 0).
 
   {
     label:    "small LP, 30× leverage, massive pump (100× lpUsdc)",
-    lpMeme:   100_000n * E18,
+    lpToken:   100_000n * E18,
     lpUsdc:   1_000n * E6,
     longUsdc: 30_000n * E6,   // 30× — fee eats ~31% of SWAP-2 output at 1%
-    swapUsdc: 100_000n * E6,  // 100× — dumps USDC, barely gets meme back
+    swapUsdc: 100_000n * E6,  // 100× — dumps USDC, barely gets token back
   },
   {
     label:    "small LP, 40× leverage, no pump → realizeLong",
-    lpMeme:   50_000n * E18,
+    lpToken:   50_000n * E18,
     lpUsdc:   500n * E6,
     longUsdc: 20_000n * E6,   // 40×
     swapUsdc: 0n,
   },
   {
     label:    "small LP, 10× leverage, extreme pump (100× lpUsdc)",
-    lpMeme:   50_000n * E18,
+    lpToken:   50_000n * E18,
     lpUsdc:   2_000n * E6,
     longUsdc: 20_000n * E6,   // 10×
     swapUsdc: 200_000n * E6,  // 100×
   },
   {
     label:    "medium LP, 20× leverage, massive pump (50× lpUsdc)",
-    lpMeme:   500_000n * E18,
+    lpToken:   500_000n * E18,
     lpUsdc:   10_000n * E6,
     longUsdc: 200_000n * E6,  // 20×
     swapUsdc: 500_000n * E6,  // 50×
   },
   {
     label:    "medium LP, 40× leverage, large pump (20× lpUsdc)",
-    lpMeme:   1_000_000n * E18,
+    lpToken:   1_000_000n * E18,
     lpUsdc:   5_000n * E6,
     longUsdc: 200_000n * E6,  // 40× — fee eats ~80% of SWAP-2 output at 1%
     swapUsdc: 100_000n * E6,  // 20×
   },
   {
     label:    "medium LP, 40× leverage, extreme pump (200× lpUsdc)",
-    lpMeme:   1_000_000n * E18,
+    lpToken:   1_000_000n * E18,
     lpUsdc:   5_000n * E6,
     longUsdc: 200_000n * E6,  // 40× — same
     swapUsdc: 1_000_000n * E6, // 200×
   },
   {
     label:    "tiny LP, 30× leverage, huge pump (500× lpUsdc)",
-    lpMeme:   10_000n * E18,
+    lpToken:   10_000n * E18,
     lpUsdc:   100n * E6,
     longUsdc: 3_000n * E6,    // 30×
     swapUsdc: 50_000n * E6,   // 500×
   },
   {
     label:    "medium LP, 45× leverage (near-max), minimal pump",
-    lpMeme:   200_000n * E18,
+    lpToken:   200_000n * E18,
     lpUsdc:   2_000n * E6,
     longUsdc: 90_000n * E6,   // 45× — well below the 99× boundary at 1% fee
     swapUsdc: 5_000n * E6,
@@ -233,8 +233,8 @@ function generateRandomCases(count: number, seed: number): Params[] {
   const cases: Params[] = [];
 
   for (let i = 0; i < count; i++) {
-    // LP pool: 1k–2M meme tokens, 10–20k USDC
-    const lpMemeUnits = BigInt(Math.floor(rng() * 1_999_000 + 1_000));
+    // LP pool: 1k–2M tokens, 10–20k USDC
+    const lpTokenUnits = BigInt(Math.floor(rng() * 1_999_000 + 1_000));
     const lpUsdcUnits = BigInt(Math.floor(rng() * 19_990 + 10));
 
     // Long: 1–8% of lpUsdc (keeps it well within reserves)
@@ -246,8 +246,8 @@ function generateRandomCases(count: number, seed: number): Params[] {
       : BigInt(Math.floor(Number(lpUsdcUnits) * rng() * 0.25));
 
     cases.push({
-      label:    `rng[${i}] lp=${lpMemeUnits}m/${lpUsdcUnits}u long=${longUsdcUnits}u swap=${swapUsdcUnits}u`,
-      lpMeme:   lpMemeUnits   * E18,
+      label:    `rng[${i}] lp=${lpTokenUnits}m/${lpUsdcUnits}u long=${longUsdcUnits}u swap=${swapUsdcUnits}u`,
+      lpToken:   lpTokenUnits   * E18,
       lpUsdc:   lpUsdcUnits   * E6,
       longUsdc: longUsdcUnits * E6,
       swapUsdc: swapUsdcUnits * E6,
@@ -273,7 +273,7 @@ async function runSequence(params: Params): Promise<void> {
   // ── Deploy tokens ────────────────────────────────────────────────────────
 
   const MockERC20F = await ethers.getContractFactory("MockERC20");
-  const memeToken  = (await MockERC20F.connect(deployer).deploy("MEME", "MEME", 18)) as unknown as MockERC20;
+  const baseToken  = (await MockERC20F.connect(deployer).deploy("TOKEN", "TOKEN", 18)) as unknown as MockERC20;
   const usdc       = (await MockERC20F.connect(deployer).deploy("USDC", "USDC", 6))  as unknown as MockERC20;
 
   // ── Deploy PositionNFT ────────────────────────────────────────────────────
@@ -300,15 +300,15 @@ async function runSequence(params: Params): Promise<void> {
 
   // ── LP seeds the pool ─────────────────────────────────────────────────────
 
-  await memeToken.mint(lp.address, params.lpMeme);
+  await baseToken.mint(lp.address, params.lpToken);
   await usdc.mint(lp.address, params.lpUsdc);
-  await memeToken.connect(lp).approve(factoryAddr, ethers.MaxUint256);
+  await baseToken.connect(lp).approve(factoryAddr, ethers.MaxUint256);
   await usdc.connect(lp).approve(factoryAddr, ethers.MaxUint256);
 
   const txCreate  = await factory.connect(lp).createMarket(
-    await memeToken.getAddress(),
+    await baseToken.getAddress(),
     params.lpUsdc,
-    params.lpMeme,
+    params.lpToken,
     0n, // no position caps
     0n
   );
@@ -323,7 +323,7 @@ async function runSequence(params: Params): Promise<void> {
   const pool = (await ethers.getContractAt("EXNIHILOPool", poolAddress)) as EXNIHILOPool;
 
   // ── Fund trader ───────────────────────────────────────────────────────────
-  // Trader starts with USDC only (zero meme).  Any meme they hold at the end
+  // Trader starts with USDC only (zero token).  Any token they hold at the end
   // came exclusively from trading operations (pump swap + realizeLong).
   //
   // Budget: 5% open fee + worst-case realizeLong notional + pump swap + buffer.
@@ -331,10 +331,10 @@ async function runSequence(params: Params): Promise<void> {
   const traderBudget = openFee + params.longUsdc + params.swapUsdc + 10n * E6;
 
   await usdc.mint(trader.address, traderBudget);
-  // intentionally NO meme pre-mint — trader starts with zero meme
+  // intentionally NO token pre-mint — trader starts with zero token
 
   await usdc.connect(trader).approve(poolAddress, ethers.MaxUint256);
-  await memeToken.connect(trader).approve(poolAddress, ethers.MaxUint256);
+  await baseToken.connect(trader).approve(poolAddress, ethers.MaxUint256);
 
   // Snapshot before any trading
   const traderUsdcBefore = await usdc.balanceOf(trader.address);
@@ -350,18 +350,18 @@ async function runSequence(params: Params): Promise<void> {
 
   const nftId: bigint = longLog.args.nftId;
 
-  // ── Step 2: USDC → meme pump swap (optional) ─────────────────────────────
+  // ── Step 2: USDC → token pump swap (optional) ─────────────────────────────
 
   if (params.swapUsdc > 0n) {
-    // memeToUsdc = false → USDC in, meme out
+    // tokenToUsdc = false → USDC in, token out
     await pool.connect(trader).swap(params.swapUsdc, 0n, false);
   }
 
   // ── Step 3: Decide close path from live chain state ───────────────────────
   // Read state now (post-pump) to decide whether closeLong or realizeLong
-  const airMemeAddr   = await pool.airMemeToken();
-  const airMemeToken  = (await ethers.getContractAt("AirToken", airMemeAddr)) as AirToken;
-  const airMemeSupply = await airMemeToken.totalSupply();
+  const airTokenAddr   = await pool.airToken();
+  const airToken  = (await ethers.getContractAt("AirToken", airTokenAddr)) as AirToken;
+  const airTokenSupply = await airToken.totalSupply();
   const backedAirUsd  = await pool.backedAirUsd();
   const pos           = await positionNFT.getPosition(nftId);
   const lockedAmount  = pos.lockedAmount;
@@ -369,25 +369,25 @@ async function runSequence(params: Params): Promise<void> {
 
   // Mirror closeLong CHECKS: profitable iff SWAP-3 output ≥ synthetic debt
   const profitable =
-    airMemeSupply >= lockedAmount &&
-    cpOut(lockedAmount, airMemeSupply - lockedAmount, backedAirUsd) >= airUsdMinted;
+    airTokenSupply >= lockedAmount &&
+    cpOut(lockedAmount, airTokenSupply - lockedAmount, backedAirUsd) >= airUsdMinted;
 
   if (profitable) {
     // ── Step 3a: Close long (profitable) — receive USDC surplus ─────────────
     await pool.connect(trader).closeLong(nftId, 0n);
   } else {
-    // ── Step 3b: Realize long (at par) — pay airUsdMinted USDC, get raw meme ─
+    // ── Step 3b: Realize long (at par) — pay airUsdMinted USDC, get raw token ─
     // Budget always covers longUsdc (= airUsdMinted): see traderBudget above.
     await pool.connect(trader).realizeLong(nftId);
   }
 
-  // ── Step 4: Sell ALL meme back to the pool (meme → USDC) ─────────────────
-  // Covers: meme received from the pump swap (closeLong path) and/or the
-  // meme delivered by realizeLong.  The CPM formula guarantees this never
+  // ── Step 4: Sell ALL token back to the pool (token → USDC) ─────────────────
+  // Covers: token received from the pump swap (closeLong path) and/or the
+  // token delivered by realizeLong.  The CPM formula guarantees this never
   // completely drains the pool's USDC reserve.
-  const finalMemeBalance = await memeToken.balanceOf(trader.address);
-  if (finalMemeBalance > 0n) {
-    await pool.connect(trader).swap(finalMemeBalance, 0n, true); // memeToUsdc = true
+  const finalTokenBalance = await baseToken.balanceOf(trader.address);
+  if (finalTokenBalance > 0n) {
+    await pool.connect(trader).swap(finalTokenBalance, 0n, true); // tokenToUsdc = true
   }
 
   // ── Compute and log trader P&L ────────────────────────────────────────────
@@ -407,7 +407,7 @@ async function runSequence(params: Params): Promise<void> {
 
   // Trader must always end up with strictly less USDC than they started with.
   // Protocol fees (5% open fee) plus AMM round-trip losses on the pump and
-  // meme sell-back are always a net cost — no configuration can overcome them.
+  // token sell-back are always a net cost — no configuration can overcome them.
   expect(netUsdc).to.be.lt(
     0n,
     "Trader must end with less USDC than they started (open fee + AMM losses always exceed gains)"
@@ -429,7 +429,7 @@ async function runSequence(params: Params): Promise<void> {
 
   // LP can remove all liquidity (requires openPositionCount == 0)
   await pool.connect(lp).removeLiquidity();
-  expect(await pool.backedAirMeme()).to.equal(0n, "backedAirMeme must be 0 after full removal");
+  expect(await pool.backedAirToken()).to.equal(0n, "backedAirToken must be 0 after full removal");
   expect(await pool.backedAirUsd()).to.equal( 0n, "backedAirUsd must be 0 after full removal");
 }
 

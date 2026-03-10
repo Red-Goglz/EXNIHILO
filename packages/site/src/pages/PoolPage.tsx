@@ -124,9 +124,9 @@ function PoolContent() {
 
   const { data } = useReadContracts({
     contracts: [
-      { ...poolContract, functionName: "underlyingMeme" },       // 0
+      { ...poolContract, functionName: "underlyingToken" },       // 0
       { ...poolContract, functionName: "underlyingUsdc" },       // 1
-      { ...poolContract, functionName: "backedAirMeme" },        // 2
+      { ...poolContract, functionName: "backedAirToken" },        // 2
       { ...poolContract, functionName: "backedAirUsd" },         // 3
       { ...poolContract, functionName: "spotPrice" },            // 4
       { ...poolContract, functionName: "openPositionCount" },    // 5
@@ -137,9 +137,9 @@ function PoolContent() {
     ],
   });
 
-  const underlyingMeme     = data?.[0]?.result as `0x${string}` | undefined;
+  const underlyingToken     = data?.[0]?.result as `0x${string}` | undefined;
   const underlyingUsdc     = data?.[1]?.result as `0x${string}` | undefined;
-  const backedAirMeme      = data?.[2]?.result as bigint | undefined;
+  const backedAirToken      = data?.[2]?.result as bigint | undefined;
   const backedAirUsd       = data?.[3]?.result as bigint | undefined;
   const spotPriceRaw       = data?.[4]?.result as bigint | undefined;
   const openPositionCount  = data?.[5]?.result as bigint | undefined;
@@ -147,19 +147,19 @@ function PoolContent() {
   const shortOpenInterest  = data?.[8]?.result as bigint | undefined;
   const lpNftId            = data?.[9]?.result as bigint | undefined;
 
-  // Meme token metadata
+  // Token metadata
   const { data: tokenMeta } = useReadContracts({
-    contracts: underlyingMeme
+    contracts: underlyingToken
       ? [
-          { address: underlyingMeme, abi: erc20Abi, functionName: "symbol" },
-          { address: underlyingMeme, abi: erc20Abi, functionName: "decimals" },
+          { address: underlyingToken, abi: erc20Abi, functionName: "symbol" },
+          { address: underlyingToken, abi: erc20Abi, functionName: "decimals" },
         ]
       : [],
-    query: { enabled: !!underlyingMeme },
+    query: { enabled: !!underlyingToken },
   });
 
-  const memeSymbol   = (tokenMeta?.[0]?.result as string | undefined) ?? "…";
-  const memeDecimals = (tokenMeta?.[1]?.result as number | undefined) ?? 18;
+  const tokenSymbol   = (tokenMeta?.[0]?.result as string | undefined) ?? "…";
+  const tokenDecimals = (tokenMeta?.[1]?.result as number | undefined) ?? 18;
 
   // LP ownership — only query once lpNftId is known
   const { data: lpOwnerData } = useReadContracts({
@@ -182,19 +182,19 @@ function PoolContent() {
   // Derived stats
   const price =
     spotPriceRaw !== undefined && spotPriceRaw > 0n
-      ? decodeSpotPrice(spotPriceRaw, memeDecimals)
+      ? decodeSpotPrice(spotPriceRaw, tokenDecimals)
       : "—";
 
-  // TVL = meme side (in USDC) + USDC side
-  // spotPriceRaw = (backedAirUsd * 1e18) / backedAirMeme
-  // meme value in raw USDC = backedAirMeme * spotPriceRaw / 1e18
-  const memeValueRaw =
-    backedAirMeme !== undefined && spotPriceRaw !== undefined && spotPriceRaw > 0n
-      ? (backedAirMeme * spotPriceRaw) / (10n ** 18n)
+  // TVL = token side (in USDC) + USDC side
+  // spotPriceRaw = (backedAirUsd * 1e18) / backedAirToken
+  // token value in raw USDC = backedAirToken * spotPriceRaw / 1e18
+  const tokenValueRaw =
+    backedAirToken !== undefined && spotPriceRaw !== undefined && spotPriceRaw > 0n
+      ? (backedAirToken * spotPriceRaw) / (10n ** 18n)
       : undefined;
   const totalTvlRaw =
-    memeValueRaw !== undefined && backedAirUsd !== undefined
-      ? memeValueRaw + backedAirUsd
+    tokenValueRaw !== undefined && backedAirUsd !== undefined
+      ? tokenValueRaw + backedAirUsd
       : undefined;
 
   const pctLong =
@@ -249,7 +249,7 @@ function PoolContent() {
             lineHeight: 1,
           }}
         >
-          {memeSymbol !== "…" ? `${memeSymbol} / USDC` : "LOADING…"}
+          {tokenSymbol !== "…" ? `${tokenSymbol} / USDC` : "LOADING…"}
         </h1>
         <p
           style={{
@@ -271,9 +271,9 @@ function PoolContent() {
           <div className="stat-value" style={{ color: "var(--cyan)" }}>{price}</div>
         </div>
         <div className="stat-box">
-          <div className="stat-label">BACKED {memeSymbol !== "…" ? memeSymbol : "MEME"}</div>
+          <div className="stat-label">BACKED {tokenSymbol !== "…" ? tokenSymbol : "TOKEN"}</div>
           <div className="stat-value">
-            {backedAirMeme !== undefined ? formatToken(backedAirMeme, memeDecimals) : "—"}
+            {backedAirToken !== undefined ? formatToken(backedAirToken, tokenDecimals) : "—"}
           </div>
         </div>
         <div className="stat-box">
@@ -362,33 +362,33 @@ function PoolContent() {
 
         {/* Panel content */}
         <div style={{ padding: "20px 24px 24px" }}>
-          {underlyingMeme && underlyingUsdc ? (
+          {underlyingToken && underlyingUsdc ? (
             <>
               {tab === "trade" && (
                 <LongShortPanel
                   poolAddress={poolAddress}
                   underlyingUsdc={underlyingUsdc}
-                  memeSymbol={memeSymbol}
-                  memeDecimals={memeDecimals}
+                  tokenSymbol={tokenSymbol}
+                  tokenDecimals={tokenDecimals}
                 />
               )}
               {tab === "swap" && (
                 <SwapPanel
                   poolAddress={poolAddress}
-                  underlyingMeme={underlyingMeme}
+                  underlyingToken={underlyingToken}
                   underlyingUsdc={underlyingUsdc}
-                  memeSymbol={memeSymbol}
-                  memeDecimals={memeDecimals}
+                  tokenSymbol={tokenSymbol}
+                  tokenDecimals={tokenDecimals}
                 />
               )}
               {tab === "lp" && isLpHolder && (
                 <LpPanel
                   poolAddress={poolAddress}
                   lpNftAddress={addresses.lpNFT}
-                  underlyingMeme={underlyingMeme}
+                  underlyingToken={underlyingToken}
                   underlyingUsdc={underlyingUsdc}
-                  memeSymbol={memeSymbol}
-                  memeDecimals={memeDecimals}
+                  tokenSymbol={tokenSymbol}
+                  tokenDecimals={tokenDecimals}
                 />
               )}
             </>

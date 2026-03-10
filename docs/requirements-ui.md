@@ -114,7 +114,7 @@ Rating thresholds (based on total TVL):
 | ★★★★ | Established | $100K – $1M |
 | ★★★★★ | Deep Liquidity | > $1M |
 
-**TVL calculation:** `memeValueUSD = backedAirMeme × spotPrice / 10^memeDecimals`, then `totalTVL = memeValueUSD + backedAirUsd`. Does **not** use `2 × backedAirUsd` (that was incorrect).
+**TVL calculation:** `tokenValueUSD = backedAirToken × spotPrice / 10^tokenDecimals`, then `totalTVL = tokenValueUSD + backedAirUsd`. Does **not** use `2 × backedAirUsd` (that was incorrect).
 
 **Tooltip:** hovering the stars reveals a floating panel listing all 5 tiers with their labels and thresholds. Styled with cyber corner accents.
 
@@ -176,8 +176,8 @@ HTML table with columns: **MARKET / PRICE / TOTAL TVL / POSITIONS / % LONG / % S
 - Does not require wallet connection (read-only)
 
 **Column definitions:**
-- **PRICE** — spot price: `(backedAirUsd × 10^memeDecimals) / backedAirMeme`, formatted as USDC
-- **TOTAL TVL** — `memeValueUSD + backedAirUsd` (see §3.5 TVL calculation)
+- **PRICE** — spot price: `(backedAirUsd × 10^tokenDecimals) / backedAirToken`, formatted as USDC
+- **TOTAL TVL** — `tokenValueUSD + backedAirUsd` (see §3.5 TVL calculation)
 - **% LONG** — `longOpenInterest / backedAirUsd × 100`; uses contract state variable `longOpenInterest`
 - **% SHORT** — `shortOpenInterest / backedAirUsd × 100`; uses contract state variable `shortOpenInterest`
 - Both % columns: 0% muted, 1–33% green, 34–66% orange, 67%+ red
@@ -232,9 +232,9 @@ The LIQUIDITY tab is only visible when the connected wallet owns the pool's LP N
 
 **LIQUIDITY tab (LP NFT owner only):**
 - Visible only when connected wallet is the LP NFT holder
-- Stats: BACKED MEME / BACKED USDC / LP FEES ACCUMULATED (green)
+- Stats: BACKED TOKEN / BACKED USDC / LP FEES ACCUMULATED (green)
 - Warning banner when `openPositionCount > 0` (cannot remove liquidity)
-- Add Liquidity section with two TokenInputs (meme + USDC) + approve/add flow
+- Add Liquidity section with two TokenInputs (token + USDC) + approve/add flow
 - Remove Liquidity button (disabled when positions are open; contract takes no arguments — withdraws all liquidity)
 - Claim Fees button showing accumulated fee amount
 
@@ -268,8 +268,8 @@ Each open position NFT renders a card showing:
 - LONG / SHORT tag badge + NFT ID + opened date
 - Data grid: USDC IN / LOCKED TOKEN / DEBT / EST. P&L
 - P&L calculation:
-  - **Long:** `currentValue = lockedAirMeme × spotPrice / 1e18`; `pnl = currentValue - airUsdMinted`
-  - **Short:** `currentMemeCost = airMemeMinted × spotPrice / 1e18`; `pnl = lockedAmount - currentMemeCost`
+  - **Long:** `currentValue = lockedAirToken × spotPrice / 1e18`; `pnl = currentValue - airUsdMinted`
+  - **Short:** `currentTokenCost = airTokenMinted × spotPrice / 1e18`; `pnl = lockedAmount - currentTokenCost`
   - P&L displayed in green (profit) or red (loss)
 - Truncated pool address with link to pool page
 - **CLOSE** button — disabled with tooltip explanation when position is underwater (`canClose = false`)
@@ -278,10 +278,10 @@ Each open position NFT renders a card showing:
 
 `canClose` logic:
 - Long: `currentValue >= airUsdMinted`
-- Short: `lockedAmount >= currentMemeCost`
+- Short: `lockedAmount >= currentTokenCost`
 
 **TODO:**
-- [ ] Realize flow: check and prompt for USDC approval (long) or meme token approval (short) before realizing
+- [ ] Realize flow: check and prompt for USDC approval (long) or underlying token approval (short) before realizing
 - [ ] Position NFT transfer button
 - [ ] Closed position history (Phase 2, requires indexer)
 - [ ] All-time P&L summary (Phase 2, requires indexer)
@@ -293,11 +293,11 @@ Each open position NFT renders a card showing:
 Requires wallet connection (wrapped in ChainGuard).
 
 #### Form (cyber panel with corner accents)
-- Meme token address input with live symbol/decimals lookup (green checkmark on valid address, red ✗ on invalid)
+- Token address input with live symbol/decimals lookup (green checkmark on valid address, red ✗ on invalid)
 - Dev hint banner (local Hardhat only): shows test PEPE address with one-click fill button
 - Seed USDC TokenInput
-- Seed Meme TokenInput
-- Implied initial price display: `(seedUsdcRaw × 10^memeDecimals) / seedMemeRaw`, formatted as `$X.XX per SYMBOL`
+- Seed Token TokenInput
+- Implied initial price display: `(seedUsdcRaw × 10^tokenDecimals) / seedTokenRaw`, formatted as `$X.XX per SYMBOL`
 - Advanced collapsible section: Max Position USDC + Max Position BPS
 
 #### Button Flow (sequential, one visible at a time)
@@ -387,7 +387,7 @@ Planned stack: Ponder (TypeScript, Railway deployment) + GraphQL, consumed via `
 | UI-04 | Pool / Trade | Show max position size in plain dollar terms | Medium |
 | UI-05 | Pool / LP | List underwater positions for LP to force-realize | High |
 | UI-06 | Pool / LP | Show LP NFT ID and owner | Low |
-| UI-07 | Portfolio | Realize flow: USDC/meme approve pre-check | High |
+| UI-07 | Portfolio | Realize flow: USDC/token approve pre-check | High |
 | UI-08 | Portfolio | Position NFT transfer button | Medium |
 | UI-09 | TxButton | Decode and display revert reason on error | High |
 | UI-10 | Create | Seed amount validation and balance check | Medium |

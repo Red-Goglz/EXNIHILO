@@ -310,9 +310,9 @@ const N_PTS = 90;
 interface FeedCardProps {
   poolAddress: `0x${string}`;
   symbol: string;
-  memeDecimals: number;
+  tokenDecimals: number;
   underlyingUsdc: `0x${string}`;
-  backedAirMeme: bigint | undefined;
+  backedAirToken: bigint | undefined;
   backedAirUsd: bigint | undefined;
   rating: 1 | 2 | 3 | 4 | 5;
   onAdvance: () => void;
@@ -321,9 +321,9 @@ interface FeedCardProps {
 function FeedCard({
   poolAddress,
   symbol,
-  memeDecimals,
+  tokenDecimals,
   underlyingUsdc,
-  backedAirMeme,
+  backedAirToken,
   backedAirUsd,
   rating,
   onAdvance,
@@ -344,16 +344,16 @@ function FeedCard({
 
   // Price / TVL
   const priceRaw =
-    backedAirMeme !== undefined && backedAirMeme > 0n && backedAirUsd !== undefined
-      ? (backedAirUsd * 10n ** BigInt(memeDecimals)) / backedAirMeme
+    backedAirToken !== undefined && backedAirToken > 0n && backedAirUsd !== undefined
+      ? (backedAirUsd * 10n ** BigInt(tokenDecimals)) / backedAirToken
       : undefined;
-  const memeValueRaw =
-    backedAirMeme !== undefined && priceRaw !== undefined
-      ? (backedAirMeme * priceRaw) / 10n ** BigInt(memeDecimals)
+  const tokenValueRaw =
+    backedAirToken !== undefined && priceRaw !== undefined
+      ? (backedAirToken * priceRaw) / 10n ** BigInt(tokenDecimals)
       : undefined;
   const totalTvlRaw =
-    memeValueRaw !== undefined && backedAirUsd !== undefined
-      ? memeValueRaw + backedAirUsd
+    tokenValueRaw !== undefined && backedAirUsd !== undefined
+      ? tokenValueRaw + backedAirUsd
       : undefined;
 
   const priceDisplay = priceRaw !== undefined ? formatUsdc(priceRaw) : "—";
@@ -369,7 +369,7 @@ function FeedCard({
   const { data: poolData } = useReadContracts({
     contracts: [
       { ...poolContract, functionName: "swapFeeBps" },
-      { ...poolContract, functionName: "airMemeToken" },
+      { ...poolContract, functionName: "airToken" },
       { ...poolContract, functionName: "airUsdToken" },
       {
         address: underlyingUsdc,
@@ -382,35 +382,35 @@ function FeedCard({
   });
 
   const swapFeeBps  = poolData?.[0]?.result as bigint | undefined;
-  const airMemeAddr = poolData?.[1]?.result as `0x${string}` | undefined;
+  const airTokenAddr = poolData?.[1]?.result as `0x${string}` | undefined;
   const airUsdAddr  = poolData?.[2]?.result as `0x${string}` | undefined;
   const allowance   = poolData?.[3]?.result as bigint | undefined;
 
   const { data: supplyData } = useReadContracts({
     contracts:
-      airMemeAddr && airUsdAddr
+      airTokenAddr && airUsdAddr
         ? [
-            { address: airMemeAddr, abi: erc20Abi, functionName: "totalSupply" as const },
+            { address: airTokenAddr, abi: erc20Abi, functionName: "totalSupply" as const },
             { address: airUsdAddr,  abi: erc20Abi, functionName: "totalSupply" as const },
           ]
         : [],
-    query: { enabled: !!airMemeAddr && !!airUsdAddr },
+    query: { enabled: !!airTokenAddr && !!airUsdAddr },
   });
 
-  const airMemeTotalSupply = supplyData?.[0]?.result as bigint | undefined;
+  const airTokenTotalSupply = supplyData?.[0]?.result as bigint | undefined;
   const airUsdTotalSupply  = supplyData?.[1]?.result as bigint | undefined;
 
   let previewOut: bigint | undefined;
   if (
     usdcRaw > 0n && direction !== null &&
-    backedAirMeme !== undefined && backedAirUsd !== undefined &&
-    airMemeTotalSupply !== undefined && airUsdTotalSupply !== undefined &&
+    backedAirToken !== undefined && backedAirUsd !== undefined &&
+    airTokenTotalSupply !== undefined && airUsdTotalSupply !== undefined &&
     swapFeeBps !== undefined
   ) {
     previewOut =
       direction === "long"
-        ? quoteLong(usdcRaw, airUsdTotalSupply, backedAirMeme, swapFeeBps)
-        : quoteShort(usdcRaw, airMemeTotalSupply, backedAirUsd, swapFeeBps);
+        ? quoteLong(usdcRaw, airUsdTotalSupply, backedAirToken, swapFeeBps)
+        : quoteShort(usdcRaw, airTokenTotalSupply, backedAirUsd, swapFeeBps);
   }
 
   const priceImpactBps = (() => {
@@ -419,8 +419,8 @@ function FeedCard({
       if (!airUsdTotalSupply || airUsdTotalSupply === 0n) return 0n;
       return (usdcRaw * 10_000n) / (airUsdTotalSupply + usdcRaw);
     }
-    if (!airMemeTotalSupply || airMemeTotalSupply === 0n) return 0n;
-    return (usdcRaw * 10_000n) / (airMemeTotalSupply + usdcRaw);
+    if (!airTokenTotalSupply || airTokenTotalSupply === 0n) return 0n;
+    return (usdcRaw * 10_000n) / (airTokenTotalSupply + usdcRaw);
   })();
   const slippageBps = priceImpactBps + 10n;
   const minOut =
@@ -764,7 +764,7 @@ function FeedCard({
             >
               <span>EST. {direction === "long" ? symbol : "USDC"} LOCKED</span>
               <span style={{ color: "var(--body)" }}>
-                {formatToken(previewOut, direction === "long" ? memeDecimals : 6)}{" "}
+                {formatToken(previewOut, direction === "long" ? tokenDecimals : 6)}{" "}
                 {direction === "long" ? symbol : "USDC"}
               </span>
             </div>
@@ -898,9 +898,9 @@ export default function FeedPage() {
 
   const { data: poolMetaResults, isLoading: metaLoading } = useReadContracts({
     contracts: allPoolAddresses.flatMap((addr) => [
-      { address: addr, abi: exnihiloPoolAbi, functionName: "backedAirMeme" as const },
+      { address: addr, abi: exnihiloPoolAbi, functionName: "backedAirToken" as const },
       { address: addr, abi: exnihiloPoolAbi, functionName: "backedAirUsd"  as const },
-      { address: addr, abi: exnihiloPoolAbi, functionName: "underlyingMeme" as const },
+      { address: addr, abi: exnihiloPoolAbi, functionName: "underlyingToken" as const },
     ]),
     query: { enabled: allPoolAddresses.length > 0 },
   });
@@ -911,17 +911,17 @@ export default function FeedPage() {
       const base = i * 3;
       return {
         addr,
-        backedAirMeme:  poolMetaResults[base]?.result     as bigint | undefined,
+        backedAirToken:  poolMetaResults[base]?.result     as bigint | undefined,
         backedAirUsd:   poolMetaResults[base + 1]?.result as bigint | undefined,
-        underlyingMeme: poolMetaResults[base + 2]?.result as `0x${string}` | undefined,
+        underlyingToken: poolMetaResults[base + 2]?.result as `0x${string}` | undefined,
       };
     });
   }, [poolMetaResults, allPoolAddresses]);
 
-  const uniqueMemeAddrs = useMemo(() => {
+  const uniqueTokenAddrs = useMemo(() => {
     const seen = new Set<string>();
     return poolMeta
-      .map((p) => p.underlyingMeme)
+      .map((p) => p.underlyingToken)
       .filter((a): a is `0x${string}` => {
         if (!a) return false;
         const key = a.toLowerCase();
@@ -931,26 +931,26 @@ export default function FeedPage() {
       });
   }, [poolMeta]);
 
-  const { data: memeMetaResults } = useReadContracts({
-    contracts: uniqueMemeAddrs.flatMap((addr) => [
+  const { data: tokenMetaResults } = useReadContracts({
+    contracts: uniqueTokenAddrs.flatMap((addr) => [
       { address: addr, abi: erc20Abi, functionName: "symbol"   as const },
       { address: addr, abi: erc20Abi, functionName: "decimals" as const },
     ]),
-    query: { enabled: uniqueMemeAddrs.length > 0 },
+    query: { enabled: uniqueTokenAddrs.length > 0 },
   });
 
-  const memeMetaMap = useMemo(() => {
+  const tokenMetaMap = useMemo(() => {
     const map: Record<string, { symbol: string; decimals: number }> = {};
-    uniqueMemeAddrs.forEach((addr, i) => {
+    uniqueTokenAddrs.forEach((addr, i) => {
       const base = i * 2;
-      const sym = memeMetaResults?.[base]?.result     as string | undefined;
-      const dec = memeMetaResults?.[base + 1]?.result as number | undefined;
+      const sym = tokenMetaResults?.[base]?.result     as string | undefined;
+      const dec = tokenMetaResults?.[base + 1]?.result as number | undefined;
       if (sym !== undefined && dec !== undefined) {
         map[addr.toLowerCase()] = { symbol: sym, decimals: dec };
       }
     });
     return map;
-  }, [memeMetaResults, uniqueMemeAddrs]);
+  }, [tokenMetaResults, uniqueTokenAddrs]);
 
   // User's open position pools (excluded from personal queue)
   const posNFT = { address: addrs.positionNFT, abi: positionNFTAbi } as const;
@@ -1004,36 +1004,36 @@ export default function FeedPage() {
   const enrichedPools = useMemo(() => {
     return poolMeta
       .map((p) => {
-        const memeMeta = p.underlyingMeme ? memeMetaMap[p.underlyingMeme.toLowerCase()] : undefined;
-        const decimals = memeMeta?.decimals ?? 18;
-        const symbol   = memeMeta?.symbol   ?? "???";
+        const tokenMeta = p.underlyingToken ? tokenMetaMap[p.underlyingToken.toLowerCase()] : undefined;
+        const decimals = tokenMeta?.decimals ?? 18;
+        const symbol   = tokenMeta?.symbol   ?? "???";
 
         const priceRaw =
-          p.backedAirMeme !== undefined && p.backedAirMeme > 0n && p.backedAirUsd !== undefined
-            ? (p.backedAirUsd * 10n ** BigInt(decimals)) / p.backedAirMeme
+          p.backedAirToken !== undefined && p.backedAirToken > 0n && p.backedAirUsd !== undefined
+            ? (p.backedAirUsd * 10n ** BigInt(decimals)) / p.backedAirToken
             : undefined;
 
-        const memeValueRaw =
-          p.backedAirMeme !== undefined && priceRaw !== undefined
-            ? (p.backedAirMeme * priceRaw) / 10n ** BigInt(decimals)
+        const tokenValueRaw =
+          p.backedAirToken !== undefined && priceRaw !== undefined
+            ? (p.backedAirToken * priceRaw) / 10n ** BigInt(decimals)
             : undefined;
 
         const totalTvlRaw =
-          memeValueRaw !== undefined && p.backedAirUsd !== undefined
-            ? memeValueRaw + p.backedAirUsd
+          tokenValueRaw !== undefined && p.backedAirUsd !== undefined
+            ? tokenValueRaw + p.backedAirUsd
             : undefined;
 
         return {
           addr: p.addr,
           symbol,
           decimals,
-          backedAirMeme: p.backedAirMeme,
+          backedAirToken: p.backedAirToken,
           backedAirUsd:  p.backedAirUsd,
           rating:        starRating(totalTvlRaw),
         };
       })
       .sort((a, b) => b.rating - a.rating);
-  }, [poolMeta, memeMetaMap]);
+  }, [poolMeta, tokenMetaMap]);
 
   const feedQueue = useMemo(() => {
     return enrichedPools.filter((p) => {
@@ -1114,9 +1114,9 @@ export default function FeedPage() {
         key={currentPool.addr}
         poolAddress={currentPool.addr}
         symbol={currentPool.symbol}
-        memeDecimals={currentPool.decimals}
+        tokenDecimals={currentPool.decimals}
         underlyingUsdc={addrs.usdc}
-        backedAirMeme={currentPool.backedAirMeme}
+        backedAirToken={currentPool.backedAirToken}
         backedAirUsd={currentPool.backedAirUsd}
         rating={currentPool.rating}
         onAdvance={handleAdvance}

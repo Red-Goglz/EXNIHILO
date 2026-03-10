@@ -329,7 +329,7 @@ export const positionNFTAbi = [
           },
           {
             "internalType": "uint256",
-            "name": "airMemeMinted",
+            "name": "airTokenMinted",
             "type": "uint256"
           },
           {
@@ -389,7 +389,7 @@ export const positionNFTAbi = [
       },
       {
         "internalType": "address",
-        "name": "airMemeToken",
+        "name": "airToken",
         "type": "address"
       },
       {
@@ -404,7 +404,7 @@ export const positionNFTAbi = [
       },
       {
         "internalType": "uint256",
-        "name": "airMemeLocked",
+        "name": "airTokenLocked",
         "type": "uint256"
       },
       {
@@ -443,7 +443,7 @@ export const positionNFTAbi = [
       },
       {
         "internalType": "uint256",
-        "name": "airMemeMinted",
+        "name": "airTokenMinted",
         "type": "uint256"
       },
       {
@@ -544,7 +544,7 @@ export const positionNFTAbi = [
           },
           {
             "internalType": "uint256",
-            "name": "airMemeMinted",
+            "name": "airTokenMinted",
             "type": "uint256"
           },
           {

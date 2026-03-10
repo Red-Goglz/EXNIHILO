@@ -14,8 +14,8 @@ async function main() {
     if (events.length > 0) {
       console.log(`\nPool ${poolAddr} — ${events.length} Swap event(s):`);
       for (const e of events) {
-        const { amountIn, amountOut, memeToUsdc } = e.args;
-        if (memeToUsdc) {
+        const { amountIn, amountOut, tokenToUsdc } = e.args;
+        if (tokenToUsdc) {
           console.log(`  PEPE→USDC  amountIn=${ethers.formatUnits(amountIn, 18)} PEPE  amountOut=${ethers.formatUnits(amountOut, 6)} USDC`);
         } else {
           console.log(`  USDC→PEPE  amountIn=${ethers.formatUnits(amountIn, 6)} USDC  amountOut=${ethers.formatUnits(amountOut, 18)} PEPE`);

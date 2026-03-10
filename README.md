@@ -110,7 +110,7 @@ cd packages/blockchain
 npx hardhat run scripts/deployFuji.ts --network avalancheFujiTestnet
 ```
 
-Deploys MockUSDC, PositionNFT, LpNFT, EXNIHILOFactory, and five test meme token markets (ARENA, NOCHILL, RGOGLZ, BANDS, WAVAX). Writes deployed addresses to `packages/site/src/contracts/fujiAddresses.json` and prints Snowtrace verify commands.
+Deploys MockUSDC, PositionNFT, LpNFT, EXNIHILOFactory, and five test token markets (ARENA, NOCHILL, RGOGLZ, BANDS, WAVAX). Writes deployed addresses to `packages/site/src/contracts/fujiAddresses.json` and prints Snowtrace verify commands.
 
 ## Site Package
 
@@ -158,11 +158,11 @@ Three swap modes depending on position type:
 
 | Mode | Reserves | Used for |
 |---|---|---|
-| SWAP-1 | `backedAirMeme × backedAirUsd` | Regular swaps |
-| SWAP-2 | `backedAirMeme × airUsd.totalSupply()` | Open long |
-| SWAP-3 | `airMeme.totalSupply() × backedAirUsd` | Open short |
+| SWAP-1 | `backedAirToken × backedAirUsd` | Regular swaps |
+| SWAP-2 | `backedAirToken × airUsd.totalSupply()` | Open long |
+| SWAP-3 | `airToken.totalSupply() × backedAirUsd` | Open short |
 
-Spot price: `backedAirUsd / backedAirMeme` (USDC per whole meme token).
+Spot price: `backedAirUsd / backedAirToken` (USDC per whole token).
 
 ## Fee Structure
 

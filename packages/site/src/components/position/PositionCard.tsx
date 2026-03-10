@@ -12,7 +12,7 @@ interface Position {
   lockedAmount: bigint;
   usdcIn: bigint;
   airUsdMinted: bigint;
-  airMemeMinted: bigint;
+  airTokenMinted: bigint;
   feesPaid: bigint;
   openedAt: bigint;
 }
@@ -72,27 +72,27 @@ export default function PositionCard({
 
   const { data } = useReadContracts({
     contracts: [
-      { ...poolContract, functionName: "backedAirMeme" },
+      { ...poolContract, functionName: "backedAirToken" },
       { ...poolContract, functionName: "backedAirUsd" },
-      { ...poolContract, functionName: "airMemeToken" },
+      { ...poolContract, functionName: "airToken" },
       { ...poolContract, functionName: "airUsdToken" },
     ],
   });
 
-  const backedAirMeme   = data?.[0]?.result as bigint | undefined;
+  const backedAirToken   = data?.[0]?.result as bigint | undefined;
   const backedAirUsd    = data?.[1]?.result as bigint | undefined;
-  const airMemeAddress  = data?.[2]?.result as `0x${string}` | undefined;
+  const airTokenAddress  = data?.[2]?.result as `0x${string}` | undefined;
   const airUsdAddress   = data?.[3]?.result as `0x${string}` | undefined;
 
   const { data: supplyData } = useReadContracts({
-    contracts: airMemeAddress && airUsdAddress ? [
-      { address: airMemeAddress, abi: erc20Abi, functionName: "totalSupply" as const },
+    contracts: airTokenAddress && airUsdAddress ? [
+      { address: airTokenAddress, abi: erc20Abi, functionName: "totalSupply" as const },
       { address: airUsdAddress,  abi: erc20Abi, functionName: "totalSupply" as const },
     ] : [],
-    query: { enabled: !!airMemeAddress && !!airUsdAddress },
+    query: { enabled: !!airTokenAddress && !!airUsdAddress },
   });
 
-  const airMemeTotalSupply = supplyData?.[0]?.result as bigint | undefined;
+  const airTokenTotalSupply = supplyData?.[0]?.result as bigint | undefined;
   const airUsdTotalSupply  = supplyData?.[1]?.result as bigint | undefined;
 
   const { writeContract, data: txHash, isPending } = useWriteContract();
@@ -113,13 +113,13 @@ export default function PositionCard({
   // PnL displayed is the net amount after the 1% close fee on profit.
   //
   // Close Long  (SWAP-3):
-  //   airUsdOut  = lockedAmount * backedAirUsd / airMeme.totalSupply()
+  //   airUsdOut  = lockedAmount * backedAirUsd / airToken.totalSupply()
   //   canClose   = airUsdOut >= airUsdMinted
   //   surplus    = airUsdOut - airUsdMinted
   //   netSurplus = surplus * 99%  (after 1% close fee)
   //
   // Close Short (SWAP-2 inverse / cpAmountIn):
-  //   airUsdCost  = airUsd.totalSupply() * airMemeMinted / (backedAirMeme - airMemeMinted)
+  //   airUsdCost  = airUsd.totalSupply() * airTokenMinted / (backedAirToken - airTokenMinted)
   //   canClose    = airUsdCost <= lockedAmount
   //   surplus     = lockedAmount - airUsdCost
   //   netSurplus  = surplus * 99%  (after 1% close fee)
@@ -131,15 +131,15 @@ export default function PositionCard({
   let canClose = false;
 
   const poolDataReady =
-    backedAirMeme !== undefined &&
+    backedAirToken !== undefined &&
     backedAirUsd  !== undefined &&
-    airMemeTotalSupply !== undefined &&
+    airTokenTotalSupply !== undefined &&
     airUsdTotalSupply  !== undefined;
 
   if (poolDataReady) {
     if (position.isLong) {
-      if (airMemeTotalSupply > 0n) {
-        const airUsdOut = (position.lockedAmount * backedAirUsd!) / airMemeTotalSupply!;
+      if (airTokenTotalSupply > 0n) {
+        const airUsdOut = (position.lockedAmount * backedAirUsd!) / airTokenTotalSupply!;
         canClose    = airUsdOut >= position.airUsdMinted;
         pnlPositive = airUsdOut > position.airUsdMinted;
         if (pnlPositive) {
@@ -151,13 +151,13 @@ export default function PositionCard({
         }
       }
     } else {
-      // Denominator of cpAmountIn: backedAirMeme - airMemeMinted
+      // Denominator of cpAmountIn: backedAirToken - airTokenMinted
       // If denominator <= 0 the pool can't satisfy the swap (extremely depleted).
-      const denom = backedAirMeme! - position.airMemeMinted;
+      const denom = backedAirToken! - position.airTokenMinted;
       if (denom > 0n) {
         // Ceiling division matches contract rounding (rounds cost up, conservative).
         const airUsdCost =
-          (airUsdTotalSupply! * position.airMemeMinted + denom - 1n) / denom;
+          (airUsdTotalSupply! * position.airTokenMinted + denom - 1n) / denom;
         canClose    = airUsdCost <= position.lockedAmount;
         pnlPositive = position.lockedAmount > airUsdCost;
         if (pnlPositive) {
@@ -227,7 +227,7 @@ export default function PositionCard({
               </div>
             </div>
             <div>
-              <div className="stat-label">LOCKED MEME</div>
+              <div className="stat-label">LOCKED TOKEN</div>
               <div style={{ fontSize: "0.82rem", color: "var(--body)" }}>
                 {formatToken(position.lockedAmount, 18)}
               </div>
@@ -250,9 +250,9 @@ export default function PositionCard({
               </div>
             </div>
             <div>
-              <div className="stat-label">DEBT (airMEME)</div>
+              <div className="stat-label">DEBT (airTOKEN)</div>
               <div style={{ fontSize: "0.82rem", color: "var(--body)" }}>
-                {formatToken(position.airMemeMinted, 18)}
+                {formatToken(position.airTokenMinted, 18)}
               </div>
             </div>
           </>

@@ -31,43 +31,43 @@ export function cpAmountOut(
 }
 
 /**
- * Preview airMeme out for an openLong (SWAP-2).
+ * Preview airToken out for an openLong (SWAP-2).
  *
  * SWAP-2:  reserveIn  = airUsd.totalSupply()
- *          reserveOut = backedAirMeme
+ *          reserveOut = backedAirToken
  *
  * The pool mints `usdcAmount` synthetic airUsd (increasing totalSupply by
  * usdcAmount) before the swap, so we add it to totalSupply here.
  *
- * Returns net airMeme out (after fee).
+ * Returns net airToken out (after fee).
  */
 export function quoteLong(
   usdcAmount: bigint,
   airUsdTotalSupply: bigint,
-  backedAirMeme: bigint,
+  backedAirToken: bigint,
   feeBps: bigint
 ): bigint {
   const reserveIn = airUsdTotalSupply + usdcAmount;
-  return cpAmountOut(usdcAmount, reserveIn, backedAirMeme, feeBps);
+  return cpAmountOut(usdcAmount, reserveIn, backedAirToken, feeBps);
 }
 
 /**
  * Preview airUsd out for an openShort (SWAP-3).
  *
- * SWAP-3:  reserveIn  = airMeme.totalSupply()
+ * SWAP-3:  reserveIn  = airToken.totalSupply()
  *          reserveOut = backedAirUsd
  *
- * The pool mints `usdcNotional` synthetic airMeme before the swap, so we add
+ * The pool mints `usdcNotional` synthetic airToken before the swap, so we add
  * it to totalSupply here.
  *
  * Returns net airUsd out (after fee).
  */
 export function quoteShort(
   usdcNotional: bigint,
-  airMemeTotalSupply: bigint,
+  airTokenTotalSupply: bigint,
   backedAirUsd: bigint,
   feeBps: bigint
 ): bigint {
-  const reserveIn = airMemeTotalSupply + usdcNotional;
+  const reserveIn = airTokenTotalSupply + usdcNotional;
   return cpAmountOut(usdcNotional, reserveIn, backedAirUsd, feeBps);
 }

@@ -24,13 +24,13 @@ async function main() {
   const sysDeployer = signers[8];
 
   const USDC_INITIAL = 10_000n * 10n**6n;   // 10,000 USDC
-  const MEME_INITIAL = 1_000_000n * 10n**18n; // 1M meme tokens
+  const TOKEN_INITIAL = 1_000_000n * 10n**18n; // 1M base tokens
 
   // Deploy tokens
   const MockERC20F = await ethers.getContractFactory("MockERC20");
-  const memeToken = await MockERC20F.connect(deployer).deploy("PEPE", "PEPE", 18);
+  const baseToken = await MockERC20F.connect(deployer).deploy("PEPE", "PEPE", 18);
   const usdc = await MockERC20F.connect(deployer).deploy("USD Coin", "USDC", 6);
-  await memeToken.mint(deployer.address, MEME_INITIAL * 10n);
+  await baseToken.mint(deployer.address, TOKEN_INITIAL * 10n);
   await usdc.mint(deployer.address, USDC_INITIAL * 10n);
 
   // Deploy PositionNFT
@@ -59,15 +59,15 @@ async function main() {
   console.log("Match:", (await lpNft.factory()).toLowerCase() === factoryAddr.toLowerCase());
 
   // Approve factory to pull tokens
-  await memeToken.connect(deployer).approve(factoryAddr, MEME_INITIAL);
+  await baseToken.connect(deployer).approve(factoryAddr, TOKEN_INITIAL);
   await usdc.connect(deployer).approve(factoryAddr, USDC_INITIAL);
 
   // Call createMarket
   console.log("\nCalling createMarket...");
   const tx = await factory.connect(deployer).createMarket(
-    await memeToken.getAddress(),
+    await baseToken.getAddress(),
     USDC_INITIAL,
-    MEME_INITIAL,
+    TOKEN_INITIAL,
     0n, // no position cap
     0n  // no bps cap
   );

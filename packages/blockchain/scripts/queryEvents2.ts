@@ -9,7 +9,7 @@ async function main() {
   const swaps = await pool.queryFilter(pool.filters.Swap(), 0);
   console.log(`\n=== Swaps raw ===`);
   for (const e of swaps) {
-    console.log(`  block=${e.blockNumber}  memeToUsdc=${e.args.memeToUsdc}  amountIn(raw)=${e.args.amountIn}  amountOut(raw)=${e.args.amountOut}`);
+    console.log(`  block=${e.blockNumber}  tokenToUsdc=${e.args.tokenToUsdc}  amountIn(raw)=${e.args.amountIn}  amountOut(raw)=${e.args.amountOut}`);
   }
 
   const longs = await pool.queryFilter(pool.filters.LongOpened(), 0);

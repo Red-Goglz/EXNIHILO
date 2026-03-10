@@ -12,10 +12,10 @@ import "./LpNFT.sol";
 /**
  * @title  EXNIHILOFactory
  * @author EXNIHILO
- * @notice Permissionless factory that creates EXNIHILO meme/USDC trading markets.
+ * @notice Permissionless factory that creates EXNIHILO token/USDC trading markets.
  *
  *         Each call to createMarket deploys:
- *           - AirToken  (airMeme wrapper, decimals matching the meme token)
+ *           - AirToken  (airToken wrapper, decimals matching the underlying token)
  *           - AirToken  (airUsd wrapper, 6 decimals, USDC-denominated)
  *           - EXNIHILOPool  (the AMM + leveraged-trading contract)
  *
@@ -83,8 +83,8 @@ contract EXNIHILOFactory is ReentrancyGuard {
     address[] public allPools;
 
     /**
-     * @notice Maps a meme token address to the first pool created for that token.
-     *         Subsequent pools for the same meme token are recorded in allPools
+     * @notice Maps an underlying token address to the first pool created for that token.
+     *         Subsequent pools for the same underlying token are recorded in allPools
      *         but do NOT overwrite this entry (first-pool-wins).
      */
     mapping(address => address) public poolForToken;
@@ -102,9 +102,9 @@ contract EXNIHILOFactory is ReentrancyGuard {
      * @notice Emitted once per successfully created market.
      *
      * @param pool            The newly deployed EXNIHILOPool address.
-     * @param tokenAddress    The meme ERC-20 used as the base asset.
+     * @param tokenAddress    The underlying ERC-20 used as the base asset.
      * @param usdcAmount      Initial USDC liquidity seeded by the creator.
-     * @param tokenAmount     Initial meme token liquidity seeded by the creator.
+     * @param tokenAmount     Initial underlying token liquidity seeded by the creator.
      * @param lpNftId         LP NFT token ID minted for the creator.
      * @param creator         Address that called createMarket.
      * @param maxPositionUsd  Hard per-position USDC cap (0 = disabled).
@@ -152,17 +152,17 @@ contract EXNIHILOFactory is ReentrancyGuard {
     // ── Market creation ───────────────────────────────────────────────────────
 
     /**
-     * @notice Create a new permissionless meme/USDC trading market.
+     * @notice Create a new permissionless token/USDC trading market.
      *
-     *         The caller determines the initial meme:USDC price ratio by
+     *         The caller determines the initial token:USDC price ratio by
      *         supplying both amounts.  Both tokens must be pre-approved for
      *         transfer to this factory before calling.
      *
      * ── createMarket flow ──────────────────────────────────────────────────────
      *
      *   1.  Validate all inputs.
-     *   2.  Pull usdcAmount USDC and tokenAmount meme from msg.sender.
-     *   3.  Deploy AirToken (airMeme) — name/symbol: "air<symbol>", meme decimals.
+     *   2.  Pull usdcAmount USDC and tokenAmount token from msg.sender.
+     *   3.  Deploy AirToken (airToken) — name/symbol: "air<symbol>", token decimals.
      *   4.  Deploy AirToken (airUsd)  — name/symbol: "air<symbol>Usd", 6 decimals.
      *   5.  Predict the next LP NFT id (= allPools.length, see contract header).
      *   6.  Deploy EXNIHILOPool with all parameters, passing the predicted LP NFT id.
@@ -173,9 +173,9 @@ contract EXNIHILOFactory is ReentrancyGuard {
      *  11.  Transfer LP NFT from factory to msg.sender.
      *  12.  Update registry and emit MarketCreated.
      *
-     * @param tokenAddress    ERC-20 meme token to create a market for. Must not be zero.
+     * @param tokenAddress    ERC-20 underlying token to create a market for. Must not be zero.
      * @param usdcAmount      Initial USDC liquidity (6 dec). Must be > 0.
-     * @param tokenAmount     Initial meme token liquidity. Must be > 0.
+     * @param tokenAmount     Initial underlying token liquidity. Must be > 0.
      * @param maxPositionUsd  Hard per-position USDC cap (0 = disabled).
      * @param maxPositionBps  Per-position cap as % of backedAirUsd in bps
      *                        (valid range when non-zero: 10–9900). 0 = disabled.
@@ -207,16 +207,16 @@ contract EXNIHILOFactory is ReentrancyGuard {
         IERC20(usdc).safeTransferFrom(msg.sender, address(this), usdcAmount);
         IERC20(tokenAddress).safeTransferFrom(msg.sender, address(this), tokenAmount);
 
-        // ── 3. Deploy AirToken for the meme wrapper ───────────────────────────
+        // ── 3. Deploy AirToken for the token wrapper ───────────────────────────
 
-        string memory memeSymbol  = _safeSymbol(tokenAddress);
-        uint8         memeDecimals = _safeDecimals(tokenAddress);
+        string memory tokenSymbol  = _safeSymbol(tokenAddress);
+        uint8         tokenDecimals = _safeDecimals(tokenAddress);
 
-        // Name and symbol follow the convention: "air" + memeSymbol.
-        string memory airMemeName   = string.concat("air", memeSymbol);
-        string memory airUsdName    = string.concat("air", memeSymbol, "Usd");
+        // Name and symbol follow the convention: "air" + tokenSymbol.
+        string memory airTokenName   = string.concat("air", tokenSymbol);
+        string memory airUsdName    = string.concat("air", tokenSymbol, "Usd");
 
-        AirToken airMemeToken = new AirToken(airMemeName, airMemeName, memeDecimals);
+        AirToken airToken = new AirToken(airTokenName, airTokenName, tokenDecimals);
 
         // ── 4. Deploy AirToken for the USDC wrapper ───────────────────────────
 
@@ -237,7 +237,7 @@ contract EXNIHILOFactory is ReentrancyGuard {
         // ── 6. Deploy EXNIHILOPool ───────────────────────────────────────────
 
         EXNIHILOPool deployedPool = new EXNIHILOPool(
-            address(airMemeToken),
+            address(airToken),
             address(airUsdToken),
             tokenAddress,
             usdc,
@@ -256,7 +256,7 @@ contract EXNIHILOFactory is ReentrancyGuard {
 
         // initPool can only be called once per AirToken and only by its factory
         // (the deploying address, which is this contract).
-        airMemeToken.initPool(pool);
+        airToken.initPool(pool);
         airUsdToken.initPool(pool);
 
         // ── 8. Mint LP NFT to factory (temporary holder for seeding) ──────────
@@ -297,7 +297,7 @@ contract EXNIHILOFactory is ReentrancyGuard {
         isPool[pool] = true;
         allPools.push(pool);
 
-        // Record the first pool for this meme token only (first-pool-wins).
+        // Record the first pool for this underlying token only (first-pool-wins).
         if (poolForToken[tokenAddress] == address(0)) {
             poolForToken[tokenAddress] = pool;
         }
@@ -358,7 +358,7 @@ contract EXNIHILOFactory is ReentrancyGuard {
 
     /**
      * @dev Attempt to read the ERC-20 decimals from `token`.  Returns 18 if
-     *      the call reverts (safe default matching most meme tokens).
+     *      the call reverts (safe default matching most underlying tokens).
      */
     function _safeDecimals(address token) internal view returns (uint8) {
         try IERC20Metadata(token).decimals() returns (uint8 dec) {

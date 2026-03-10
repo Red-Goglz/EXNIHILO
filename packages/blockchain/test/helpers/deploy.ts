@@ -88,14 +88,14 @@ export async function deployProtocol(
   factory: EXNIHILOFactory;
   positionNFT: PositionNFT;
   lpNft: LpNFT;
-  memeToken: MockERC20;
+  baseToken: MockERC20;
   usdc: MockERC20;
 }> {
   const signers = await ethers.getSigners();
 
   // ── 1. Contracts that don't depend on the factory ─────────────────────────
   const MockERC20F = await ethers.getContractFactory("MockERC20");
-  const memeToken = (await MockERC20F.connect(deployer).deploy(
+  const baseToken = (await MockERC20F.connect(deployer).deploy(
     "PEPE", "PEPE", 18
   )) as MockERC20;
   const usdc = (await MockERC20F.connect(deployer).deploy(
@@ -156,5 +156,5 @@ export async function deployProtocol(
     );
   }
 
-  return { factory, positionNFT, lpNft, memeToken, usdc };
+  return { factory, positionNFT, lpNft, baseToken, usdc };
 }
