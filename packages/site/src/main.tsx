@@ -6,6 +6,7 @@ import { WagmiProvider } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { config } from "../wagmi.config.ts";
 import Layout from "./components/layout/Layout.tsx";
+import LandingPage from "./pages/LandingPage.tsx";
 import FeedPage from "./pages/FeedPage.tsx";
 import MarketsPage from "./pages/MarketsPage.tsx";
 import PoolPage from "./pages/PoolPage.tsx";
@@ -15,8 +16,9 @@ import CreatePage from "./pages/CreatePage.tsx";
 const queryClient = new QueryClient();
 
 const router = createBrowserRouter([
+  { path: "/", element: <LandingPage /> },
   {
-    path: "/",
+    path: "/app",
     element: <Layout />,
     children: [
       { index: true, element: <FeedPage /> },

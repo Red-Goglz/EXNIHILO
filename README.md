@@ -1,6 +1,6 @@
 # EXNIHILO
 
-**Permissionless "buy no pay later" trading on Avalanche.** Create a market for any token, go long or short with tradable NFT positions. No liquidation. 
+**Permissionless "buy now pay later" trading on Avalanche.** Create a market for any token, go long or short and receive a tradable NFT position. No liquidations. 
 
 ---
 

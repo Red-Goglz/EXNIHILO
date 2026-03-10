@@ -125,7 +125,7 @@ function MarketsContent() {
         />
 
         <Link
-          to="/create"
+          to="/app/create"
           className="btn-terminal btn-cyan"
           style={{ fontSize: "0.7rem", padding: "10px 28px" }}
         >
@@ -167,7 +167,7 @@ function MarketsContent() {
         </div>
 
         <Link
-          to="/create"
+          to="/app/create"
           className="btn-terminal btn-cyan"
           style={{ fontSize: "0.65rem" }}
         >

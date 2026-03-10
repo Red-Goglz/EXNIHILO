@@ -222,7 +222,7 @@ function PoolContent() {
       {/* Breadcrumb */}
       <div className="mb-5">
         <Link
-          to="/markets"
+          to="/app/markets"
           style={{
             fontFamily: "var(--font-mono)",
             fontSize: "0.65rem",

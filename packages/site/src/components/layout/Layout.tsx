@@ -2,10 +2,10 @@ import { Link, Outlet, useLocation } from "react-router-dom";
 import ConnectButton from "../wallet/ConnectButton.tsx";
 
 const NAV_LINKS = [
-  { to: "/",          label: "FEED",      exact: true  },
-  { to: "/markets",   label: "MARKETS",   exact: false },
-  { to: "/portfolio", label: "PORTFOLIO", exact: false },
-  { to: "/create",    label: "CREATE",    exact: false },
+  { to: "/app",          label: "FEED",      exact: true  },
+  { to: "/app/markets",   label: "MARKETS",   exact: false },
+  { to: "/app/portfolio", label: "PORTFOLIO", exact: false },
+  { to: "/app/create",    label: "CREATE",    exact: false },
 ] as const;
 
 const MAX_WIDTH = 1280;
@@ -40,7 +40,7 @@ export default function Layout() {
         >
           {/* Left: Logo + links */}
           <div style={{ display: "flex", alignItems: "center", gap: 36 }}>
-            <Link to="/" style={{ textDecoration: "none" }}>
+            <Link to="/app" style={{ textDecoration: "none" }}>
               <span
                 className="logo-glitch"
                 data-text="EXNIHILO"

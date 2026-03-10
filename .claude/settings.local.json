@@ -6,7 +6,9 @@
     "allow": [
       "Bash(*)",
       "mcp__ide__getDiagnostics",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "mcp__plugin_aiup-vaadin-jooq_playwright__browser_navigate",
+      "mcp__plugin_aiup-vaadin-jooq_playwright__browser_take_screenshot"
     ]
   }
 }

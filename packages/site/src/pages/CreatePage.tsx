@@ -122,7 +122,7 @@ function CreateContent() {
         });
         if (decoded.args.pool) {
           queryClient.invalidateQueries();
-          navigate(`/markets/${decoded.args.pool}`);
+          navigate(`/app/markets/${decoded.args.pool}`);
           break;
         }
       } catch {

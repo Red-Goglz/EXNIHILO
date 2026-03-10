@@ -171,7 +171,7 @@ export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
   }, [symbol, rating, onData]);
 
   return (
-    <tr onClick={() => navigate(`/markets/${poolAddress}`)}>
+    <tr onClick={() => navigate(`/app/markets/${poolAddress}`)}>
       <td>
         <span style={{ fontWeight: 500 }}>{symbol}</span>
         <span style={{ color: "var(--muted)" }}> / USDC</span>

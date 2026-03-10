@@ -835,7 +835,7 @@ function FeedCard({
         }}
       >
         <Link
-          to={`/markets/${poolAddress}`}
+          to={`/app/markets/${poolAddress}`}
           style={{ fontFamily: "var(--font-mono)", fontSize: "0.58rem", letterSpacing: "0.1em", color: "var(--muted)", textDecoration: "none" }}
           onMouseEnter={(e) => ((e.currentTarget as HTMLAnchorElement).style.color = "var(--body)")}
           onMouseLeave={(e) => ((e.currentTarget as HTMLAnchorElement).style.color = "var(--muted)")}
@@ -1073,7 +1073,7 @@ export default function FeedPage() {
       <div style={{ maxWidth: 480, margin: "0 auto", textAlign: "center", paddingTop: 56, display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
         <span className="logo-glitch" data-text="EXNIHILO" style={{ fontSize: "clamp(2.5rem, 8vw, 5rem)" }}>EXNIHILO</span>
         <p style={{ fontFamily: "var(--font-mono)", fontSize: "0.65rem", color: "var(--muted)", letterSpacing: "0.12em" }}>NO MARKETS YET</p>
-        <Link to="/create" className="btn-terminal btn-cyan">CREATE FIRST MARKET</Link>
+        <Link to="/app/create" className="btn-terminal btn-cyan">CREATE FIRST MARKET</Link>
       </div>
     );
   }
@@ -1087,7 +1087,7 @@ export default function FeedPage() {
         </p>
         <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
           <button onClick={handleReset} className="btn-terminal btn-cyan">↺ RESET FEED</button>
-          <Link to="/markets" className="btn-terminal">VIEW ALL MARKETS</Link>
+          <Link to="/app/markets" className="btn-terminal">VIEW ALL MARKETS</Link>
         </div>
       </div>
     );
