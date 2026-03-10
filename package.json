@@ -4,6 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "dev": "npm run build:docs && npm run dev -w packages/site",
+    "build:docs": "npm run build -w packages/docs",
+    "build": "npm run build:docs && npm run build -w packages/site",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

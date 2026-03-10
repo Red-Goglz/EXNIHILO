@@ -278,7 +278,7 @@ export default function LandingPage() {
               Docs
             </a>
             <a
-              href="https://github.com/exnihilo-finance"
+              href="https://github.com/Red-Goglz/EXNIHILO"
               className="section-label"
               style={{ transition: "color 0.15s" }}
               onMouseEnter={(e) => (e.currentTarget.style.color = "var(--cyan)")}
@@ -287,7 +287,7 @@ export default function LandingPage() {
               GitHub
             </a>
             <a
-              href="https://x.com/exnihilo_fi"
+              href="https://x.com/exnihilo_dex"
               className="section-label"
               style={{ transition: "color 0.15s" }}
               onMouseEnter={(e) => (e.currentTarget.style.color = "var(--cyan)")}

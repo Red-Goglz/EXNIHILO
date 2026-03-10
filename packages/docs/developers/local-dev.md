@@ -8,7 +8,7 @@
 ## Setup
 
 ```bash
-git clone https://github.com/exnihilo-finance/exnihilo.git
+git clone https://github.com/Red-Goglz/EXNIHILO.git
 cd exnihilo
 npm install
 ```

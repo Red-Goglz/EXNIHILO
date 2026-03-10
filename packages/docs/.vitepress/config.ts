@@ -4,6 +4,7 @@ export default defineConfig({
   title: "EXNIHILO",
   description: "Buy Now and Pay Later trading. Go long or short any token. No liquidations.",
   base: "/docs/",
+  outDir: "../site/public/docs",
   appearance: "dark",
   head: [
     ["link", { rel: "preconnect", href: "https://fonts.googleapis.com" }],
@@ -112,8 +113,8 @@ export default defineConfig({
       },
     ],
     socialLinks: [
-      { icon: "github", link: "https://github.com/exnihilo-finance" },
-      { icon: "x", link: "https://x.com/exnihilo_fi" },
+      { icon: "github", link: "https://github.com/Red-Goglz/EXNIHILO" },
+      { icon: "x", link: "https://x.com/exnihilo_dex" },
     ],
     footer: {
       message: "BUSL-1.1 Licensed",
