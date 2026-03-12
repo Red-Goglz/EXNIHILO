@@ -2,7 +2,7 @@
 
 ## Buy Now, Pay Later Trading
 
-Unlike traditional perps where you post collateral and face liquidation, EXNIHILO positions only require the trade amount itself. You pay USDC to open a position and receive an NFT. When you close, you get back USDC — more or less than you put in, depending on price movement.
+Unlike traditional perps where you post collateral and face liquidation, EXNIHILO positions only require the fees to open. You pay USDC to open a position and receive an NFT. When you close in profit, you get back USDC — depending on price movement.
 
 There is no margin, no funding rate, and no liquidation engine.
 
@@ -20,7 +20,7 @@ All three use the standard `x * y = k` formula. The key insight: **backed reserv
 
 ## Synthetic Minting
 
-When you open a long, the protocol mints synthetic airUsd (not backed by real USDC). This inflates `airUsd.totalSupply()` without changing `backedAirUsd`, shifting the SWAP-2 curve in your favor if the price moves up.
+When you open a long, the protocol mints synthetic airUsd (not backed by real USDC). This inflates `airUsd.totalSupply()` without changing `backedAirUsd`.
 
 When you open a short, synthetic airToken is minted instead, inflating `airToken.totalSupply()`.
 
