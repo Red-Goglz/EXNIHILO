@@ -2,17 +2,14 @@
 
 ## Avalanche Fuji Testnet (Chain ID: 43113)
 
-::: warning
-These addresses will be populated after Fuji deployment. The protocol is currently in testnet phase.
-:::
-
 | Contract | Address |
 |---|---|
-| EXNIHILOFactory | `TBD` |
-| PositionNFT | `TBD` |
-| LpNFT | `TBD` |
-| USDC (Mock) | `TBD` |
-| Protocol Treasury | `TBD` |
+| EXNIHILOFactory | `0x13b436a263F9d9b6ff1945961C5C960c8ae98614` |
+| PositionNFT | `0xCabe1eaCFFbC617608f75A03FADC9D829a3715fc` |
+| LpNFT | `0xF298744Ef968E31d5d3D65Ae2C9EB7A641e02f6d` |
+| USDC (Mock) | `0x3b1afaC2D81af169c7D0B1a99dfEA7bb1C9Cc25e` |
+| Treasury | `0xE15405a36fdbB3197e1B690E87303CCFcd038e97` |
+
 
 ## Local Development (Hardhat, Chain ID: 31337)
 

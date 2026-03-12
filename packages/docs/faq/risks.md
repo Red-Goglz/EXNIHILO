@@ -10,18 +10,15 @@ The protocol has not undergone a formal security audit. While the codebase follo
 
 ## Loss of funds
 
-- Your maximum loss on any position is 100% of the USDC you put in
+- Your maximum loss on any position is 100% of the USDC fees or the full liquidity if you are LP provider
 - Positions can lose value rapidly if the price moves against you
 - There are no stop-losses or automated risk management tools
 
 ## LP risk (force realize)
 
-The LP NFT holder can force-realize any position at any time. When this happens:
-- Your position is settled at current market price
-- The remaining value stays in the pool — you do not receive USDC
+The LP NFT holder can force-realize underwater position at any time. When this happens:
+- Locked tokens are sent to your address
 - Your Position NFT is burned
-
-Assess LP trust before opening large positions in any pool.
 
 ## Price divergence
 
@@ -30,7 +27,6 @@ EXNIHILO pool prices are derived from the AMM's own reserves, not external oracl
 ## Liquidity risk
 
 - Small pools have high slippage on large trades
-- The LP can withdraw liquidity, reducing available depth
 - If backed reserves approach zero, positions may settle unfavorably
 
 ## No upgradeability

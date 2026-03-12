@@ -6,17 +6,18 @@
 
 | Function | Access | Description |
 |---|---|---|
-| `swap(bool tokenToUsdc, uint256 amountIn, uint256 minOut)` | Anyone | Swap tokens via SWAP-1 |
-| `openLong(uint256 usdcAmount, uint256 minOut)` | Anyone | Open a long position |
-| `openShort(uint256 usdcAmount, uint256 minOut)` | Anyone | Open a short position |
-| `closeLong(uint256 tokenId)` | Position owner | Close long, receive USDC |
-| `closeShort(uint256 tokenId)` | Position owner | Close short, receive USDC |
-| `realizeLong(uint256 tokenId)` | Position owner or LP | Realize long (value stays in pool) |
-| `realizeShort(uint256 tokenId)` | Position owner or LP | Realize short (value stays in pool) |
-| `addLiquidity(uint256 tokenAmt, uint256 usdcAmt)` | LP only | Add liquidity |
-| `withdrawLiquidity(uint256 tokenAmt, uint256 usdcAmt)` | LP only | Withdraw liquidity |
+| `swap(uint256 amountIn, uint256 minAmountOut, bool tokenToUsdc)` | Anyone | Swap tokens via SWAP-1 |
+| `openLong(uint256 usdcAmount, uint256 minAirTokenOut)` | Anyone | Open a long position |
+| `openShort(uint256 usdcNotional, uint256 minAirUsdOut)` | Anyone | Open a short position |
+| `closeLong(uint256 nftId, uint256 minUsdcOut)` | Position owner | Close long via AMM, receive USDC profit |
+| `closeShort(uint256 nftId, uint256 minUsdcOut)` | Position owner | Close short via AMM, receive USDC profit |
+| `realizeLong(uint256 nftId)` | Position owner | Deliver USDC to cover debt, receive locked tokens at par |
+| `realizeShort(uint256 nftId)` | Position owner | Deliver tokens to cover debt, receive locked USDC at par |
+| `forceRealize(uint256 nftId)` | LP only | Force-realize an underwater position (LP pays the debt) |
+| `addLiquidity(uint256 tokenAmount, uint256 usdcAmount)` | LP only | Add liquidity (must match reserve ratio) |
+| `removeLiquidity()` | LP only | Withdraw all liquidity (requires zero open positions) |
 | `claimFees()` | LP only | Claim accumulated LP fees |
-| `setPositionCaps(uint256 maxUsd, uint256 maxBps)` | LP only | Set position size caps |
+| `setPositionCaps(uint256 newUsd, uint256 newBps)` | LP only | Set position size caps |
 
 ### View functions
 
@@ -31,21 +32,27 @@
 | `maxPositionUsd()` | Hard position cap |
 | `maxPositionBps()` | Soft position cap (bps) |
 | `swapFeeBps()` | Swap fee in bps |
+| `openPositionCount()` | Number of open positions |
+| `quoteSwap(uint256 amountIn, bool tokenToUsdc)` | Quote a swap: `(grossOut, fee, netOut)` |
+| `effectiveLeverageCap()` | Effective position cap in USDC |
+| `isLongUnderwater(uint256 nftId)` | Whether a long position is underwater |
+| `isShortUnderwater(uint256 nftId)` | Whether a short position is underwater |
 
 ### Events
 
 ```solidity
-event Swap(address indexed trader, bool tokenToUsdc, uint256 amountIn, uint256 amountOut);
-event LongOpened(address indexed trader, uint256 indexed tokenId, uint256 usdcIn, uint256 airTokenLocked, uint256 feesPaid);
-event ShortOpened(address indexed trader, uint256 indexed tokenId, uint256 usdcIn, uint256 airUsdLocked, uint256 feesPaid);
-event LongClosed(address indexed trader, uint256 indexed tokenId, int256 pnl);
-event ShortClosed(address indexed trader, uint256 indexed tokenId, int256 pnl);
-event LongRealized(address indexed caller, uint256 indexed tokenId);
-event ShortRealized(address indexed caller, uint256 indexed tokenId);
-event LiquidityAdded(uint256 tokenAmount, uint256 usdcAmount);
-event LiquidityWithdrawn(uint256 tokenAmount, uint256 usdcAmount);
-event FeesClaimed(address indexed lp, uint256 amount);
-event PositionCapsSet(uint256 maxPositionUsd, uint256 maxPositionBps);
+event Swap(address indexed caller, address tokenIn, uint256 amountIn, address tokenOut, uint256 amountOut);
+event LongOpened(uint256 indexed nftId, address indexed holder, uint256 usdcIn, uint256 airUsdMinted, uint256 airTokenLocked, uint256 feesPaid);
+event LongClosed(uint256 indexed nftId, address indexed holder, uint256 profit, uint256 airUsdBurned);
+event LongRealized(uint256 indexed nftId, address indexed holder, uint256 usdcPaid, uint256 tokenDelivered);
+event ShortOpened(uint256 indexed nftId, address indexed holder, uint256 airTokenMinted, uint256 airUsdLocked, uint256 feesPaid);
+event ShortClosed(uint256 indexed nftId, address indexed holder, uint256 profit, uint256 airTokenBurned);
+event ShortRealized(uint256 indexed nftId, address indexed holder, uint256 tokenPaid, uint256 usdcDelivered);
+event PositionForceRealized(uint256 indexed nftId, address indexed lpOwner, uint256 collateralPaid);
+event LiquidityAdded(address indexed provider, uint256 tokenAmount, uint256 usdcAmount, uint256 backedAirToken, uint256 backedAirUsd);
+event LiquidityRemoved(address indexed provider, uint256 tokenAmount, uint256 usdcAmount);
+event FeesClaimed(address indexed lpOwner, uint256 amount);
+event PositionCapsUpdated(uint256 newMaxPositionUsd, uint256 newMaxPositionBps, address indexed by);
 ```
 
 ## EXNIHILOFactory
