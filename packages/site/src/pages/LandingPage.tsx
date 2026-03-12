@@ -287,7 +287,7 @@ export default function LandingPage() {
               GitHub
             </a>
             <a
-              href="https://x.com/exnihilo_dex"
+              href="https://x.com/exnihiloFinance"
               className="section-label"
               style={{ transition: "color 0.15s" }}
               onMouseEnter={(e) => (e.currentTarget.style.color = "var(--cyan)")}

@@ -112,7 +112,7 @@ export default function Layout() {
           <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
             <FooterLink href="/docs">Docs</FooterLink>
             <FooterLink href="https://github.com/Red-Goglz/EXNIHILO">GitHub</FooterLink>
-            <FooterLink href="https://x.com/exnihilo_dex">X</FooterLink>
+            <FooterLink href="https://x.com/exnihiloFinance">X</FooterLink>
           </div>
           <span style={{ fontSize: "0.6rem", color: "var(--dim)", letterSpacing: "0.08em" }}>
             &copy; 2026 EXNIHILO

@@ -114,7 +114,7 @@ export default defineConfig({
     ],
     socialLinks: [
       { icon: "github", link: "https://github.com/Red-Goglz/EXNIHILO" },
-      { icon: "x", link: "https://x.com/exnihilo_dex" },
+      { icon: "x", link: "https://x.com/exnihiloFinance" },
     ],
     footer: {
       message: "BUSL-1.1 Licensed",
