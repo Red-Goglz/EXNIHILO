@@ -21,7 +21,7 @@ The swap fee is set at pool creation and is immutable.
 
 ## Position Close Fee — 1% of profit
 
-When closing a profitable position, 1% of the surplus is sent to the protocol treasury. If the position is at a loss, no close fee is charged.
+When closing a profitable position, 1% of the surplus is sent to the protocol treasury. If the position is at a loss, it can't be closed.
 
 ## Fee summary
 
@@ -30,5 +30,4 @@ When closing a profitable position, 1% of the surplus is sent to the protocol tr
 | Open long/short | 5% of notional | 3% LP + 2% protocol |
 | Swap | 1% (configurable) | Pool (LP yield) |
 | Close (profit only) | 1% of profit | Protocol |
-| Close (at loss) | 0% | — |
 | Add/withdraw liquidity | 0% | — |
