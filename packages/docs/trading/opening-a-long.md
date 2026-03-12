@@ -6,11 +6,10 @@ A long position profits when the token price goes up relative to USDC.
 
 1. You specify a USDC amount (your position size)
 2. The protocol takes a 5% open fee (3% to LP, 2% to protocol treasury)
-3. The remaining USDC is deposited into the pool, minting backed airUsd
-4. Synthetic (unbacked) airUsd is also minted — this is your leverage
-5. The synthetic airUsd is swapped through SWAP-2 for airToken tokens
-6. The airToken tokens are locked in the PositionNFT contract
-7. You receive a Position NFT representing your long
+3. Synthetic (unbacked) airUsd is minted
+4. The synthetic airUsd is swapped through SWAP-2 for airToken tokens
+5. The airToken tokens are locked in the PositionNFT contract
+6. You receive a Position NFT representing your long
 
 ## What's in your NFT
 
@@ -34,10 +33,9 @@ If either cap is active and your position exceeds it, the transaction reverts.
 
 ## Example
 
-You open a long with 100 USDC on a PEPE/USDC pool:
+You open a long with 100 USDC on a RGOGLZ/USDC pool:
 
 1. 5 USDC fee taken (3 to LP, 2 to treasury)
-2. 95 USDC deposited → mints 95 backed airUsd
-3. Synthetic airUsd minted based on SWAP-2 curve
-4. Swapped for airToken → locked in your NFT
-5. If PEPE price rises, your airToken is worth more airUsd when you close → profit
+2. mints 100 synthetic airUsd
+3. Swapped for airToken → locked in your NFT
+4. If RGOGLZ price rises, your airToken is worth more airUsd when you close → profit
