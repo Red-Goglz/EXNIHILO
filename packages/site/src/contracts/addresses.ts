@@ -8,6 +8,7 @@ export const ADDRESSES = {
     positionNFT: "0xCabe1eaCFFbC617608f75A03FADC9D829a3715fc" as `0x${string}`,
     lpNFT:       "0xF298744Ef968E31d5d3D65Ae2C9EB7A641e02f6d" as `0x${string}`,
     usdc:        "0x3b1afaC2D81af169c7D0B1a99dfEA7bb1C9Cc25e" as `0x${string}`,
+    faucet:      "0xfDe92c4cD81708886d4541e4669Cf5ca6CC8261B" as `0x${string}`,
   },
 
   // ── Local Hardhat node (npx hardhat node) ───────────────────────────────────
