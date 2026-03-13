@@ -17,7 +17,8 @@ export default function FaucetButton() {
   const isTestnet = chainId === FUJI_CHAIN_ID || chainId === 31337;
   if (!isConnected || !isTestnet) return null;
 
-  const faucetAddr = ADDRESSES[chainId as keyof typeof ADDRESSES]?.faucet;
+  const addrs = ADDRESSES[chainId as keyof typeof ADDRESSES];
+  const faucetAddr = addrs && "faucet" in addrs ? addrs.faucet : undefined;
   if (!faucetAddr) return null;
 
   return <FaucetClaim faucetAddr={faucetAddr} />;
