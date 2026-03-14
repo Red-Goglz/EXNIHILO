@@ -54,11 +54,13 @@ export function quoteLong(
 /**
  * Preview airUsd out for an openShort (SWAP-3).
  *
- * SWAP-3:  reserveIn  = airToken.totalSupply()
- *          reserveOut = backedAirUsd
+ * The pool first mints synthetic airToken proportional to the notional:
+ *   airTokenMinted = (usdcNotional * airTokenTotalSupply) / backedAirUsd
  *
- * The pool mints `usdcNotional` synthetic airToken before the swap, so we add
- * it to totalSupply here.
+ * Then SWAP-3 trades airTokenMinted into the pool:
+ *   reserveIn  = airTokenTotalSupply + airTokenMinted  (post-mint supply)
+ *   reserveOut = backedAirUsd
+ *   amountIn   = airTokenMinted
  *
  * Returns net airUsd out (after fee).
  */
@@ -68,6 +70,9 @@ export function quoteShort(
   backedAirUsd: bigint,
   feeBps: bigint
 ): bigint {
-  const reserveIn = airTokenTotalSupply + usdcNotional;
-  return cpAmountOut(usdcNotional, reserveIn, backedAirUsd, feeBps);
+  if (airTokenTotalSupply === 0n || backedAirUsd === 0n) return 0n;
+  const airTokenMinted = (usdcNotional * airTokenTotalSupply) / backedAirUsd;
+  if (airTokenMinted === 0n) return 0n;
+  const reserveIn = airTokenTotalSupply + airTokenMinted;
+  return cpAmountOut(airTokenMinted, reserveIn, backedAirUsd, feeBps);
 }
