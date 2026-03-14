@@ -20,6 +20,7 @@ import { getAddresses } from "../contracts/addresses.ts";
 import { formatUsdc, formatUsdcCompact, parseUnits, formatToken } from "../lib/format.ts";
 import { quoteLong, quoteShort } from "../lib/amm.ts";
 import { useRouterApproval } from "../hooks/useRouterApproval.ts";
+import RouterApprovalModal from "../components/wallet/RouterApprovalModal.tsx";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -1110,6 +1111,7 @@ export default function FeedPage() {
 
   return (
     <div style={{ maxWidth: 480, margin: "0 auto" }}>
+      <RouterApprovalModal />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <p style={{ fontFamily: "var(--font-mono)", fontSize: "0.58rem", letterSpacing: "0.12em", color: "var(--dim)" }}>
           {feedQueue.length} MARKET{feedQueue.length !== 1 ? "S" : ""} IN QUEUE

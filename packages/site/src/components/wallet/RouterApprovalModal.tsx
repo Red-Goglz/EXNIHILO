@@ -11,7 +11,6 @@ import { erc20Abi } from "@exnihilio/abis";
 import { getAddresses } from "../../contracts/addresses.ts";
 import { formatUsdc } from "../../lib/format.ts";
 
-const DISMISS_KEY = "exnihilo_router_approval_dismissed";
 const ZERO = "0x0000000000000000000000000000000000000000" as `0x${string}`;
 
 export default function RouterApprovalModal() {
@@ -19,13 +18,8 @@ export default function RouterApprovalModal() {
   const chainId = useChainId();
   const queryClient = useQueryClient();
 
-  const [dismissed, setDismissed] = useState(() => {
-    try {
-      return sessionStorage.getItem(DISMISS_KEY) === "1";
-    } catch {
-      return false;
-    }
-  });
+  // Dismissed only for this page visit — resets on every mount (navigating away and back)
+  const [dismissed, setDismissed] = useState(false);
 
   let routerAddress: `0x${string}` | undefined;
   let usdcAddress: `0x${string}` | undefined;
@@ -38,10 +32,10 @@ export default function RouterApprovalModal() {
   }
 
   const hasRouter = !!routerAddress && routerAddress !== ZERO;
-  const enabled = isConnected && !!address && hasRouter && !!usdcAddress && !dismissed;
+  const queryEnabled = isConnected && !!address && hasRouter && !!usdcAddress;
 
   const { data } = useReadContracts({
-    contracts: enabled
+    contracts: queryEnabled
       ? [
           {
             address: usdcAddress!,
@@ -57,7 +51,7 @@ export default function RouterApprovalModal() {
           },
         ]
       : [],
-    query: { enabled },
+    query: { enabled: queryEnabled },
   });
 
   const allowance = data?.[0]?.result as bigint | undefined;
@@ -72,23 +66,20 @@ export default function RouterApprovalModal() {
     if (isSuccess) {
       queryClient.invalidateQueries();
       setDismissed(true);
-      try {
-        sessionStorage.setItem(DISMISS_KEY, "1");
-      } catch {
-        /* ignore */
-      }
     }
   }, [isSuccess, queryClient]);
 
+  // Show when: connected, router deployed, no allowance yet, has USDC, not dismissed
   const shouldShow =
-    enabled &&
+    queryEnabled &&
     allowance !== undefined &&
     allowance === 0n &&
+    balance !== undefined &&
+    balance > 0n &&
     !dismissed;
 
   if (!shouldShow) return null;
 
-  const hasBalance = balance !== undefined && balance > 0n;
   const isBusy = isPending || confirming;
 
   function handleApprove() {
@@ -99,15 +90,6 @@ export default function RouterApprovalModal() {
       functionName: "approve",
       args: [routerAddress, balance],
     });
-  }
-
-  function handleDismiss() {
-    setDismissed(true);
-    try {
-      sessionStorage.setItem(DISMISS_KEY, "1");
-    } catch {
-      /* ignore */
-    }
   }
 
   return (
@@ -193,60 +175,42 @@ export default function RouterApprovalModal() {
         </p>
 
         {/* Amount display */}
-        {hasBalance && (
-          <div
-            style={{
-              background: "var(--surface-2)",
-              border: "1px solid var(--border)",
-              padding: "12px 14px",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}
-          >
-            <span
-              style={{
-                fontFamily: "var(--font-mono)",
-                fontSize: "0.6rem",
-                letterSpacing: "0.1em",
-                color: "var(--muted)",
-              }}
-            >
-              APPROVE AMOUNT
-            </span>
-            <span
-              style={{
-                fontFamily: "var(--font-mono)",
-                fontSize: "0.82rem",
-                color: "var(--cyan)",
-                fontWeight: 600,
-              }}
-            >
-              {formatUsdc(balance!)} USDC
-            </span>
-          </div>
-        )}
-
-        {!hasBalance && (
-          <p
+        <div
+          style={{
+            background: "var(--surface-2)",
+            border: "1px solid var(--border)",
+            padding: "12px 14px",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          <span
             style={{
               fontFamily: "var(--font-mono)",
               fontSize: "0.6rem",
-              color: "var(--dim)",
-              letterSpacing: "0.05em",
-              lineHeight: 1.5,
-              margin: 0,
+              letterSpacing: "0.1em",
+              color: "var(--muted)",
             }}
           >
-            You have no USDC yet. Use the faucet to get testnet USDC, then
-            come back to approve.
-          </p>
-        )}
+            APPROVE AMOUNT
+          </span>
+          <span
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: "0.82rem",
+              color: "var(--cyan)",
+              fontWeight: 600,
+            }}
+          >
+            {formatUsdc(balance!)} USDC
+          </span>
+        </div>
 
         {/* Buttons */}
         <div style={{ display: "flex", gap: 10 }}>
           <button
-            onClick={handleDismiss}
+            onClick={() => setDismissed(true)}
             disabled={isBusy}
             style={{
               flex: 1,
@@ -265,12 +229,11 @@ export default function RouterApprovalModal() {
           </button>
           <button
             onClick={handleApprove}
-            disabled={isBusy || !hasBalance}
+            disabled={isBusy}
             className="btn-terminal btn-cyan"
             style={{
               flex: 2,
               justifyContent: "center",
-              opacity: hasBalance ? 1 : 0.4,
             }}
           >
             {isBusy ? (
@@ -279,10 +242,8 @@ export default function RouterApprovalModal() {
                 {isPending ? " SIGNING" : " CONFIRMING"}
                 <span className="cursor-blink">_</span>
               </>
-            ) : hasBalance ? (
-              `APPROVE ${formatUsdc(balance!)} USDC`
             ) : (
-              "APPROVE USDC"
+              `APPROVE ${formatUsdc(balance!)} USDC`
             )}
           </button>
         </div>
