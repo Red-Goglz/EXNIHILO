@@ -12,12 +12,14 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   exnihiloFactoryAbi,
   exnihiloPoolAbi,
+  exnihiloRouterAbi,
   erc20Abi,
   positionNFTAbi,
 } from "@exnihilio/abis";
 import { getAddresses } from "../contracts/addresses.ts";
 import { formatUsdc, formatUsdcCompact, parseUnits, formatToken } from "../lib/format.ts";
 import { quoteLong, quoteShort } from "../lib/amm.ts";
+import { useRouterApproval } from "../hooks/useRouterApproval.ts";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -428,8 +430,12 @@ function FeedCard({
       ? (previewOut * (10_000n - slippageBps)) / 10_000n
       : 0n;
 
-  const allowanceLoaded = allowance !== undefined;
-  const needsApproval   = allowanceLoaded && usdcRaw > 0n && feePulled > allowance!;
+  // Router: skip per-trade approval when router has sufficient allowance
+  const { routerAddress, routerAllowance } = useRouterApproval(underlyingUsdc);
+  const canUseRouter = !!routerAddress && routerAllowance !== undefined && routerAllowance >= feePulled && usdcRaw > 0n;
+
+  const allowanceLoaded = canUseRouter || allowance !== undefined;
+  const needsApproval   = !canUseRouter && allowance !== undefined && usdcRaw > 0n && feePulled > allowance!;
 
   const { writeContract: writeApprove, data: approveHash, isPending: approvePending } =
     useWriteContract();
@@ -805,11 +811,20 @@ function FeedCard({
           {address && hasAmount && allowanceLoaded && !needsApproval && (
             <button
               onClick={() => {
-                const args = [usdcRaw, minOut] as const;
-                if (direction === "long") {
-                  writeOpen({ address: poolAddress, abi: exnihiloPoolAbi, functionName: "openLong", args });
+                if (canUseRouter) {
+                  writeOpen({
+                    address: routerAddress!,
+                    abi: exnihiloRouterAbi,
+                    functionName: direction === "long" ? "openLong" : "openShort",
+                    args: [poolAddress, usdcRaw, minOut],
+                  });
                 } else {
-                  writeOpen({ address: poolAddress, abi: exnihiloPoolAbi, functionName: "openShort", args });
+                  const args = [usdcRaw, minOut, address!] as const;
+                  if (direction === "long") {
+                    writeOpen({ address: poolAddress, abi: exnihiloPoolAbi, functionName: "openLong", args });
+                  } else {
+                    writeOpen({ address: poolAddress, abi: exnihiloPoolAbi, functionName: "openShort", args });
+                  }
                 }
               }}
               disabled={openBusy || minOut === 0n || openSuccess}

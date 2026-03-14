@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
 import { useAccount, useReadContracts, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
-import { exnihiloPoolAbi, erc20Abi } from "@exnihilio/abis";
+import { exnihiloPoolAbi, exnihiloRouterAbi, erc20Abi } from "@exnihilio/abis";
 import { parseUnits, formatToken, formatUsdc } from "../../lib/format.ts";
 import { quoteLong, quoteShort } from "../../lib/amm.ts";
+import { useRouterApproval } from "../../hooks/useRouterApproval.ts";
 import TokenInput from "../shared/TokenInput.tsx";
 import TxButton from "../shared/TxButton.tsx";
 
@@ -126,10 +127,15 @@ export default function LongShortPanel({
 
   const feePctRaw = (usdcRaw * POSITION_FEE_BPS) / 10_000n;
   const feePulled = feePctRaw < MIN_POSITION_FEE ? MIN_POSITION_FEE : feePctRaw;
+
+  // Router: skip per-trade approval when router has sufficient allowance
+  const { routerAddress, routerAllowance } = useRouterApproval(underlyingUsdc);
+  const useRouter = !!routerAddress && routerAllowance !== undefined && routerAllowance >= feePulled && usdcRaw > 0n;
+
   const { writeContract: writeApprove, data: approveHash, isPending: approvePending } = useWriteContract();
   const { isLoading: approveConfirming, isSuccess: approveSuccess } = useWaitForTransactionReceipt({ hash: approveHash });
 
-  const needsApproval = !approveSuccess && allowance !== undefined && feePulled > allowance;
+  const needsApproval = !useRouter && !approveSuccess && allowance !== undefined && feePulled > allowance;
 
   useEffect(() => {
     if (approveSuccess) queryClient.invalidateQueries();
@@ -379,13 +385,23 @@ export default function LongShortPanel({
           status={openStatus}
           variant={isLong ? "green" : "red"}
           onClick={() => {
-            if (isLong) {
+            if (useRouter) {
+              writeOpen(
+                {
+                  address: routerAddress!,
+                  abi: exnihiloRouterAbi,
+                  functionName: isLong ? "openLong" : "openShort",
+                  args: [poolAddress, usdcRaw, minOut],
+                },
+                { onSuccess: handleOpenSuccess }
+              );
+            } else if (isLong) {
               writeOpen(
                 {
                   address: poolAddress,
                   abi: exnihiloPoolAbi,
                   functionName: "openLong",
-                  args: [usdcRaw, minOut],
+                  args: [usdcRaw, minOut, address!],
                 },
                 { onSuccess: handleOpenSuccess }
               );
@@ -395,7 +411,7 @@ export default function LongShortPanel({
                   address: poolAddress,
                   abi: exnihiloPoolAbi,
                   functionName: "openShort",
-                  args: [usdcRaw, minOut],
+                  args: [usdcRaw, minOut, address!],
                 },
                 { onSuccess: handleOpenSuccess }
               );

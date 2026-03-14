@@ -1,6 +1,7 @@
 import { Link, Outlet, useLocation } from "react-router-dom";
 import ConnectButton from "../wallet/ConnectButton.tsx";
 import FaucetButtons from "../wallet/FaucetButton.tsx";
+import RouterApprovalModal from "../wallet/RouterApprovalModal.tsx";
 
 const NAV_LINKS = [
   { to: "/app",          label: "FEED",      exact: true  },
@@ -91,6 +92,9 @@ export default function Layout() {
       >
         <Outlet />
       </main>
+
+      {/* ── Router approval modal ──────────────────────────────────────── */}
+      <RouterApprovalModal />
 
       {/* ── Footer ──────────────────────────────────────────────────────── */}
       <footer style={{ borderTop: "1px solid var(--border)" }}>

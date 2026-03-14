@@ -837,6 +837,11 @@ export const exnihiloPoolAbi = [
         "internalType": "uint256",
         "name": "minAirTokenOut",
         "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "recipient",
+        "type": "address"
       }
     ],
     "name": "openLong",
@@ -868,6 +873,11 @@ export const exnihiloPoolAbi = [
         "internalType": "uint256",
         "name": "minAirUsdOut",
         "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "recipient",
+        "type": "address"
       }
     ],
     "name": "openShort",
@@ -1028,6 +1038,11 @@ export const exnihiloPoolAbi = [
         "internalType": "bool",
         "name": "tokenToUsdc",
         "type": "bool"
+      },
+      {
+        "internalType": "address",
+        "name": "recipient",
+        "type": "address"
       }
     ],
     "name": "swap",

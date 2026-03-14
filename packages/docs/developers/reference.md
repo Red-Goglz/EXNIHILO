@@ -6,9 +6,9 @@
 
 | Function | Access | Description |
 |---|---|---|
-| `swap(uint256 amountIn, uint256 minAmountOut, bool tokenToUsdc)` | Anyone | Swap tokens via SWAP-1 |
-| `openLong(uint256 usdcAmount, uint256 minAirTokenOut)` | Anyone | Open a long position |
-| `openShort(uint256 usdcNotional, uint256 minAirUsdOut)` | Anyone | Open a short position |
+| `swap(uint256 amountIn, uint256 minAmountOut, bool tokenToUsdc, address recipient)` | Anyone | Swap tokens via SWAP-1, output sent to `recipient` |
+| `openLong(uint256 usdcAmount, uint256 minAirTokenOut, address recipient)` | Anyone | Open a long position, NFT minted to `recipient` |
+| `openShort(uint256 usdcNotional, uint256 minAirUsdOut, address recipient)` | Anyone | Open a short position, NFT minted to `recipient` |
 | `closeLong(uint256 nftId, uint256 minUsdcOut)` | Position owner | Close long via AMM, receive USDC profit |
 | `closeShort(uint256 nftId, uint256 minUsdcOut)` | Position owner | Close short via AMM, receive USDC profit |
 | `realizeLong(uint256 nftId)` | Position owner | Deliver USDC to cover debt, receive locked tokens at par |
@@ -71,6 +71,18 @@ event PositionCapsUpdated(uint256 newMaxPositionUsd, uint256 newMaxPositionBps, 
 | `tokenURI(uint256 tokenId)` | On-chain SVG metadata |
 | `balanceOf(address owner)` | Number of positions held |
 | `tokenOfOwnerByIndex(address owner, uint256 index)` | Enumerate positions |
+
+## EXNIHILORouter
+
+The router allows users to approve USDC (and underlying tokens) once, then trade on any pool without per-pool approvals. LP operations and position exits (close/realize) are called directly on the pool.
+
+| Function | Description |
+|---|---|
+| `openLong(address pool, uint256 usdcAmount, uint256 minAirTokenOut)` | Open long via router — pulls USDC from caller, NFT minted to caller |
+| `openShort(address pool, uint256 usdcNotional, uint256 minAirUsdOut)` | Open short via router — pulls USDC from caller, NFT minted to caller |
+| `swap(address pool, uint256 amountIn, uint256 minAmountOut, bool tokenToUsdc)` | Swap via router — pulls input token from caller, output sent to caller |
+| `factory()` | Factory address (immutable) |
+| `usdc()` | USDC address (immutable) |
 
 ## LpNFT
 

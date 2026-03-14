@@ -342,7 +342,7 @@ export default function SwapPanel({
                 address: poolAddress,
                 abi: exnihiloPoolAbi,
                 functionName: "swap",
-                args: [amountInRaw, minAmountOut, tokenToUsdc],
+                args: [amountInRaw, minAmountOut, tokenToUsdc, address!],
               },
               { onSuccess: handleSwapSuccess }
             )
