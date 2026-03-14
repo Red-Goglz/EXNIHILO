@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import ConnectButton from "../wallet/ConnectButton.tsx";
 import FaucetButtons from "../wallet/FaucetButton.tsx";
@@ -13,6 +14,10 @@ const MAX_WIDTH = 1280;
 
 export default function Layout() {
   const { pathname } = useLocation();
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  // Close mobile menu on route change
+  useEffect(() => { setMenuOpen(false); }, [pathname]);
 
   return (
     <div style={{ minHeight: "100vh", fontFamily: "var(--font-mono)", width: "100%", display: "flex", flexDirection: "column" }}>
@@ -39,30 +44,30 @@ export default function Layout() {
             justifyContent: "space-between",
           }}
         >
-          {/* Left: Logo + links */}
-          <div style={{ display: "flex", alignItems: "center", gap: 36 }}>
-            <Link to="/app" style={{ textDecoration: "none" }}>
-              <span
-                className="logo-glitch"
-                data-text="EXNIHILO"
-                style={{ fontSize: "1.5rem" }}
-              >
-                EXNIHILO
-              </span>
-            </Link>
+          {/* Left: Logo */}
+          <Link to="/app" style={{ textDecoration: "none", flexShrink: 0 }}>
+            <span
+              className="logo-glitch"
+              data-text="EXNIHILO"
+              style={{ fontSize: "1.5rem" }}
+            >
+              EXNIHILO
+            </span>
+          </Link>
 
-            <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
-              {NAV_LINKS.map(({ to, label, exact }) => {
-                const isActive = exact ? pathname === to : pathname.startsWith(to);
-                return (
-                  <NavLink key={to} to={to} label={label} isActive={isActive} />
-                );
-              })}
-            </div>
+          {/* Desktop nav links */}
+          <div className="desktop-nav" style={{ display: "flex", alignItems: "center", gap: 24, marginLeft: 36 }}>
+            {NAV_LINKS.map(({ to, label, exact }) => {
+              const isActive = exact ? pathname === to : pathname.startsWith(to);
+              return <NavLink key={to} to={to} label={label} isActive={isActive} />;
+            })}
           </div>
 
-          {/* Right: Avalanche + Connect */}
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          {/* Spacer */}
+          <div style={{ flex: 1 }} />
+
+          {/* Desktop right side */}
+          <div className="desktop-nav" style={{ display: "flex", alignItems: "center", gap: 16 }}>
             <FaucetButtons />
             <span
               style={{
@@ -76,7 +81,82 @@ export default function Layout() {
             </span>
             <ConnectButton />
           </div>
+
+          {/* Mobile hamburger */}
+          <button
+            className="mobile-only"
+            onClick={() => setMenuOpen((v) => !v)}
+            aria-label="Toggle menu"
+            style={{
+              display: "none", // overridden by CSS media query
+              background: "transparent",
+              border: "1px solid var(--border)",
+              color: menuOpen ? "var(--cyan)" : "var(--muted)",
+              fontFamily: "var(--font-mono)",
+              fontSize: "1.1rem",
+              padding: "4px 10px",
+              cursor: "pointer",
+              lineHeight: 1,
+            }}
+          >
+            {menuOpen ? "✕" : "☰"}
+          </button>
         </div>
+
+        {/* ── Mobile dropdown ──────────────────────────────────────────── */}
+        {menuOpen && (
+          <div
+            className="mobile-menu"
+            style={{
+              borderTop: "1px solid var(--border)",
+              background: "rgba(0,0,0,0.96)",
+              padding: "12px 24px 16px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+            }}
+          >
+            {NAV_LINKS.map(({ to, label, exact }) => {
+              const isActive = exact ? pathname === to : pathname.startsWith(to);
+              return (
+                <Link
+                  key={to}
+                  to={to}
+                  onClick={() => setMenuOpen(false)}
+                  style={{
+                    fontFamily: "var(--font-mono)",
+                    fontSize: "0.72rem",
+                    letterSpacing: "0.15em",
+                    color: isActive ? "var(--cyan)" : "var(--muted)",
+                    textDecoration: "none",
+                    padding: "10px 0",
+                    borderBottom: "1px solid var(--border)",
+                  }}
+                >
+                  {label}
+                </Link>
+              );
+            })}
+
+            <div style={{ display: "flex", alignItems: "center", gap: 12, paddingTop: 10, flexWrap: "wrap" }}>
+              <span
+                style={{
+                  fontSize: "0.58rem",
+                  letterSpacing: "0.15em",
+                  color: "var(--red)",
+                  fontFamily: "var(--font-mono)",
+                }}
+              >
+                ⬡ AVALANCHE
+              </span>
+              <FaucetButtons />
+            </div>
+
+            <div style={{ paddingTop: 8 }}>
+              <ConnectButton />
+            </div>
+          </div>
+        )}
       </nav>
 
       {/* ── Page content ───────────────────────────────────────────────── */}

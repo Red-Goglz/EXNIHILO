@@ -550,3 +550,13 @@ body::after {
 .fade-up-d2    { animation-delay: 0.2s; }
 .fade-up-d3    { animation-delay: 0.3s; }
 .fade-up-d4    { animation-delay: 0.4s; }
+
+/* ── Responsive nav ────────────────────────────────────────────────────── */
+.mobile-only  { display: none !important; }
+.mobile-menu  { display: none !important; }
+
+@media (max-width: 720px) {
+  .desktop-nav  { display: none !important; }
+  .mobile-only  { display: flex !important; }
+  .mobile-menu  { display: flex !important; }
+}
