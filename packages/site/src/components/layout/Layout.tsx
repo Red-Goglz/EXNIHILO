@@ -1,6 +1,6 @@
 import { Link, Outlet, useLocation } from "react-router-dom";
 import ConnectButton from "../wallet/ConnectButton.tsx";
-import FaucetButton from "../wallet/FaucetButton.tsx";
+import FaucetButtons from "../wallet/FaucetButton.tsx";
 
 const NAV_LINKS = [
   { to: "/app",          label: "FEED",      exact: true  },
@@ -63,7 +63,7 @@ export default function Layout() {
 
           {/* Right: Avalanche + Connect */}
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <FaucetButton />
+            <FaucetButtons />
             <span
               style={{
                 fontSize: "0.58rem",

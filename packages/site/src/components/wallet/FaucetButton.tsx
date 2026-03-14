@@ -11,7 +11,7 @@ const FAUCET_ABI = [
   },
 ] as const;
 
-export default function FaucetButton() {
+export default function FaucetButtons() {
   const { isConnected, chainId } = useAccount();
 
   const isTestnet = chainId === FUJI_CHAIN_ID || chainId === 31337;
@@ -19,12 +19,50 @@ export default function FaucetButton() {
 
   const addrs = ADDRESSES[chainId as keyof typeof ADDRESSES];
   const faucetAddr = addrs && "faucet" in addrs ? addrs.faucet : undefined;
-  if (!faucetAddr) return null;
 
-  return <FaucetClaim faucetAddr={faucetAddr} />;
+  return (
+    <>
+      <AvaxFaucetLink />
+      {faucetAddr && <UsdcFaucetClaim faucetAddr={faucetAddr} />}
+    </>
+  );
 }
 
-function FaucetClaim({ faucetAddr }: { faucetAddr: `0x${string}` }) {
+const faucetButtonStyle: React.CSSProperties = {
+  fontFamily: "var(--font-mono)",
+  fontSize: "0.58rem",
+  letterSpacing: "0.12em",
+  padding: "4px 10px",
+  border: "1px solid var(--green)",
+  background: "transparent",
+  color: "var(--green)",
+  cursor: "pointer",
+  transition: "all 0.15s",
+  textDecoration: "none",
+};
+
+function AvaxFaucetLink() {
+  return (
+    <a
+      href="https://core.app/tools/testnet-faucet"
+      target="_blank"
+      rel="noopener noreferrer"
+      style={faucetButtonStyle}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = "var(--green)";
+        e.currentTarget.style.color = "#000";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = "transparent";
+        e.currentTarget.style.color = "var(--green)";
+      }}
+    >
+      AVAX FAUCET
+    </a>
+  );
+}
+
+function UsdcFaucetClaim({ faucetAddr }: { faucetAddr: `0x${string}` }) {
   const { writeContract, data: txHash, isPending, reset } = useWriteContract();
   const { isLoading: isConfirming, isSuccess, isError } = useWaitForTransactionReceipt({ hash: txHash });
 
@@ -38,7 +76,7 @@ function FaucetClaim({ faucetAddr }: { faucetAddr: `0x${string}` }) {
     ? "CLAIMED"
     : isError
     ? "FAILED"
-    : "FAUCET";
+    : "USDC FAUCET";
 
   const handleClick = () => {
     if (isSuccess || isError) {
@@ -57,15 +95,10 @@ function FaucetClaim({ faucetAddr }: { faucetAddr: `0x${string}` }) {
       onClick={handleClick}
       disabled={isLoading}
       style={{
-        fontFamily: "var(--font-mono)",
-        fontSize: "0.58rem",
-        letterSpacing: "0.12em",
-        padding: "4px 10px",
-        border: "1px solid var(--green)",
+        ...faucetButtonStyle,
         background: isSuccess ? "var(--green)" : "transparent",
         color: isSuccess ? "#000" : "var(--green)",
         cursor: isLoading ? "wait" : "pointer",
-        transition: "all 0.15s",
         opacity: isLoading ? 0.6 : 1,
       }}
       onMouseEnter={(e) => {
