@@ -6,7 +6,7 @@
 
 ## 1. Overview & Product Vision
 
-Exnihilo is a decentralized, permissionless leveraged trading platform built on Avalanche. The name — Latin for *"out of nothing"* — reflects the core mechanic: synthetic wrapper tokens are minted on demand to power directional trades without requiring a traditional order-book or centralized counterparty.
+EXNIHILO is a decentralized, permissionless leveraged trading platform built on Avalanche. The name — Latin for *"out of nothing"* — reflects the core mechanic: synthetic wrapper tokens are minted on demand to power directional trades without requiring a traditional order-book or centralized counterparty.
 
 The platform enables any user to:
 
