@@ -54,6 +54,6 @@ localPort = 5000
 externalPort = 80
 
 [deployment]
-deploymentTarget = "static"
-build = ["npm", "run", "build", "start", "--workspace=packages/site"]
-publicDir = "packages/site/dist"
+deploymentTarget = "cloudrun"
+build = ["sh", "-c", "npm run build  --workspace=packages/site"]
+run = ["sh", "-c", "npm run start  --workspace=packages/site"]
