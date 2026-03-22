@@ -55,5 +55,5 @@ externalPort = 3000
 
 [deployment]
 deploymentTarget = "static"
-build = ["npm", "run", "build", "--workspace=packages/site"]
+build = ["npm", "run", "build", "start", "--workspace=packages/site"]
 publicDir = "packages/site/dist"
