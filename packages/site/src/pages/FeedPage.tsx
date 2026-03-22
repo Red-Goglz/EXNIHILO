@@ -415,7 +415,6 @@ function TronScene({
 }) {
   const color = side === "long" ? "#00ff88" : "#ff3b30";
   const colorDim = side === "long" ? "rgba(0,255,136,0.15)" : "rgba(255,59,48,0.15)";
-  const colorMed = side === "long" ? "rgba(0,255,136,0.3)" : "rgba(255,59,48,0.3)";
 
   // Play sounds
   useEffect(() => { playSubmittedSound(); }, []);

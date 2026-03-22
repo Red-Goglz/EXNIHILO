@@ -1,7 +1,7 @@
 import { useAccount, useBalance, useChainId, useReadContract, useReadContracts } from "wagmi";
 import { positionNFTAbi, erc20Abi } from "@exnihilio/abis";
 import { getAddresses } from "../contracts/addresses.ts";
-import { formatUsdc, formatToken } from "../lib/format.ts";
+import { formatUsdc } from "../lib/format.ts";
 import ChainGuard from "../components/wallet/ChainGuard.tsx";
 import PositionCard from "../components/position/PositionCard.tsx";
 
