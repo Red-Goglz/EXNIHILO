@@ -19,22 +19,10 @@ args = "Start application"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "Start with Ponder"
+args = "Start Indexer"
 
 [[workflows.workflow]]
 name = "Start application"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "npm run dev --workspace=packages/site"
-waitForPort = 5000
-
-[workflows.workflow.metadata]
-outputType = "webview"
-
-[[workflows.workflow]]
-name = "Start with Ponder"
 author = "agent"
 
 [[workflows.workflow.tasks]]
@@ -43,17 +31,29 @@ args = "npm run build && npm start"
 waitForPort = 3000
 
 [workflows.workflow.metadata]
+outputType = "webview"
+
+[[workflows.workflow]]
+name = "Start Indexer"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd packages/indexer && npx ponder start"
+waitForPort = 42069
+
+[workflows.workflow.metadata]
 outputType = "console"
 
 [[ports]]
 localPort = 3000
-externalPort = 3000
+externalPort = 80
 
 [[ports]]
-localPort = 5000
-externalPort = 80
+localPort = 42069
+externalPort = 42069
 
 [deployment]
 deploymentTarget = "cloudrun"
-build = ["sh", "-c", "npm run build  --workspace=packages/site"]
-run = ["sh", "-c", "npm run start  --workspace=packages/site"]
+build = ["sh", "-c", "npm run build"]
+run = ["sh", "-c", "cd packages/indexer && npx ponder start & cd packages/site && npx vite preview --host --port 3000"]
