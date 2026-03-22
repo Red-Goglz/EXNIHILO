@@ -3,7 +3,7 @@ layout: home
 hero:
   name: EXNIHILO
   text: Out of Thin Air
-  tagline: Buy Now and Pay Later trading. Go long or short any token. No liquidations.
+  tagline: Long or short on any ERC-20 token. Leveraged trading with no collateral, and no liquidations!
   actions:
     - theme: brand
       text: Get Started

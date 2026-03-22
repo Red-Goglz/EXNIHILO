@@ -134,6 +134,8 @@ function PoolContent() {
       { ...poolContract, functionName: "longOpenInterest" },     // 7
       { ...poolContract, functionName: "shortOpenInterest" },    // 8
       { ...poolContract, functionName: "lpNftId" },              // 9
+      { ...poolContract, functionName: "longPrice" },            // 10
+      { ...poolContract, functionName: "shortPrice" },           // 11
     ],
   });
 
@@ -146,6 +148,8 @@ function PoolContent() {
   const longOpenInterest   = data?.[7]?.result as bigint | undefined;
   const shortOpenInterest  = data?.[8]?.result as bigint | undefined;
   const lpNftId            = data?.[9]?.result as bigint | undefined;
+  const longPriceRaw       = data?.[10]?.result as bigint | undefined;
+  const shortPriceRaw      = data?.[11]?.result as bigint | undefined;
 
   // Token metadata
   const { data: tokenMeta } = useReadContracts({
@@ -183,6 +187,16 @@ function PoolContent() {
   const price =
     spotPriceRaw !== undefined && spotPriceRaw > 0n
       ? decodeSpotPrice(spotPriceRaw, tokenDecimals)
+      : "—";
+
+  const longPrice =
+    longPriceRaw !== undefined && longPriceRaw > 0n
+      ? decodeSpotPrice(longPriceRaw, tokenDecimals)
+      : "—";
+
+  const shortPrice =
+    shortPriceRaw !== undefined && shortPriceRaw > 0n
+      ? decodeSpotPrice(shortPriceRaw, tokenDecimals)
       : "—";
 
   // TVL = token side (in USDC) + USDC side
@@ -264,12 +278,24 @@ function PoolContent() {
         </p>
       </div>
 
-      {/* Stats — row 1: price, reserves */}
+      {/* Stats — row 1: prices */}
       <div className="grid grid-cols-3 gap-3 mb-3">
         <div className="stat-box">
-          <div className="stat-label">PRICE</div>
+          <div className="stat-label">SPOT PRICE</div>
           <div className="stat-value" style={{ color: "var(--cyan)" }}>{price}</div>
         </div>
+        <div className="stat-box">
+          <div className="stat-label">LONG PRICE</div>
+          <div className="stat-value" style={{ color: "var(--green)" }}>{longPrice}</div>
+        </div>
+        <div className="stat-box">
+          <div className="stat-label">SHORT PRICE</div>
+          <div className="stat-value" style={{ color: "var(--red)" }}>{shortPrice}</div>
+        </div>
+      </div>
+
+      {/* Stats — row 2: reserves */}
+      <div className="grid grid-cols-2 gap-3 mb-3">
         <div className="stat-box">
           <div className="stat-label">BACKED {tokenSymbol !== "…" ? tokenSymbol : "TOKEN"}</div>
           <div className="stat-value">

@@ -1,7 +1,10 @@
 import { useState, useEffect } from "react";
-import { Link, Outlet, useLocation } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { useAccount, useSwitchChain } from "wagmi";
+import { avalancheFuji, hardhat } from "viem/chains";
 import ConnectButton from "../wallet/ConnectButton.tsx";
 import FaucetButtons from "../wallet/FaucetButton.tsx";
+import { PositionAlertContext, usePositionAlertState, usePositionAlerts } from "../../hooks/usePositionAlerts.ts";
 
 const NAV_LINKS = [
   { to: "/app",          label: "FEED",      exact: true  },
@@ -12,14 +15,35 @@ const NAV_LINKS = [
 
 const MAX_WIDTH = 1280;
 
+const CHAIN_LABELS: Record<number, string> = {
+  [avalancheFuji.id]: "FUJI TESTNET",
+  [hardhat.id]: "HARDHAT LOCAL",
+};
+
 export default function Layout() {
   const { pathname } = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
+  const { chainId, isConnected } = useAccount();
+  const { switchChain } = useSwitchChain();
 
   // Close mobile menu on route change
   useEffect(() => { setMenuOpen(false); }, [pathname]);
 
+  // Prompt wallet to switch to Fuji if connected to an unsupported chain
+  useEffect(() => {
+    if (isConnected && chainId && !CHAIN_LABELS[chainId]) {
+      switchChain({ chainId: avalancheFuji.id });
+    }
+  }, [isConnected, chainId, switchChain]);
+
+  const chainLabel = chainId && CHAIN_LABELS[chainId]
+    ? CHAIN_LABELS[chainId]
+    : isConnected ? "WRONG NETWORK" : "FUJI TESTNET";
+
+  const alertState = usePositionAlertState();
+
   return (
+    <PositionAlertContext.Provider value={alertState}>
     <div style={{ minHeight: "100vh", fontFamily: "var(--font-mono)", width: "100%", display: "flex", flexDirection: "column" }}>
       {/* ── Navbar ─────────────────────────────────────────────────────── */}
       <nav
@@ -73,11 +97,11 @@ export default function Layout() {
               style={{
                 fontSize: "0.58rem",
                 letterSpacing: "0.15em",
-                color: "var(--red)",
+                color: chainLabel === "WRONG NETWORK" ? "var(--red)" : "var(--orange)",
                 fontFamily: "var(--font-mono)",
               }}
             >
-              ⬡ AVALANCHE
+              ⬡ {chainLabel}
             </span>
             <ConnectButton />
           </div>
@@ -143,11 +167,11 @@ export default function Layout() {
                 style={{
                   fontSize: "0.58rem",
                   letterSpacing: "0.15em",
-                  color: "var(--red)",
+                  color: chainLabel === "WRONG NETWORK" ? "var(--red)" : "var(--orange)",
                   fontFamily: "var(--font-mono)",
                 }}
               >
-                ⬡ AVALANCHE
+                ⬡ {chainLabel}
               </span>
               <FaucetButtons />
             </div>
@@ -201,6 +225,72 @@ export default function Layout() {
           </span>
         </div>
       </footer>
+
+      {/* Position alerts */}
+      <PositionAlertStack />
+    </div>
+    </PositionAlertContext.Provider>
+  );
+}
+
+function PositionAlertStack() {
+  const { alerts, removeAlert } = usePositionAlerts();
+  const navigate = useNavigate();
+
+  if (alerts.length === 0) return null;
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        bottom: 20,
+        right: 20,
+        zIndex: 100,
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        maxWidth: 280,
+      }}
+    >
+      {alerts.map((alert) => {
+        const color = alert.side === "long" ? "var(--green)" : "var(--red)";
+        const borderColor = alert.side === "long" ? "rgba(0,255,136,0.3)" : "rgba(255,59,48,0.3)";
+        return (
+          <button
+            key={alert.id}
+            onClick={() => {
+              removeAlert(alert.id);
+              navigate("/app/portfolio");
+            }}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "10px 14px",
+              background: "rgba(7,7,7,0.95)",
+              border: `1px solid ${borderColor}`,
+              cursor: "pointer",
+              fontFamily: "var(--font-mono)",
+              fontSize: "0.6rem",
+              letterSpacing: "0.08em",
+              color: "var(--body)",
+              textAlign: "left",
+              boxShadow: "0 4px 20px rgba(0,0,0,0.6)",
+              position: "relative",
+            }}
+          >
+            <span style={{ position: "absolute", top: -1, left: -1, width: 6, height: 6, borderTop: `1px solid ${color}`, borderLeft: `1px solid ${color}` }} />
+            <span style={{ position: "absolute", bottom: -1, right: -1, width: 6, height: 6, borderBottom: `1px solid ${color}`, borderRight: `1px solid ${color}` }} />
+            <span style={{ color, fontWeight: 700 }}>
+              {alert.side === "long" ? "▲" : "▼"}
+            </span>
+            <span>
+              Opened <span style={{ color, fontWeight: 600 }}>{alert.side.toUpperCase()}</span> {alert.symbol}
+            </span>
+            <span style={{ color: "var(--muted)", marginLeft: "auto" }}>→</span>
+          </button>
+        );
+      })}
     </div>
   );
 }

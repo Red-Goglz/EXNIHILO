@@ -1,6 +1,7 @@
-import { useAccount, useChainId, useReadContract, useReadContracts } from "wagmi";
-import { positionNFTAbi } from "@exnihilio/abis";
+import { useAccount, useBalance, useChainId, useReadContract, useReadContracts } from "wagmi";
+import { positionNFTAbi, erc20Abi } from "@exnihilio/abis";
 import { getAddresses } from "../contracts/addresses.ts";
+import { formatUsdc, formatToken } from "../lib/format.ts";
 import ChainGuard from "../components/wallet/ChainGuard.tsx";
 import PositionCard from "../components/position/PositionCard.tsx";
 
@@ -28,6 +29,23 @@ function PortfolioContent() {
   const { address } = useAccount();
   const chainId = useChainId();
   const addrs = getAddresses(chainId);
+
+  // Wallet balances
+  const { data: avaxBalance } = useBalance({
+    address,
+    query: { enabled: !!address },
+  });
+
+  const { data: usdcData } = useReadContracts({
+    contracts: address ? [
+      { address: addrs.usdc, abi: erc20Abi, functionName: "balanceOf" as const, args: [address] as const },
+      { address: addrs.usdc, abi: erc20Abi, functionName: "symbol" as const },
+    ] : [],
+    query: { enabled: !!address },
+  });
+
+  const usdcBalance = usdcData?.[0]?.result as bigint | undefined;
+  const usdcSymbol  = (usdcData?.[1]?.result as string | undefined) ?? "USDC";
 
   const positionNFT = { address: addrs.positionNFT, abi: positionNFTAbi } as const;
 
@@ -110,6 +128,89 @@ function PortfolioContent() {
           </span>
         )}
       </div>
+
+      {/* Wallet balances */}
+      {address && (
+        <div
+          style={{
+            display: "flex",
+            gap: 12,
+            marginBottom: 24,
+          }}
+        >
+          {/* AVAX */}
+          <div
+            style={{
+              flex: 1,
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
+              padding: "14px 16px",
+              position: "relative",
+            }}
+          >
+            <span style={{ position: "absolute", top: -1, left: -1, width: 6, height: 6, borderTop: "1px solid var(--red)", borderLeft: "1px solid var(--red)" }} />
+            <div
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "0.55rem",
+                letterSpacing: "0.15em",
+                color: "var(--muted)",
+                marginBottom: 6,
+              }}
+            >
+              {avaxBalance?.symbol ?? "AVAX"}
+            </div>
+            <div
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "0.9rem",
+                color: "#fff",
+                fontWeight: 600,
+              }}
+            >
+              {avaxBalance
+                ? Number(avaxBalance.formatted).toFixed(4)
+                : "—"}
+            </div>
+          </div>
+
+          {/* USDC */}
+          <div
+            style={{
+              flex: 1,
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
+              padding: "14px 16px",
+              position: "relative",
+            }}
+          >
+            <span style={{ position: "absolute", top: -1, left: -1, width: 6, height: 6, borderTop: "1px solid var(--cyan)", borderLeft: "1px solid var(--cyan)" }} />
+            <div
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "0.55rem",
+                letterSpacing: "0.15em",
+                color: "var(--muted)",
+                marginBottom: 6,
+              }}
+            >
+              {usdcSymbol}
+            </div>
+            <div
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "0.9rem",
+                color: "#fff",
+                fontWeight: 600,
+              }}
+            >
+              {usdcBalance !== undefined
+                ? formatUsdc(usdcBalance)
+                : "—"}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Not connected */}
       {!address && (

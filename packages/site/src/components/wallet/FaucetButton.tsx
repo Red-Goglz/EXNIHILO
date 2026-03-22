@@ -57,7 +57,7 @@ function AvaxFaucetLink() {
         e.currentTarget.style.color = "var(--green)";
       }}
     >
-      AVAX FAUCET
+      AVAX FAUCET ↗
     </a>
   );
 }
@@ -76,7 +76,7 @@ function UsdcFaucetClaim({ faucetAddr }: { faucetAddr: `0x${string}` }) {
     ? "CLAIMED"
     : isError
     ? "FAILED"
-    : "USDC FAUCET";
+    : "USDC FAUCET (MOCK)";
 
   const handleClick = () => {
     if (isSuccess || isError) {

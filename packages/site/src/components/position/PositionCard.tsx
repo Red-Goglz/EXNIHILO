@@ -76,13 +76,24 @@ export default function PositionCard({
       { ...poolContract, functionName: "backedAirUsd" },
       { ...poolContract, functionName: "airToken" },
       { ...poolContract, functionName: "airUsdToken" },
+      { ...poolContract, functionName: "underlyingToken" },
     ],
   });
 
-  const backedAirToken   = data?.[0]?.result as bigint | undefined;
-  const backedAirUsd    = data?.[1]?.result as bigint | undefined;
-  const airTokenAddress  = data?.[2]?.result as `0x${string}` | undefined;
-  const airUsdAddress   = data?.[3]?.result as `0x${string}` | undefined;
+  const backedAirToken     = data?.[0]?.result as bigint | undefined;
+  const backedAirUsd      = data?.[1]?.result as bigint | undefined;
+  const airTokenAddress    = data?.[2]?.result as `0x${string}` | undefined;
+  const airUsdAddress     = data?.[3]?.result as `0x${string}` | undefined;
+  const underlyingToken    = data?.[4]?.result as `0x${string}` | undefined;
+
+  const { data: tokenMeta } = useReadContracts({
+    contracts: underlyingToken
+      ? [{ address: underlyingToken, abi: erc20Abi, functionName: "symbol" }]
+      : [],
+    query: { enabled: !!underlyingToken },
+  });
+
+  const tokenSymbol = (tokenMeta?.[0]?.result as string | undefined) ?? "…";
 
   const { data: supplyData } = useReadContracts({
     contracts: airTokenAddress && airUsdAddress ? [
@@ -204,7 +215,10 @@ export default function PositionCard({
           <span className={position.isLong ? "tag-long" : "tag-short"}>
             {position.isLong ? "LONG" : "SHORT"}
           </span>
-          <span style={{ fontSize: "0.68rem", color: "var(--muted)" }}>
+          <span style={{ fontSize: "0.78rem", color: "#fff", fontWeight: 600, letterSpacing: "0.04em" }}>
+            {tokenSymbol}
+          </span>
+          <span style={{ fontSize: "0.6rem", color: "var(--dim)" }}>
             #{tokenId.toString()}
           </span>
         </div>

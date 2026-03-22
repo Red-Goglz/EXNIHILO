@@ -2,6 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Hide number input spinners */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+input[type="number"] { -moz-appearance: textfield; }
+
 /* ── Design tokens ──────────────────────────────────────────────────────── */
 :root {
   --bg: #000;
@@ -464,11 +469,12 @@ body::after {
 /* ── Section label ──────────────────────────────────────────────────────── */
 .section-label {
   font-family: var(--font-mono);
-  font-size: 0.6rem;
-  letter-spacing: 0.2em;
-  color: var(--muted);
+  font-size: 0.75rem;
+  letter-spacing: 0.35em;
+  color: var(--cyan);
   text-transform: uppercase;
   margin-bottom: 6px;
+  text-shadow: 0 0 8px rgba(0, 229, 255, 0.4);
 }
 
 /* ── Landing page ──────────────────────────────────────────────────────── */

@@ -2,7 +2,7 @@ import { defineConfig } from "vitepress";
 
 export default defineConfig({
   title: "EXNIHILO",
-  description: "Buy Now and Pay Later trading. Go long or short any token. No liquidations.",
+  description: "Long or short on any ERC-20 token. Leveraged trading with no collateral, and no liquidations!",
   base: "/docs/",
   outDir: "../site/public/docs",
   appearance: "dark",

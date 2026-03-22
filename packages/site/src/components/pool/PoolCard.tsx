@@ -2,14 +2,14 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useReadContracts } from "wagmi";
 import { exnihiloPoolAbi, erc20Abi } from "@exnihilio/abis";
-import { formatUsdc, formatUsdcCompact } from "../../lib/format.ts";
+import { formatUsdc, formatUsdcCompact, decodeSpotPrice } from "../../lib/format.ts";
 
 const STAR_LEVELS = [
-  { stars: 1, label: "NO LIQUIDITY",   threshold: "< $1K" },
-  { stars: 2, label: "LOW LIQUIDITY",  threshold: "$1K – $10K" },
-  { stars: 3, label: "GROWING",        threshold: "$10K – $100K" },
-  { stars: 4, label: "ESTABLISHED",    threshold: "$100K – $1M" },
   { stars: 5, label: "DEEP LIQUIDITY", threshold: "> $1M" },
+  { stars: 4, label: "ESTABLISHED",    threshold: "$100K – $1M" },
+  { stars: 3, label: "GROWING",        threshold: "$10K – $100K" },
+  { stars: 2, label: "LOW LIQUIDITY",  threshold: "$1K – $10K" },
+  { stars: 1, label: "NO LIQUIDITY",   threshold: "< $1K" },
 ];
 
 function starRating(tvlRaw: bigint | undefined): 1 | 2 | 3 | 4 | 5 {
@@ -23,12 +23,23 @@ function starRating(tvlRaw: bigint | undefined): 1 | 2 | 3 | 4 | 5 {
 }
 
 function StarsWithTooltip({ count }: { count: 1 | 2 | 3 | 4 | 5 }) {
-  const [visible, setVisible] = useState(false);
+  const [pos, setPos] = useState<{ x: number; y: number; above: boolean } | null>(null);
+
+  const handleEnter = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const above = rect.top > 200;
+    setPos({
+      x: rect.right,
+      y: above ? rect.top - 4 : rect.bottom + 4,
+      above,
+    });
+  };
+
   return (
     <div
-      style={{ position: "relative", display: "inline-block", cursor: "help" }}
-      onMouseEnter={() => setVisible(true)}
-      onMouseLeave={() => setVisible(false)}
+      style={{ display: "inline-block", cursor: "help" }}
+      onMouseEnter={handleEnter}
+      onMouseLeave={() => setPos(null)}
       // Stop row click from navigating when clicking the tooltip area
       onClick={(e) => e.stopPropagation()}
     >
@@ -38,21 +49,24 @@ function StarsWithTooltip({ count }: { count: 1 | 2 | 3 | 4 | 5 }) {
         ))}
       </span>
 
-      {visible && (
+      {pos && (
         <div
           style={{
-            position: "absolute",
-            bottom: "calc(100% + 10px)",
-            right: 0,
+            position: "fixed",
+            ...(pos.above
+              ? { bottom: `${window.innerHeight - pos.y}px` }
+              : { top: `${pos.y}px` }),
+            right: `${window.innerWidth - pos.x}px`,
             background: "var(--surface)",
             border: "1px solid var(--border)",
             padding: "10px 14px",
-            zIndex: 50,
+            zIndex: 9999,
             whiteSpace: "nowrap",
             display: "flex",
             flexDirection: "column",
             gap: 7,
             boxShadow: "0 4px 24px rgba(0,0,0,0.6)",
+            pointerEvents: "none",
           }}
         >
           <span style={{ position: "absolute", top: -1, left: -1, width: 8, height: 8, borderTop: "1px solid var(--cyan)", borderLeft: "1px solid var(--cyan)" }} />
@@ -68,7 +82,7 @@ function StarsWithTooltip({ count }: { count: 1 | 2 | 3 | 4 | 5 }) {
               <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.6rem", letterSpacing: "0.06em", color: "var(--muted)", minWidth: 110 }}>
                 {label}
               </span>
-              <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.6rem", color: "var(--dim)" }}>
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.65rem", color: "var(--cyan)", fontWeight: 500 }}>
                 {threshold}
               </span>
             </div>
@@ -91,9 +105,21 @@ function pctColor(pct: number): string {
   return "var(--red)";
 }
 
+export interface PoolMeta {
+  symbol: string;
+  rating: number;
+  spotRaw: bigint;
+  longRaw: bigint;
+  shortRaw: bigint;
+  tvlRaw: bigint;
+  positions: number;
+  pctLong: number;
+  pctShort: number;
+}
+
 interface PoolCardProps {
   poolAddress: `0x${string}`;
-  onData?: (symbol: string, rating: number) => void;
+  onData?: (meta: PoolMeta) => void;
 }
 
 export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
@@ -108,6 +134,8 @@ export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
       { ...poolContract, functionName: "underlyingToken" },     // 3
       { ...poolContract, functionName: "longOpenInterest" },   // 4
       { ...poolContract, functionName: "shortOpenInterest" },  // 5
+      { ...poolContract, functionName: "longPrice" },          // 6
+      { ...poolContract, functionName: "shortPrice" },         // 7
     ],
   });
 
@@ -117,6 +145,8 @@ export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
   const underlyingToken     = data?.[3]?.result as `0x${string}` | undefined;
   const longOpenInterest   = data?.[4]?.result as bigint | undefined;
   const shortOpenInterest  = data?.[5]?.result as bigint | undefined;
+  const longPriceRaw       = data?.[6]?.result as bigint | undefined;
+  const shortPriceRaw      = data?.[7]?.result as bigint | undefined;
 
   const { data: metaData } = useReadContracts({
     contracts: underlyingToken
@@ -139,6 +169,11 @@ export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
       : undefined;
 
   const price = priceRaw !== undefined ? formatUsdc(priceRaw) : "—";
+
+  const longPrice  = longPriceRaw !== undefined && longPriceRaw > 0n
+    ? decodeSpotPrice(longPriceRaw, decimals) : "—";
+  const shortPrice = shortPriceRaw !== undefined && shortPriceRaw > 0n
+    ? decodeSpotPrice(shortPriceRaw, decimals) : "—";
 
   const tokenValueRaw =
     backedAirToken !== undefined && priceRaw !== undefined
@@ -163,12 +198,22 @@ export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
   const hasOiData = longOpenInterest !== undefined && shortOpenInterest !== undefined;
   const rating = starRating(totalTvlRaw);
 
-  // Report symbol + rating up to parent for filter/sort
+  // Report all sortable fields up to parent for filter/sort
   useEffect(() => {
     if (symbol !== "…" && onData) {
-      onData(symbol, rating);
+      onData({
+        symbol,
+        rating,
+        spotRaw: priceRaw ?? 0n,
+        longRaw: longPriceRaw ?? 0n,
+        shortRaw: shortPriceRaw ?? 0n,
+        tvlRaw: totalTvlRaw ?? 0n,
+        positions: Number(openPositionCount ?? 0n),
+        pctLong,
+        pctShort,
+      });
     }
-  }, [symbol, rating, onData]);
+  }, [symbol, rating, priceRaw, longPriceRaw, shortPriceRaw, totalTvlRaw, openPositionCount, pctLong, pctShort, onData]);
 
   return (
     <tr onClick={() => navigate(`/app/markets/${poolAddress}`)}>
@@ -177,6 +222,8 @@ export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
         <span style={{ color: "var(--muted)" }}> / USDC</span>
       </td>
       <td style={{ color: "var(--cyan)", fontWeight: 500 }}>{price}</td>
+      <td style={{ color: "var(--green)" }}>{longPrice}</td>
+      <td style={{ color: "var(--red)" }}>{shortPrice}</td>
       <td>{totalTvl}</td>
       <td>{openPositionCount?.toString() ?? "—"}</td>
       <td style={{ color: pctColor(pctLong), fontWeight: pctLong > 0 ? 600 : 400 }}>

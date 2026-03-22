@@ -3,7 +3,43 @@ import { useChainId, useReadContract, useReadContracts } from "wagmi";
 import { exnihiloFactoryAbi } from "@exnihilio/abis";
 import { getAddresses } from "../contracts/addresses.ts";
 import PoolCard from "../components/pool/PoolCard.tsx";
+import type { PoolMeta } from "../components/pool/PoolCard.tsx";
 import { Link } from "react-router-dom";
+
+type SortCol = "market" | "spot" | "long" | "short" | "tvl" | "positions" | "pctLong" | "pctShort" | "rating";
+type SortDir = "asc" | "desc";
+
+const COLUMNS: { key: SortCol; label: string }[] = [
+  { key: "market",    label: "MARKET" },
+  { key: "spot",      label: "SPOT" },
+  { key: "long",      label: "LONG" },
+  { key: "short",     label: "SHORT" },
+  { key: "tvl",       label: "TOTAL TVL" },
+  { key: "positions", label: "POSITIONS" },
+  { key: "pctLong",   label: "% LONG" },
+  { key: "pctShort",  label: "% SHORT" },
+  { key: "rating",    label: "RATING" },
+];
+
+function comparePools(a: PoolMeta | undefined, b: PoolMeta | undefined, col: SortCol, dir: SortDir): number {
+  if (!a && !b) return 0;
+  if (!a) return 1;
+  if (!b) return -1;
+
+  let cmp = 0;
+  switch (col) {
+    case "market":    cmp = a.symbol.localeCompare(b.symbol); break;
+    case "spot":      cmp = a.spotRaw < b.spotRaw ? -1 : a.spotRaw > b.spotRaw ? 1 : 0; break;
+    case "long":      cmp = a.longRaw < b.longRaw ? -1 : a.longRaw > b.longRaw ? 1 : 0; break;
+    case "short":     cmp = a.shortRaw < b.shortRaw ? -1 : a.shortRaw > b.shortRaw ? 1 : 0; break;
+    case "tvl":       cmp = a.tvlRaw < b.tvlRaw ? -1 : a.tvlRaw > b.tvlRaw ? 1 : 0; break;
+    case "positions": cmp = a.positions - b.positions; break;
+    case "pctLong":   cmp = a.pctLong - b.pctLong; break;
+    case "pctShort":  cmp = a.pctShort - b.pctShort; break;
+    case "rating":    cmp = a.rating - b.rating; break;
+  }
+  return dir === "desc" ? -cmp : cmp;
+}
 
 export default function MarketsPage() {
   return <MarketsContent />;
@@ -14,16 +50,33 @@ function MarketsContent() {
   const addresses = getAddresses(chainId);
 
   const [search, setSearch] = useState("");
-  const [sortByRating, setSortByRating] = useState(true);
-  // poolMeta: symbol + rating reported back from each PoolCard as data loads
-  const [poolMeta, setPoolMeta] = useState<Record<string, { symbol: string; rating: number }>>({});
+  const [sortCol, setSortCol] = useState<SortCol>("rating");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [poolMeta, setPoolMeta] = useState<Record<string, PoolMeta>>({});
 
-  const handlePoolData = useCallback((addr: string) => (symbol: string, rating: number) => {
+  const handlePoolData = useCallback((addr: string) => (meta: PoolMeta) => {
     setPoolMeta((prev) => {
-      if (prev[addr]?.symbol === symbol && prev[addr]?.rating === rating) return prev;
-      return { ...prev, [addr]: { symbol, rating } };
+      const existing = prev[addr];
+      if (
+        existing &&
+        existing.symbol === meta.symbol &&
+        existing.rating === meta.rating &&
+        existing.spotRaw === meta.spotRaw &&
+        existing.tvlRaw === meta.tvlRaw &&
+        existing.positions === meta.positions
+      ) return prev;
+      return { ...prev, [addr]: meta };
     });
   }, []);
+
+  const handleSort = (col: SortCol) => {
+    if (sortCol === col) {
+      setSortDir((d) => (d === "desc" ? "asc" : "desc"));
+    } else {
+      setSortCol(col);
+      setSortDir("desc");
+    }
+  };
 
   const factoryContract = {
     address: addresses.factory,
@@ -62,10 +115,10 @@ function MarketsContent() {
     return meta.symbol.toLowerCase().includes(term);
   });
 
-  // Sort by rating descending if requested
-  const sorted = sortByRating
-    ? [...filtered].sort((a, b) => (poolMeta[b]?.rating ?? 0) - (poolMeta[a]?.rating ?? 0))
-    : filtered;
+  // Sort by selected column
+  const sorted = [...filtered].sort((a, b) =>
+    comparePools(poolMeta[a], poolMeta[b], sortCol, sortDir)
+  );
 
   // Empty state — show the big hero
   if (!isLoading && poolCount === 0) {
@@ -175,18 +228,10 @@ function MarketsContent() {
         </Link>
       </div>
 
-      {/* Filter + Sort controls */}
+      {/* Search */}
       {!isLoading && poolCount > 0 && (
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            marginBottom: 16,
-            alignItems: "center",
-          }}
-        >
-          {/* Search */}
-          <div style={{ position: "relative", flex: 1, maxWidth: 280 }}>
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ position: "relative", maxWidth: 280 }}>
             <span
               style={{
                 position: "absolute",
@@ -215,25 +260,6 @@ function MarketsContent() {
               }}
             />
           </div>
-
-          {/* Sort toggle */}
-          <button
-            onClick={() => setSortByRating((v) => !v)}
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: "0.62rem",
-              letterSpacing: "0.08em",
-              padding: "7px 14px",
-              border: `1px solid ${sortByRating ? "var(--cyan)" : "var(--border)"}`,
-              background: sortByRating ? "rgba(0,229,255,0.07)" : "transparent",
-              color: sortByRating ? "var(--cyan)" : "var(--muted)",
-              cursor: "pointer",
-              transition: "all 0.15s",
-              whiteSpace: "nowrap",
-            }}
-          >
-            ★ RATING {sortByRating ? "↓" : "—"}
-          </button>
         </div>
       )}
 
@@ -259,13 +285,24 @@ function MarketsContent() {
           <table className="markets-table">
             <thead>
               <tr>
-                <th>MARKET</th>
-                <th>PRICE</th>
-                <th>TOTAL TVL</th>
-                <th>POSITIONS</th>
-                <th>% LONG</th>
-                <th>% SHORT</th>
-                <th>RATING</th>
+                {COLUMNS.map(({ key, label }) => {
+                  const active = sortCol === key;
+                  return (
+                    <th
+                      key={key}
+                      onClick={() => handleSort(key)}
+                      style={{
+                        cursor: "pointer",
+                        userSelect: "none",
+                        color: active ? "var(--cyan)" : undefined,
+                        transition: "color 0.15s",
+                      }}
+                    >
+                      {label}{" "}
+                      {active ? (sortDir === "desc" ? "↓" : "↑") : ""}
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>

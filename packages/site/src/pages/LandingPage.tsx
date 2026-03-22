@@ -30,7 +30,7 @@ export default function LandingPage() {
             Docs
           </a>
           <Link to="/app" className="btn btn-primary text-xs py-2 px-5">
-            Launch App
+            Launch App (Testnet)
           </Link>
         </div>
       </nav>
@@ -51,18 +51,18 @@ export default function LandingPage() {
           className="fade-up fade-up-d1 font-mono text-lg md:text-xl max-w-2xl mb-3"
           style={{ color: "var(--body)" }}
         >
-          Buy Now and Pay Later trading.
+          Long or short any ERC-20 token
         </p>
         <p
           className="fade-up fade-up-d2 font-mono text-base md:text-lg max-w-xl mb-10"
           style={{ color: "var(--muted)" }}
         >
-          Go long or short any token. No liquidations.
+          Leveraged trading with no collateral, and no liquidations!
         </p>
 
         <div className="fade-up fade-up-d3 flex flex-col sm:flex-row gap-4">
           <Link to="/app" className="btn btn-primary">
-            Launch App
+            Launch App (Testnet)
           </Link>
           <a href="/docs" className="btn btn-outline">
             Read Docs
@@ -110,8 +110,7 @@ export default function LandingPage() {
               Go long or short
             </h3>
             <p className="text-sm" style={{ color: "var(--muted)" }}>
-              Enter your position size in USDC. No collateral required beyond the
-              trade itself. You receive an NFT representing your position.
+              Enter your position size in USDC. No collateral required, only pay the fee. You receive an NFT representing your position.
             </p>
           </div>
 
@@ -211,7 +210,7 @@ export default function LandingPage() {
       <section className="max-w-4xl mx-auto px-6 py-24">
         <p className="section-label mb-2 text-center">
           <span className="pulse-dot mr-2" />
-          Live on Avalanche
+          Live on Avalanche Fuji Testnet
         </p>
         <h2 className="font-display text-4xl md:text-5xl text-white text-center mb-16 tracking-wide">
           Protocol stats
@@ -228,7 +227,7 @@ export default function LandingPage() {
           className="text-center mt-6 text-xs"
           style={{ color: "var(--dim)" }}
         >
-          Stats update from on-chain data. Coming soon after mainnet launch.
+          Stats update from on-chain data. Currently on Fuji testnet.
         </p>
       </section>
 
@@ -244,7 +243,7 @@ export default function LandingPage() {
         </p>
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
           <Link to="/app" className="btn btn-primary">
-            Launch App
+            Launch App (Testnet)
           </Link>
           <a href="/docs" className="btn btn-outline">
             Read Docs
