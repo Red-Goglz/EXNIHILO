@@ -13,7 +13,9 @@
       "mcp__plugin_aiup-vaadin-jooq_playwright__browser_click",
       "mcp__plugin_aiup-vaadin-jooq_playwright__browser_snapshot",
       "WebSearch",
-      "mcp__plugin_aiup-vaadin-jooq_playwright__browser_wait_for"
+      "mcp__plugin_aiup-vaadin-jooq_playwright__browser_wait_for",
+      "mcp__plugin_aiup-vaadin-jooq_context7__resolve-library-id",
+      "mcp__plugin_aiup-vaadin-jooq_context7__query-docs"
     ]
   }
 }

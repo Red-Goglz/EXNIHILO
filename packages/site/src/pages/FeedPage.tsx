@@ -20,6 +20,7 @@ import { formatUsdc, formatUsdcCompact, parseUnits, formatToken } from "../lib/f
 import { quoteLong, quoteShort } from "../lib/amm.ts";
 import { useRouterApproval } from "../hooks/useRouterApproval.ts";
 import { usePositionAlerts } from "../hooks/usePositionAlerts.ts";
+import { usePriceHistory } from "../hooks/usePriceHistory.ts";
 import RouterApprovalModal from "../components/wallet/RouterApprovalModal.tsx";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -46,21 +47,20 @@ function getPresets(rating: number): [number, number, number] {
 
 let chartIdCounter = 0;
 
+// ─── Fake data generators (fallback when indexer has no data) ────────────────
+
 function nextSeed(s: number): number {
   return ((s * 1664525) + 1013904223) | 0;
 }
 
-/** Generate N price points as 0–1 x-values, seeded by pool address. */
-function generateSpotPath(poolAddr: string, n: number): number[] {
+function generateFakeSpotPath(poolAddr: string, n: number): number[] {
   let seed = 5381;
   for (let i = 0; i < poolAddr.length; i++) {
     seed = (((seed << 5) + seed) + poolAddr.charCodeAt(i)) | 0;
   }
   seed = Math.abs(seed) || 1;
-
   const pts: number[] = [];
   let v = 0.4 + ((seed & 0xFF) / 255) * 0.2;
-
   for (let i = 0; i < n; i++) {
     seed = nextSeed(seed);
     const delta = (((seed >>> 0) & 0xFF) / 255 - 0.5) * 0.05;
@@ -70,27 +70,20 @@ function generateSpotPath(poolAddr: string, n: number): number[] {
   return pts;
 }
 
-/**
- * Derive long/short from spot so the invariant always holds:
- *   long price >= spot price >= short price
- * The spread varies per-point using a seeded wobble (3–8% offset).
- */
-function deriveLines(spotPts: number[], poolAddr: string) {
+function deriveFakeLines(spotPts: number[], poolAddr: string) {
   let seed = 5381;
   const tag = poolAddr + "_spread";
   for (let i = 0; i < tag.length; i++) {
     seed = (((seed << 5) + seed) + tag.charCodeAt(i)) | 0;
   }
   seed = Math.abs(seed) || 1;
-
   const n = spotPts.length;
   const longPts: number[] = [];
   const shortPts: number[] = [];
   for (let i = 0; i < n; i++) {
     seed = nextSeed(seed);
-    const t = i / (n - 1); // 0 at start (bottom), 1 at end (top)
-    const maxSpread = 0.05 + (((seed >>> 0) & 0xFF) / 255) * 0.07; // 5–12%
-    // Logarithmic: big jump early, flattens out
+    const t = i / (n - 1);
+    const maxSpread = 0.05 + (((seed >>> 0) & 0xFF) / 255) * 0.07;
     const spread = i === 0 ? 0 : maxSpread * Math.log(1 + t * 9) / Math.log(10);
     longPts.push(Math.max(0.02, spotPts[i] - spread));
     shortPts.push(Math.min(0.98, spotPts[i] + spread));
@@ -98,24 +91,96 @@ function deriveLines(spotPts: number[], poolAddr: string) {
   return { longPts, shortPts };
 }
 
+// ─── Normalize real price data to 0–1 range ─────────────────────────────────
+
+function normalizePrices(
+  prices: { spot: bigint; long: bigint; short: bigint }[],
+  n: number
+): { spotPts: number[]; longPts: number[]; shortPts: number[] } {
+  if (prices.length === 0) return { spotPts: [], longPts: [], shortPts: [] };
+
+  // Find min/max across all 3 lines for consistent scale
+  let min = prices[0].short;
+  let max = prices[0].long;
+  for (const p of prices) {
+    if (p.short < min) min = p.short;
+    if (p.long > max) max = p.long;
+    if (p.spot < min) min = p.spot;
+    if (p.spot > max) max = p.spot;
+  }
+
+  // Add 10% padding so lines don't touch edges
+  const range = max - min;
+  const pad = range > 0n ? range / 10n : 1n;
+  const lo = min - pad;
+  const hi = max + pad;
+  const span = hi - lo > 0n ? hi - lo : 1n;
+
+  const normalize = (v: bigint) => Number((v - lo) * 10000n / span) / 10000;
+
+  // Resample to exactly n points (linear interpolation)
+  const resample = (vals: number[]): number[] => {
+    if (vals.length === 0) return Array(n).fill(0.5);
+    if (vals.length === 1) return Array(n).fill(vals[0]);
+    const out: number[] = [];
+    for (let i = 0; i < n; i++) {
+      const t = (i / (n - 1)) * (vals.length - 1);
+      const lo = Math.floor(t);
+      const hi = Math.min(lo + 1, vals.length - 1);
+      const frac = t - lo;
+      out.push(vals[lo] * (1 - frac) + vals[hi] * frac);
+    }
+    return out;
+  };
+
+  // Long is on the LEFT (lower x = higher price in our chart layout)
+  // So we invert: long gets (1 - normalized) and short gets normalized directly
+  // Actually our chart: left = long, right = short
+  // So lower x-value = long (higher price), higher x-value = short (lower price)
+  // We map: highest price → lowest x (left), lowest price → highest x (right)
+  const spotRaw = prices.map((p) => normalize(p.spot));
+  const longRaw = prices.map((p) => normalize(p.long));
+  const shortRaw = prices.map((p) => normalize(p.short));
+
+  // Invert so higher price = more left (lower x value)
+  return {
+    spotPts: resample(spotRaw.map((v) => 1 - v)),
+    longPts: resample(longRaw.map((v) => 1 - v)),
+    shortPts: resample(shortRaw.map((v) => 1 - v)),
+  };
+}
+
+// ─── Price Chart ─────────────────────────────────────────────────────────────
+
 function PriceChart({
   poolAddress,
   height = 380,
   highlightLine,
+  priceData,
 }: {
   poolAddress: string;
   height?: number;
   highlightLine?: "long" | "short" | null;
+  priceData?: { spot: bigint; long: bigint; short: bigint }[];
 }) {
   const W = 400;
   const H = height;
   const N = 80;
-  const TOP_PAD = 0.28; // stop lines at 28% from top (room for token overlay)
+  const TOP_PAD = 0.28;
 
   const [clipId] = useState(() => `chart-clip-${++chartIdCounter}`);
 
-  const spotPts = useMemo(() => generateSpotPath(poolAddress, N), [poolAddress]);
-  const { longPts, shortPts } = useMemo(() => deriveLines(spotPts, poolAddress), [spotPts, poolAddress]);
+  // Use real data if available (>= 2 points), otherwise fall back to fake
+  const hasRealData = priceData && priceData.length >= 2;
+
+  const { spotPts, longPts, shortPts } = useMemo(() => {
+    if (hasRealData) {
+      return normalizePrices(priceData!, N);
+    }
+    const fakeSpot = generateFakeSpotPath(poolAddress, N);
+    const { longPts, shortPts } = deriveFakeLines(fakeSpot, poolAddress);
+    return { spotPts: fakeSpot, longPts, shortPts };
+  }, [hasRealData, priceData, poolAddress]);
 
   // x-value maps to horizontal position; y = time (bottom=old, top=new)
   // Lines run from y=H (bottom) to y=H*TOP_PAD (below token overlay)
@@ -125,9 +190,9 @@ function PriceChart({
       y: H - (i / (N - 1)) * H * (1 - TOP_PAD),
     }));
 
-  const spotSvg  = useMemo(() => toSvg(spotPts),  [spotPts]);
-  const longSvg  = useMemo(() => toSvg(longPts),  [longPts]);
-  const shortSvg = useMemo(() => toSvg(shortPts), [shortPts]);
+  const spotSvg  = useMemo(() => toSvg(spotPts),  [spotPts, W, H, N, TOP_PAD]);
+  const longSvg  = useMemo(() => toSvg(longPts),  [longPts, W, H, N, TOP_PAD]);
+  const shortSvg = useMemo(() => toSvg(shortPts), [shortPts, W, H, N, TOP_PAD]);
 
   const toPath = (pts: { x: number; y: number }[]) =>
     pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join("");
@@ -613,7 +678,8 @@ function FeedCard({
   const priceDisplay = priceRaw !== undefined ? formatUsdc(priceRaw) : "—";
   const tvlDisplay   = totalTvlRaw !== undefined ? formatUsdcCompact(totalTvlRaw) : "—";
 
-  // (chart data is self-contained in PriceChart)
+  // Fetch real price history from indexer (falls back to fake data if unavailable)
+  const { data: priceHistory } = usePriceHistory(poolAddress);
 
   // Always load pool trading data for hover previews
   const poolContract = { address: poolAddress, abi: exnihiloPoolAbi } as const;
@@ -725,12 +791,19 @@ function FeedCard({
   const { isLoading: openConfirming, isSuccess: openSuccess } =
     useWaitForTransactionReceipt({ hash: openHash });
 
+  // TX signed → start tron animation (submitted)
+  useEffect(() => {
+    if (!openHash) return;
+    setTxSide(direction === "short" ? "short" : "long");
+    setTxPhase("submitted");
+  }, [openHash, direction]);
+
+  // TX mined → tron animation phase 2
   useEffect(() => {
     if (!openSuccess) return;
     queryClient.invalidateQueries();
-    const t = setTimeout(onAdvance, 1400);
-    return () => clearTimeout(t);
-  }, [openSuccess, queryClient, onAdvance]);
+    setTxPhase("mined");
+  }, [openSuccess, queryClient]);
 
   const approveBusy = approvePending || approveConfirming;
   const openBusy    = openPending    || openConfirming;
@@ -792,7 +865,7 @@ function FeedCard({
             transformStyle: "preserve-3d",
           }}
         >
-          <PriceChart poolAddress={poolAddress} height={CHART_HEIGHT} highlightLine={hoverSide} />
+          <PriceChart poolAddress={poolAddress} height={CHART_HEIGHT} highlightLine={hoverSide} priceData={priceHistory} />
 
           {/* Top gradient for readability */}
           <div
@@ -1176,42 +1249,6 @@ function FeedCard({
         </Link>
       </div>
 
-      {/* ── Mock TX buttons (dev) ── */}
-      <div
-        style={{
-          padding: "8px 18px 10px",
-          display: "flex",
-          gap: 6,
-          borderTop: "1px dashed var(--border)",
-        }}
-      >
-        <button
-          onClick={() => {
-            setTxSide(direction === "short" ? "short" : "long");
-            setTxPhase("submitted");
-          }}
-          className="btn-terminal"
-          style={{ flex: 1, fontSize: "0.55rem", padding: "6px 4px", justifyContent: "center" }}
-        >
-          MOCK TX SUBMITTED
-        </button>
-        <button
-          onClick={() => setTxPhase("mined")}
-          disabled={txPhase !== "submitted"}
-          className="btn-terminal btn-cyan"
-          style={{ flex: 1, fontSize: "0.55rem", padding: "6px 4px", justifyContent: "center" }}
-        >
-          MOCK TX MINED
-        </button>
-        <button
-          onClick={() => setTxPhase("idle")}
-          disabled={txPhase === "idle"}
-          className="btn-terminal"
-          style={{ flex: 1, fontSize: "0.55rem", padding: "6px 4px", justifyContent: "center" }}
-        >
-          RESET
-        </button>
-      </div>
     </div>
   );
 }
