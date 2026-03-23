@@ -17,10 +17,6 @@ mode = "parallel"
 task = "workflow.run"
 args = "Start application"
 
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Start Indexer"
-
 [[workflows.workflow]]
 name = "Start application"
 author = "agent"
@@ -39,10 +35,6 @@ author = "agent"
 
 [workflows.workflow.metadata]
 outputType = "console"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "cd indexer-standalone && npm install && npx ponder dev --schema exnihilo"
 
 [[ports]]
 localPort = 3000
