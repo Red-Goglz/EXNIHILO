@@ -52,4 +52,13 @@ export default defineConfig({
     port: 5000,
     allowedHosts: true,
   },
+  build: {
+    rollupOptions: {
+      onwarn(warning, warn) {
+        // Suppress "/*#__PURE__*/" annotation warnings from third-party packages
+        if (warning.code === 'SOURCEMAP_ERROR' || warning.message?.includes('__PURE__')) return;
+        warn(warning);
+      },
+    },
+  },
 })
