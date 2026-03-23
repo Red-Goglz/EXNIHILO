@@ -39,7 +39,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "cd packages/indexer && npx ponder start"
+args = "cd packages/indexer && npx ponder start --schema exnihilo"
 waitForPort = 42069
 
 [workflows.workflow.metadata]
@@ -56,4 +56,4 @@ externalPort = 42069
 [deployment]
 deploymentTarget = "cloudrun"
 build = ["sh", "-c", "npm run build"]
-run = ["sh", "-c", "cd packages/indexer && npx ponder start & cd packages/site && npx vite preview --host --port 3000"]
+run = ["sh", "-c", "cd packages/indexer && npx ponder start --schema exnihilo & cd packages/site && npx vite preview --host --port 3000"]

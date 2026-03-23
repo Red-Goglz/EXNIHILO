@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "ponder dev",
-    "start": "ponder start",
+    "dev": "ponder dev --schema exnihilo",
+    "start": "ponder start --schema exnihilo",
     "build": "echo 'Indexer uses ponder start, no build needed'",
     "codegen": "ponder codegen"
   },
