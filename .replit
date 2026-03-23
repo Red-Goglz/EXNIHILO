@@ -1,4 +1,4 @@
-modules = ["nodejs-20", "web"]
+modules = ["nodejs-20", "web", "postgresql-16"]
 [agent]
 expertMode = true
 
@@ -37,17 +37,20 @@ waitForPort = 5000
 name = "Start Indexer"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "cd indexer-standalone && npm install && npm start"
-waitForPort = 3000
-
 [workflows.workflow.metadata]
 outputType = "console"
 
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd indexer-standalone && npm install && npx ponder dev --schema exnihilo"
+
 [[ports]]
 localPort = 3000
-externalPort = 3000
+externalPort = 80
+
+[[ports]]
+localPort = 5000
+externalPort = 80
 
 [deployment]
 deploymentTarget = "cloudrun"
