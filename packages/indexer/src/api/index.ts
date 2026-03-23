@@ -40,7 +40,7 @@ app.get("/prices/:pool", async (c) => {
 
 // ── Health check ─────────────────────────────────────────────────────────────
 
-app.get("/health", (c) => {
+app.get("/status", (c) => {
   return c.json({ status: "ok" });
 });
 
