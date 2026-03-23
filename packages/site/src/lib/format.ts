@@ -9,8 +9,15 @@
 export function formatUsdc(raw: bigint): string {
   const whole = raw / 1_000_000n;
   const frac = raw % 1_000_000n;
-  const fracStr = frac.toString().padStart(6, "0").slice(0, 2);
-  return `$${whole.toLocaleString()}.${fracStr}`;
+  const fracPadded = frac.toString().padStart(6, "0");
+
+  if (whole > 0n || frac >= 10_000n) {
+    // >= $0.01 — show 2 decimal places
+    return `$${whole.toLocaleString()}.${fracPadded.slice(0, 2)}`;
+  }
+  // Sub-cent — show all significant digits (up to 6)
+  const trimmed = fracPadded.replace(/0+$/, "") || "0";
+  return `$0.${trimmed}`;
 }
 
 /**
