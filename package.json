@@ -18,5 +18,8 @@
     "packages/site",
     "packages/abis",
     "packages/docs"
-  ]
+  ],
+  "dependencies": {
+    "ponder": "^1.0.0"
+  }
 }

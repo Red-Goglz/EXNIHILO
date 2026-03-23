@@ -17,6 +17,10 @@ mode = "parallel"
 task = "workflow.run"
 args = "Start application"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start Indexer"
+
 [[workflows.workflow]]
 name = "Start application"
 author = "agent"
@@ -29,13 +33,21 @@ task = "shell.exec"
 args = "npm install && npm run dev"
 waitForPort = 5000
 
-[[ports]]
-localPort = 3000
-externalPort = 80
+[[workflows.workflow]]
+name = "Start Indexer"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd indexer-standalone && npm install && npm start"
+waitForPort = 3000
+
+[workflows.workflow.metadata]
+outputType = "console"
 
 [[ports]]
-localPort = 5000
-externalPort = 80
+localPort = 3000
+externalPort = 3000
 
 [deployment]
 deploymentTarget = "cloudrun"
