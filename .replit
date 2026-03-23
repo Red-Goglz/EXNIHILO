@@ -11,6 +11,7 @@ runButton = "Project"
 [[workflows.workflow]]
 name = "Project"
 author = "agent"
+mode = "parallel"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
@@ -20,16 +21,20 @@ args = "Start application"
 name = "Start application"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "npm run build && npm start"
-waitForPort = 3000
-
 [workflows.workflow.metadata]
 outputType = "webview"
 
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm install && npm run dev"
+waitForPort = 5000
+
 [[ports]]
 localPort = 3000
+externalPort = 80
+
+[[ports]]
+localPort = 5000
 externalPort = 80
 
 [deployment]
