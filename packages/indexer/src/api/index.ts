@@ -38,9 +38,9 @@ app.get("/prices/:pool", async (c) => {
   });
 });
 
-// ── Health check ─────────────────────────────────────────────────────────────
+// ── API Status check ─────────────────────────────────────────────────────────
 
-app.get("/status", (c) => {
+app.get("/api-status", (c) => {
   return c.json({ status: "ok" });
 });
 

@@ -49,10 +49,6 @@ outputType = "console"
 localPort = 3000
 externalPort = 80
 
-[[ports]]
-localPort = 42069
-externalPort = 42069
-
 [deployment]
 deploymentTarget = "cloudrun"
 build = ["sh", "-c", "npm run build"]
