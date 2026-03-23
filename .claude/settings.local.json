@@ -15,7 +15,8 @@
       "WebSearch",
       "mcp__plugin_aiup-vaadin-jooq_playwright__browser_wait_for",
       "mcp__plugin_aiup-vaadin-jooq_context7__resolve-library-id",
-      "mcp__plugin_aiup-vaadin-jooq_context7__query-docs"
+      "mcp__plugin_aiup-vaadin-jooq_context7__query-docs",
+      "WebFetch(domain:exnihilo-indexer.replit.app)"
     ]
   }
 }
