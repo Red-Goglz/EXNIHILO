@@ -13,13 +13,13 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "npm install && npm start"
-waitForPort = 3000
+waitForPort = 42069
 
 [workflows.workflow.metadata]
 outputType = "console"
 
 [[ports]]
-localPort = 3000
+localPort = 42069
 externalPort = 80
 
 [deployment]
