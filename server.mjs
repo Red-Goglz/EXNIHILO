@@ -58,13 +58,27 @@ function serveStatic(req, res) {
   return false;
 }
 
+// Try multiple addresses — Ponder may bind to localhost (::1) or 127.0.0.1
+const PONDER_URLS = [
+  `http://127.0.0.1:${PONDER_PORT}`,
+  `http://localhost:${PONDER_PORT}`,
+  `http://[::1]:${PONDER_PORT}`,
+];
+
+async function tryFetch(path, method, headers) {
+  for (const base of PONDER_URLS) {
+    try {
+      const r = await fetch(`${base}${path}`, { method, headers: { ...headers, host: new URL(base).host } });
+      return r;
+    } catch { /* try next */ }
+  }
+  return null;
+}
+
 function proxyToPonder(req, res) {
-  const url = `${PONDER_URL}${req.url}`;
-  fetch(url, {
-    method: req.method,
-    headers: { ...req.headers, host: `127.0.0.1:${PONDER_PORT}` },
-  })
+  tryFetch(req.url, req.method, req.headers)
     .then(async (pRes) => {
+      if (!pRes) throw new Error("unreachable");
       res.writeHead(pRes.status, {
         "Content-Type": pRes.headers.get("content-type") || "application/json",
         "Access-Control-Allow-Origin": "*",
@@ -112,6 +126,18 @@ const server = createServer((req, res) => {
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Server listening on http://0.0.0.0:${PORT}`);
-  console.log(`Proxying API → ${PONDER_URL}`);
+  console.log(`Proxying API → Ponder on port ${PONDER_PORT}`);
   console.log(`Serving static files from ${DIST}`);
+
+  // Periodically check Ponder connectivity
+  let ponderReady = false;
+  const check = async () => {
+    const r = await tryFetch("/health", "GET", {});
+    if (r && !ponderReady) {
+      ponderReady = true;
+      console.log(`Ponder connected at ${r.url || "port " + PONDER_PORT}`);
+    }
+    if (!ponderReady) setTimeout(check, 5000);
+  };
+  setTimeout(check, 3000);
 });
