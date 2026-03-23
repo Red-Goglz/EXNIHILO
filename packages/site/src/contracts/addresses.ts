@@ -16,11 +16,10 @@ export const ADDRESSES = {
   [HARDHAT_CHAIN_ID]: {
     factory:     "0x95bD8D42f30351685e96C62EDdc0d0613bf9a87A" as `0x${string}`,
     positionNFT: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512" as `0x${string}`,
-    lpNFT:       "0xef11D1c2aA48826D4c41e54ab82D1Ff5Ad8A64Ca" as `0x${string}`,
+    lpNFT:       "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0" as `0x${string}`,
     usdc:        "0x5FbDB2315678afecb367f032d93F642f64180aa3" as `0x${string}`,
-    router:      "0x0000000000000000000000000000000000000000" as `0x${string}`, // TODO: deploy and fill
-    // Test token (MockPEPE, 18 dec) — local dev only
-    testToken:   "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0" as `0x${string}`,
+    router:      "0x0000000000000000000000000000000000000000" as `0x${string}`,
+    testToken:   "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9" as `0x${string}`,
   },
 } as const;
 
