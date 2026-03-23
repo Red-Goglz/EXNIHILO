@@ -51,6 +51,20 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 5000,
     allowedHosts: true,
+    proxy: {
+      '/prices': {
+        target: 'http://localhost:42069',
+        changeOrigin: true,
+      },
+      '/api-status': {
+        target: 'http://localhost:42069',
+        changeOrigin: true,
+      },
+      '/health': {
+        target: 'http://localhost:42069',
+        changeOrigin: true,
+      },
+    },
   },
   build: {
     rollupOptions: {

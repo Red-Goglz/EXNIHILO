@@ -1,9 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
-// Indexer URL — reads from env var, falls back to localhost for dev
-const INDEXER_URL =
-  (typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_INDEXER_URL) ||
-  "http://localhost:42069";
+// Use relative URL so requests go through the vite proxy to Ponder
+const API_BASE = "";
 
 export interface PricePoint {
   timestamp: number;
@@ -30,7 +28,7 @@ export function usePriceHistory(poolAddress: string, limit = 200) {
     queryKey: ["priceHistory", poolAddress, limit],
     queryFn: async () => {
       const res = await fetch(
-        `${INDEXER_URL}/prices/${poolAddress.toLowerCase()}?limit=${limit}`
+        `${API_BASE}/prices/${poolAddress.toLowerCase()}?limit=${limit}`
       );
       if (!res.ok) throw new Error(`Indexer returned ${res.status}`);
       const data: ApiResponse = await res.json();
