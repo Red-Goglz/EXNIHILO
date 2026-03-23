@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { Link } from "react-router-dom";
 import {
   useAccount,
@@ -473,10 +473,12 @@ function TronScene({
   phase,
   side,
   onComplete,
+  onSubmittedReady,
 }: {
   phase: "submitted" | "mined";
   side: "long" | "short";
   onComplete?: () => void;
+  onSubmittedReady?: () => void;
 }) {
   const color = side === "long" ? "#00ff88" : "#ff3b30";
   const colorDim = side === "long" ? "rgba(0,255,136,0.15)" : "rgba(255,59,48,0.15)";
@@ -492,9 +494,9 @@ function TronScene({
   useEffect(() => {
     const t1 = setTimeout(() => setShowText(true), 1400);
     const t2 = setTimeout(() => setShowGrid(true), 1800);
-    const t3 = setTimeout(() => setShowOrb(true),  2600);
+    const t3 = setTimeout(() => { setShowOrb(true); onSubmittedReady?.(); }, 2600);
     return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Orb pulsing via state toggle
   const [pulse, setPulse] = useState(false);
@@ -649,6 +651,8 @@ function FeedCard({
   const [direction, setDirection] = useState<"long" | "short" | null>(null);
   const [txPhase, setTxPhase] = useState<"idle" | "submitted" | "mined">("idle");
   const [txSide, setTxSide]   = useState<"long" | "short">("long");
+  const submittedReady = useRef(false);
+  const minedQueued    = useRef(false);
   const [preset, setPreset]       = useState<number | null>(null);
   const [customLong, setCustomLong] = useState("");
   const [customShort, setCustomShort] = useState("");
@@ -794,15 +798,21 @@ function FeedCard({
   // TX signed → start tron animation (submitted)
   useEffect(() => {
     if (!openHash) return;
+    submittedReady.current = false;
+    minedQueued.current = false;
     setTxSide(direction === "short" ? "short" : "long");
     setTxPhase("submitted");
   }, [openHash, direction]);
 
-  // TX mined → tron animation phase 2
+  // TX mined → queue "mined" phase until submitted animation is ready
   useEffect(() => {
     if (!openSuccess) return;
     queryClient.invalidateQueries();
-    setTxPhase("mined");
+    if (submittedReady.current) {
+      setTxPhase("mined");
+    } else {
+      minedQueued.current = true;
+    }
   }, [openSuccess, queryClient]);
 
   const approveBusy = approvePending || approveConfirming;
@@ -948,7 +958,13 @@ function FeedCard({
 
         {/* Tron scene (behind the chart, revealed as chart tilts away) */}
         {txPhase !== "idle" && (
-          <TronScene phase={txPhase} side={txSide} onComplete={() => {
+          <TronScene phase={txPhase} side={txSide} onSubmittedReady={() => {
+            submittedReady.current = true;
+            if (minedQueued.current) {
+              minedQueued.current = false;
+              setTxPhase("mined");
+            }
+          }} onComplete={() => {
             addAlert(txSide, symbol);
             setTxPhase("idle");
             onAdvance();
