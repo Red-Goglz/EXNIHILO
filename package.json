@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "npm run dev -w packages/site",
     "build": "npm run build -w packages/site",
-    "start": "cd packages/site && npx vite preview --host --port 3000",
+    "start": "cd packages/indexer && npx ponder start --schema exnihilo & cd packages/site && npx vite preview --host --port 3000",
     "start:indexer": "cd packages/indexer && npx ponder start --schema exnihilo",
     "start:all": "cd packages/indexer && npx ponder start --schema exnihilo & cd packages/site && npx vite preview --host --port 3000",
     "test": "echo \"Error: no test specified\" && exit 1"
