@@ -109,8 +109,10 @@ contract PositionNFT is ERC721Enumerable {
 
         bytes memory svg  = _buildSVG(tokenId, pos, ld);
         bytes memory json = abi.encodePacked(
-            '{"name":"EXNIHILO Position #', tokenId.toString(),
-            '","description":"EXNIHILO - Out of Thin Air',
+            '{"name":"', ld.tokenSymbol, pos.isLong ? " LONG" : " SHORT",
+            ' #', tokenId.toString(),
+            '","description":"EXNIHILO - Out of Thin Air. ',
+            ld.tokenSymbol, '/USDC ',
             pos.isLong ? "long" : "short",
             ' position. Fully on-chain.",',
             '"image":"data:image/svg+xml;base64,', Base64.encode(svg), '"}'
@@ -259,7 +261,7 @@ contract PositionNFT is ERC721Enumerable {
 
         return abi.encodePacked(
             _svgOpen(),
-            _svgChrome(tokenId, sc, sl),
+            _svgChrome(tokenId, sc, sl, ld.tokenSymbol),
             pos.isLong ? _svgLongData(pos, ld) : _svgShortData(pos, ld),
             _svgPnl(ld),
             _svgFooter(pos),
@@ -323,12 +325,15 @@ contract PositionNFT is ERC721Enumerable {
     function _svgChrome(
         uint256 tokenId,
         string memory sc,
-        string memory sl
+        string memory sl,
+        string memory tokenSymbol
     ) internal pure returns (bytes memory) {
+        string memory market = string(abi.encodePacked(tokenSymbol, " / USDC"));
         return abi.encodePacked(
             '<rect x="20" y="82" width="56" height="20" fill="', sc, '" fill-opacity="0.08"/>',
             '<rect x="20" y="82" width="56" height="20" fill="none" stroke="', sc, '" stroke-opacity="0.35"/>',
             '<text x="48" y="96" class="f" font-size="10" letter-spacing="2" fill="', sc, '" text-anchor="middle">', sl, "</text>",
+            '<text x="86" y="96" class="f" font-size="14" letter-spacing="2" fill="#fff" font-weight="bold">', market, "</text>",
             '<text x="380" y="96" class="f" font-size="10" fill="#3a3a3a" text-anchor="end">#', tokenId.toString(), "</text>",
             '<line x1="20" y1="114" x2="380" y2="114" stroke="#1a1a1a"/>'
         );
@@ -347,11 +352,12 @@ contract PositionNFT is ERC721Enumerable {
     }
 
     function _svgShortData(Position memory pos, LiveData memory ld) internal pure returns (bytes memory) {
-        // suppress unused warning — ld used for PnL section only
-        ld;
+        string memory debtLabel = string(abi.encodePacked("DEBT (air", ld.tokenSymbol, ")"));
         return abi.encodePacked(
             '<text x="20"  y="136" class="f lbl">LOCKED USDC</text>',
+            '<text x="210" y="136" class="f lbl">', debtLabel, "</text>",
             '<text x="20"  y="156" class="f val">', _fmt6(pos.lockedAmount), "</text>",
+            '<text x="210" y="156" class="f val">', _fmt18(pos.airTokenMinted), "</text>",
             '<text x="20"  y="196" class="f lbl">FEES PAID</text>',
             '<text x="20"  y="216" class="f val">', _fmt6(pos.feesPaid),     "</text>"
         );

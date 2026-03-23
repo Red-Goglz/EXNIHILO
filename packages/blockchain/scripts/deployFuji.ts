@@ -25,6 +25,8 @@ import * as path from "path";
 
 async function main() {
   const [deployer] = await ethers.getSigners();
+  const startBlock = await ethers.provider.getBlockNumber();
+  console.log("Start block: ", startBlock);
   console.log("Deployer:    ", deployer.address);
 
   const balance = await ethers.provider.getBalance(deployer.address);
@@ -95,6 +97,20 @@ async function main() {
   }
   console.log("Factory:     ", factoryAddress, "(LpNFT.factory verified ✓)");
 
+  // ── 3b. EXNIHILORouter ──────────────────────────────────────────────────────
+  const RouterF = await ethers.getContractFactory("EXNIHILORouter");
+  const router = await RouterF.connect(deployer).deploy(factoryAddress, usdcAddress);
+  await router.waitForDeployment();
+  const routerAddress = await router.getAddress();
+  console.log("Router:      ", routerAddress);
+
+  // ── 3c. Faucet ─────────────────────────────────────────────────────────────
+  const FaucetF = await ethers.getContractFactory("Faucet");
+  const faucet = await FaucetF.connect(deployer).deploy(usdcAddress);
+  await faucet.waitForDeployment();
+  const faucetAddress = await faucet.getAddress();
+  console.log("Faucet:      ", faucetAddress);
+
   // ── 4. Mock base tokens ──────────────────────────────────────────────────────
   const baseTokens: { name: string; symbol: string; contract: any; address: string }[] = [];
 
@@ -124,12 +140,18 @@ async function main() {
   }
 
   for (const recipient of mintRecipients) {
-    await (usdc as any).connect(deployer).mint(recipient, USDC_MINT);
+    await (await (usdc as any).connect(deployer).mint(recipient, USDC_MINT)).wait();
     for (const t of baseTokens) {
-      await (t.contract as any).connect(deployer).mint(recipient, TOKEN_MINT);
+      await (await (t.contract as any).connect(deployer).mint(recipient, TOKEN_MINT)).wait();
     }
   }
   console.log(`Minted 100M MockUSDC + 100M of each token to: ${mintRecipients.join(", ")}`);
+
+  // Seed faucet with USDC + AVAX
+  await (await (usdc as any).connect(deployer).mint(faucetAddress, 10_000_000n * 1_000_000n)).wait();
+  const seedTx = await deployer.sendTransaction({ to: faucetAddress, value: ethers.parseEther("1.0") });
+  await seedTx.wait();
+  console.log("Seeded faucet: 10M USDC + 1 AVAX");
 
   // ── 6. Create markets ────────────────────────────────────────────────────────
   //    Seed sizes chosen to give varied TVLs and prices similar to localhost.
@@ -152,8 +174,8 @@ async function main() {
   for (const [symbol, usdcSeed, tokenSeed] of marketSpecs) {
     const baseToken = baseTokens.find(t => t.symbol === symbol)!;
 
-    await usdc.connect(deployer).approve(factoryAddress, usdcSeed);
-    await baseToken.contract.connect(deployer).approve(factoryAddress, tokenSeed);
+    await (await usdc.connect(deployer).approve(factoryAddress, usdcSeed)).wait();
+    await (await baseToken.contract.connect(deployer).approve(factoryAddress, tokenSeed)).wait();
 
     const tx = await factory.connect(deployer).createMarket(
       baseToken.address,
@@ -185,6 +207,8 @@ async function main() {
     positionNFT: positionNFTAddress,
     lpNFT:       lpNFTAddress,
     usdc:        usdcAddress,
+    router:      routerAddress,
+    faucet:      faucetAddress,
     testToken:   baseTokens[0].address, // ARENA as the "default" test token
     treasury:    treasuryAddr,
     deployer:    deployer.address,
@@ -206,6 +230,8 @@ async function main() {
   console.log(`    npx hardhat verify --network avalancheFujiTestnet ${positionNFTAddress}`);
   console.log(`    npx hardhat verify --network avalancheFujiTestnet ${lpNFTAddress} "${factoryAddress}"`);
   console.log(`    npx hardhat verify --network avalancheFujiTestnet ${factoryAddress} "${positionNFTAddress}" "${lpNFTAddress}" "${usdcAddress}" "${treasuryAddr}" ${defaultSwapFeeBps}`);
+  console.log(`    npx hardhat verify --network avalancheFujiTestnet ${routerAddress} "${factoryAddress}" "${usdcAddress}"`);
+  console.log(`    npx hardhat verify --network avalancheFujiTestnet ${faucetAddress} "${usdcAddress}"`);
   for (const t of baseTokens) {
     console.log(`    npx hardhat verify --network avalancheFujiTestnet ${t.address} "${t.name}" "${t.symbol}" 18`);
   }

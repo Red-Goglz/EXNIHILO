@@ -341,7 +341,7 @@ async function runSequence(params: Params): Promise<void> {
 
   // ── Step 1: Open long ─────────────────────────────────────────────────────
 
-  const txLong     = await pool.connect(trader).openLong(params.longUsdc, 0n);
+  const txLong     = await pool.connect(trader).openLong(params.longUsdc, 0n, trader.address);
   const rcptLong   = await txLong.wait();
   const poolIface  = pool.interface;
   const longLog    = rcptLong!.logs
@@ -354,7 +354,7 @@ async function runSequence(params: Params): Promise<void> {
 
   if (params.swapUsdc > 0n) {
     // tokenToUsdc = false → USDC in, token out
-    await pool.connect(trader).swap(params.swapUsdc, 0n, false);
+    await pool.connect(trader).swap(params.swapUsdc, 0n, false, trader.address);
   }
 
   // ── Step 3: Decide close path from live chain state ───────────────────────
@@ -387,7 +387,7 @@ async function runSequence(params: Params): Promise<void> {
   // completely drains the pool's USDC reserve.
   const finalTokenBalance = await baseToken.balanceOf(trader.address);
   if (finalTokenBalance > 0n) {
-    await pool.connect(trader).swap(finalTokenBalance, 0n, true); // tokenToUsdc = true
+    await pool.connect(trader).swap(finalTokenBalance, 0n, true, trader.address); // tokenToUsdc = true
   }
 
   // ── Compute and log trader P&L ────────────────────────────────────────────

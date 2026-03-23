@@ -408,15 +408,17 @@ contract EXNIHILOPool is ReentrancyGuard {
     function swap(
         uint256 amountIn,
         uint256 minAmountOut,
-        bool tokenToUsdc
+        bool tokenToUsdc,
+        address recipient
     ) external nonReentrant {
         if (amountIn == 0) revert ZeroAmount();
+        if (recipient == address(0)) revert ZeroAddress();
         if (backedAirToken == 0 || backedAirUsd == 0) revert InsufficientBackedReserves();
 
         if (tokenToUsdc) {
-            _swapTokenToUsdc(amountIn, minAmountOut);
+            _swapTokenToUsdc(amountIn, minAmountOut, recipient);
         } else {
-            _swapUsdcToToken(amountIn, minAmountOut);
+            _swapUsdcToToken(amountIn, minAmountOut, recipient);
         }
     }
 
@@ -447,8 +449,10 @@ contract EXNIHILOPool is ReentrancyGuard {
      */
     function openLong(
         uint256 usdcAmount,
-        uint256 minAirTokenOut
+        uint256 minAirTokenOut,
+        address recipient
     ) external nonReentrant {
+        if (recipient == address(0)) revert ZeroAddress();
         if (usdcAmount == 0) revert ZeroAmount();
         if (backedAirToken == 0 || backedAirUsd == 0) revert InsufficientBackedReserves();
 
@@ -499,7 +503,7 @@ contract EXNIHILOPool is ReentrancyGuard {
         airToken.forceApprove(address(positionNFT), airTokenOut);
 
         uint256 nftId = positionNFT.mintLong(
-            msg.sender,
+            recipient,
             address(this),
             address(airToken),
             usdcAmount,   // usdcIn
@@ -513,7 +517,7 @@ contract EXNIHILOPool is ReentrancyGuard {
 
         _assertReserveInvariant();
 
-        emit LongOpened(nftId, msg.sender, usdcAmount, usdcAmount, airTokenOut, totalFee);
+        emit LongOpened(nftId, recipient, usdcAmount, usdcAmount, airTokenOut, totalFee);
     }
 
     /**
@@ -666,8 +670,10 @@ contract EXNIHILOPool is ReentrancyGuard {
      */
     function openShort(
         uint256 usdcNotional,
-        uint256 minAirUsdOut
+        uint256 minAirUsdOut,
+        address recipient
     ) external nonReentrant {
+        if (recipient == address(0)) revert ZeroAddress();
         if (usdcNotional == 0) revert ZeroAmount();
         if (backedAirToken == 0 || backedAirUsd == 0) revert InsufficientBackedReserves();
 
@@ -721,7 +727,7 @@ contract EXNIHILOPool is ReentrancyGuard {
         airUsdToken.forceApprove(address(positionNFT), airUsdOut);
 
         uint256 nftId = positionNFT.mintShort(
-            msg.sender,
+            recipient,
             address(this),
             address(airUsdToken),
             airTokenMinted,
@@ -733,7 +739,7 @@ contract EXNIHILOPool is ReentrancyGuard {
 
         _assertReserveInvariant();
 
-        emit ShortOpened(nftId, msg.sender, airTokenMinted, airUsdOut, totalFee);
+        emit ShortOpened(nftId, recipient, airTokenMinted, airUsdOut, totalFee);
     }
 
     /**
@@ -983,6 +989,29 @@ contract EXNIHILOPool is ReentrancyGuard {
     }
 
     /**
+     * @notice Entry price for opening a long position.
+     *         Uses SWAP-2 reserves: x = backedAirToken, y = airUsd.totalSupply().
+     *         Since airUsd.totalSupply() >= backedAirUsd, longPrice >= spotPrice.
+     *         Same 1e18-scaled format as spotPrice().
+     */
+    function longPrice() external view returns (uint256) {
+        if (backedAirToken == 0) return 0;
+        return (airUsdToken.totalSupply() * 1e18) / backedAirToken;
+    }
+
+    /**
+     * @notice Entry price for opening a short position.
+     *         Uses SWAP-3 reserves: x = airToken.totalSupply(), y = backedAirUsd.
+     *         Since airToken.totalSupply() >= backedAirToken, shortPrice <= spotPrice.
+     *         Same 1e18-scaled format as spotPrice().
+     */
+    function shortPrice() external view returns (uint256) {
+        uint256 airTokenSupply = airToken.totalSupply();
+        if (airTokenSupply == 0) return 0;
+        return (backedAirUsd * 1e18) / airTokenSupply;
+    }
+
+    /**
      * @notice Quote a SWAP-1 swap for UI display (no state changes).
      * @return grossOut Output before fee.
      * @return fee      Swap fee retained by pool.
@@ -1036,7 +1065,7 @@ contract EXNIHILOPool is ReentrancyGuard {
      * @dev Execute a token → USDC SWAP-1.
      *      Extracted to a dedicated function to keep swap()'s stack frame lean.
      */
-    function _swapTokenToUsdc(uint256 amountIn, uint256 minAmountOut) internal {
+    function _swapTokenToUsdc(uint256 amountIn, uint256 minAmountOut, address recipient) internal {
         // ── CHECK (against pre-swap reserves) ─────────────────────────────────
         uint256 netOut = _cpAmountOut(amountIn, backedAirToken, backedAirUsd);
         if (netOut < minAmountOut) revert InsufficientOutput(netOut, minAmountOut);
@@ -1050,7 +1079,7 @@ contract EXNIHILOPool is ReentrancyGuard {
         _transferIn(underlyingToken, msg.sender, amountIn);
         airToken.mint(address(this), amountIn);
         airUsdToken.burn(address(this), netOut);
-        underlyingUsdc.safeTransfer(msg.sender, netOut);
+        underlyingUsdc.safeTransfer(recipient, netOut);
 
         _assertReserveInvariant();
 
@@ -1060,7 +1089,7 @@ contract EXNIHILOPool is ReentrancyGuard {
     /**
      * @dev Execute a USDC → token SWAP-1.
      */
-    function _swapUsdcToToken(uint256 amountIn, uint256 minAmountOut) internal {
+    function _swapUsdcToToken(uint256 amountIn, uint256 minAmountOut, address recipient) internal {
         // ── CHECK (against pre-swap reserves) ─────────────────────────────────
         uint256 netOut = _cpAmountOut(amountIn, backedAirUsd, backedAirToken);
         if (netOut < minAmountOut) revert InsufficientOutput(netOut, minAmountOut);
@@ -1074,7 +1103,7 @@ contract EXNIHILOPool is ReentrancyGuard {
         _transferIn(underlyingUsdc, msg.sender, amountIn);
         airUsdToken.mint(address(this), amountIn);
         airToken.burn(address(this), netOut);
-        underlyingToken.safeTransfer(msg.sender, netOut);
+        underlyingToken.safeTransfer(recipient, netOut);
 
         _assertReserveInvariant();
 

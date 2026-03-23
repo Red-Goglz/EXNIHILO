@@ -53,6 +53,6 @@ localPort = 5000
 externalPort = 80
 
 [deployment]
-deploymentTarget = "vm"
-build = ["sh", "-c", "cd indexer-standalone && npm install"]
-run = ["sh", "-c", "cd indexer-standalone && DATABASE_URL=$PROD_DATABASE_URL npx ponder start --schema exnihilo"]
+deploymentTarget = "cloudrun"
+build = ["sh", "-c", "npm run build"]
+run = ["sh", "-c", "cd packages/site && npx vite preview --host --port 3000"]

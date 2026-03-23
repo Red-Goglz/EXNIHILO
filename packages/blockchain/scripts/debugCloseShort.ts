@@ -52,7 +52,7 @@ async function main() {
   // Open short with 100 USDC
   await usdc.mint(trader1.address, ethers.parseUnits("100", 6));
   await usdc.connect(trader1).approve(poolAddr, ethers.MaxUint256);
-  const shortTx = await pool.connect(trader1).openShort(ethers.parseUnits("100", 6), 0n);
+  const shortTx = await pool.connect(trader1).openShort(ethers.parseUnits("100", 6), 0n, trader1.address);
   const shortReceipt = await shortTx.wait();
   const shortLog = shortReceipt!.logs.map(l => { try { return pool.interface.parseLog(l); } catch { return null; } }).find(l => l?.name === "ShortOpened")!;
   const nftId = shortLog.args.nftId;
@@ -87,7 +87,7 @@ async function main() {
   const bigDump = ethers.parseEther("900000"); // 900k tokens
   await baseToken.mint(trader2.address, bigDump);
   await baseToken.connect(trader2).approve(poolAddr, ethers.MaxUint256);
-  await pool.connect(trader2).swap(bigDump, 0n, true);
+  await pool.connect(trader2).swap(bigDump, 0n, true, trader2.address);
   console.log("\nAfter massive dump:");
   console.log("airUsd.totalSupply():", (await airUsd.totalSupply()).toString());
   console.log("airToken.totalSupply():", (await airToken.totalSupply()).toString());

@@ -36,11 +36,11 @@ async function main() {
   await token.approve(poolAddr!, ethers.MaxUint256);
 
   // Open long FIRST at current price
-  await pool.openLong(ethers.parseUnits("100", 6), 0n);
+  await pool.openLong(ethers.parseUnits("100", 6), 0n, deployer.address);
   console.log("Opened long position");
 
   // Then pump price: big USDC→token swap raises backedAirUsd → long is now in profit
-  await pool.swap(ethers.parseUnits("5000", 6), 0n, false);
+  await pool.swap(ethers.parseUnits("5000", 6), 0n, false, deployer.address);
   console.log("Price pumped → long now in profit");
 
   // Grab the latest token for this wallet

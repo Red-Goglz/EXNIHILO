@@ -229,7 +229,7 @@ async function openLong(
   trader: HardhatEthersSigner,
   usdcAmount: bigint
 ): Promise<bigint> {
-  const tx = await pool.connect(trader).openLong(usdcAmount, 0n);
+  const tx = await pool.connect(trader).openLong(usdcAmount, 0n, trader.address);
   const receipt = await tx.wait();
   const log = receipt!.logs
     .map((l) => { try { return pool.interface.parseLog(l); } catch { return null; } })
@@ -242,7 +242,7 @@ async function openShort(
   trader: HardhatEthersSigner,
   usdcAmount: bigint
 ): Promise<bigint> {
-  const tx = await pool.connect(trader).openShort(usdcAmount, 0n);
+  const tx = await pool.connect(trader).openShort(usdcAmount, 0n, trader.address);
   const receipt = await tx.wait();
   const log = receipt!.logs
     .map((l) => { try { return pool.interface.parseLog(l); } catch { return null; } })
@@ -271,7 +271,7 @@ describe("EXNIHILOPool", function () {
       const netOut = cpOut(swapIn, backedToken, backedUsd);
 
       const usdcBefore = await usdc.balanceOf(trader1.address);
-      await pool.connect(trader1).swap(swapIn, netOut, true);
+      await pool.connect(trader1).swap(swapIn, netOut, true, trader1.address);
 
       expect(await usdc.balanceOf(trader1.address)).to.equal(usdcBefore + netOut);
       expect(await pool.backedAirUsd()).to.equal(backedUsd - netOut);
@@ -289,7 +289,7 @@ describe("EXNIHILOPool", function () {
       const netOut = cpOut(swapIn, backedUsd, backedToken);
 
       const tokenBefore = await baseToken.balanceOf(trader1.address);
-      await pool.connect(trader1).swap(swapIn, netOut, false);
+      await pool.connect(trader1).swap(swapIn, netOut, false, trader1.address);
 
       expect(await baseToken.balanceOf(trader1.address)).to.equal(tokenBefore + netOut);
     });
@@ -297,21 +297,21 @@ describe("EXNIHILOPool", function () {
     it("reverts when netOut < minAmountOut (slippage guard)", async function () {
       const { pool, trader1 } = await loadFixture(deployPoolFixture);
       await expect(
-        pool.connect(trader1).swap(ethers.parseEther("1000"), ethers.MaxUint256, true)
+        pool.connect(trader1).swap(ethers.parseEther("1000"), ethers.MaxUint256, true, trader1.address)
       ).to.be.revertedWithCustomError(pool, "InsufficientOutput");
     });
 
     it("reverts when amountIn is zero", async function () {
       const { pool, trader1 } = await loadFixture(deployPoolFixture);
       await expect(
-        pool.connect(trader1).swap(0n, 0n, true)
+        pool.connect(trader1).swap(0n, 0n, true, trader1.address)
       ).to.be.revertedWithCustomError(pool, "ZeroAmount");
     });
 
     it("emits Swap event for token→USDC", async function () {
       const { pool, baseToken, usdc, trader1 } = await loadFixture(deployPoolFixture);
       const swapIn = ethers.parseEther("1000");
-      await expect(pool.connect(trader1).swap(swapIn, 0n, true))
+      await expect(pool.connect(trader1).swap(swapIn, 0n, true, trader1.address))
         .to.emit(pool, "Swap")
         .withArgs(
           trader1.address,
@@ -381,7 +381,7 @@ describe("EXNIHILOPool", function () {
       const { pool, usdc, trader1 } = await loadFixture(deployPoolFixture);
       const overCap = MAX_POS_USD + 1n;
       await usdc.mint(trader1.address, overCap);
-      await expect(pool.connect(trader1).openLong(overCap, 0n)).to.be.revertedWithCustomError(
+      await expect(pool.connect(trader1).openLong(overCap, 0n, trader1.address)).to.be.revertedWithCustomError(
         pool, "LeverageCapExceeded"
       );
     });
@@ -389,14 +389,14 @@ describe("EXNIHILOPool", function () {
     it("reverts when slippage guard triggers (minAirTokenOut too high)", async function () {
       const { pool, trader1 } = await loadFixture(deployPoolFixture);
       await expect(
-        pool.connect(trader1).openLong(ethers.parseUnits("100", 6), ethers.MaxUint256)
+        pool.connect(trader1).openLong(ethers.parseUnits("100", 6), ethers.MaxUint256, trader1.address)
       ).to.be.revertedWithCustomError(pool, "InsufficientOutput");
     });
 
     it("emits LongOpened event", async function () {
       const { pool, trader1 } = await loadFixture(deployPoolFixture);
       const usdcIn = ethers.parseUnits("100", 6);
-      await expect(pool.connect(trader1).openLong(usdcIn, 0n))
+      await expect(pool.connect(trader1).openLong(usdcIn, 0n, trader1.address))
         .to.emit(pool, "LongOpened")
         .withArgs(
           0n, trader1.address, usdcIn, usdcIn,
@@ -423,7 +423,7 @@ describe("EXNIHILOPool", function () {
       const pumpUsdc = ethers.parseUnits("500", 6);
       await base.usdc.mint(base.trader2.address, pumpUsdc);
       await base.usdc.connect(base.trader2).approve(await base.pool.getAddress(), ethers.MaxUint256);
-      await base.pool.connect(base.trader2).swap(pumpUsdc, 0n, false);
+      await base.pool.connect(base.trader2).swap(pumpUsdc, 0n, false, base.trader2.address);
 
       return { ...base, nftId };
     }
@@ -456,7 +456,7 @@ describe("EXNIHILOPool", function () {
       const dump = ethers.parseEther("5000000");
       await baseToken.mint(trader2.address, dump);
       await baseToken.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
-      await pool.connect(trader2).swap(dump, 0n, true);
+      await pool.connect(trader2).swap(dump, 0n, true, trader2.address);
 
       await expect(
         pool.connect(trader1).closeLong(nftId, 0n)
@@ -612,21 +612,21 @@ describe("EXNIHILOPool", function () {
       const overCap = MAX_POS_USD + 1n;
       await usdc.mint(trader1.address, overCap);
       await expect(
-        pool.connect(trader1).openShort(overCap, 0n)
+        pool.connect(trader1).openShort(overCap, 0n, trader1.address)
       ).to.be.revertedWithCustomError(pool, "LeverageCapExceeded");
     });
 
     it("reverts when slippage guard triggers (minAirUsdOut too high)", async function () {
       const { pool, trader1 } = await loadFixture(deployPoolFixture);
       await expect(
-        pool.connect(trader1).openShort(ethers.parseUnits("100", 6), ethers.MaxUint256)
+        pool.connect(trader1).openShort(ethers.parseUnits("100", 6), ethers.MaxUint256, trader1.address)
       ).to.be.revertedWithCustomError(pool, "InsufficientOutput");
     });
 
     it("emits ShortOpened event", async function () {
       const { pool, trader1 } = await loadFixture(deployPoolFixture);
       const usdcIn = ethers.parseUnits("100", 6);
-      await expect(pool.connect(trader1).openShort(usdcIn, 0n))
+      await expect(pool.connect(trader1).openShort(usdcIn, 0n, trader1.address))
         .to.emit(pool, "ShortOpened")
         .withArgs(0n, trader1.address, (v: bigint) => v > 0n, (v: bigint) => v > 0n, (v: bigint) => v > 0n);
     });
@@ -665,7 +665,7 @@ describe("EXNIHILOPool", function () {
       const pumpUsdc = ethers.parseUnits("8000", 6);
       await usdc.mint(trader2.address, pumpUsdc);
       await usdc.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
-      await pool.connect(trader2).swap(pumpUsdc, 0n, false);
+      await pool.connect(trader2).swap(pumpUsdc, 0n, false, trader2.address);
 
       await expect(
         pool.connect(trader1).closeShort(nftId, 0n)
@@ -681,7 +681,7 @@ describe("EXNIHILOPool", function () {
       const pumpUsdc = ethers.parseUnits("5000", 6);
       await usdc.mint(trader2.address, pumpUsdc);
       await usdc.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
-      await pool.connect(trader2).swap(pumpUsdc, 0n, false);
+      await pool.connect(trader2).swap(pumpUsdc, 0n, false, trader2.address);
 
       await expect(
         pool.connect(trader1).closeShort(nftId, 0n)
@@ -957,7 +957,7 @@ describe("EXNIHILOPool", function () {
       const dump = ethers.parseEther("5000000");
       await baseToken.mint(trader2.address, dump);
       await baseToken.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
-      await pool.connect(trader2).swap(dump, 0n, true);
+      await pool.connect(trader2).swap(dump, 0n, true, trader2.address);
 
       // LP pays USDC debt
       await usdc.mint(creator.address, pos.airUsdMinted);
@@ -984,7 +984,7 @@ describe("EXNIHILOPool", function () {
       const pumpUsdc = ethers.parseUnits("5000", 6);
       await usdc.mint(trader2.address, pumpUsdc);
       await usdc.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
-      await pool.connect(trader2).swap(pumpUsdc, 0n, false);
+      await pool.connect(trader2).swap(pumpUsdc, 0n, false, trader2.address);
 
       // LP pays token debt
       await baseToken.mint(creator.address, pos.airTokenMinted);
@@ -1006,7 +1006,7 @@ describe("EXNIHILOPool", function () {
       const pumpUsdc = ethers.parseUnits("500", 6);
       await usdc.mint(trader2.address, pumpUsdc);
       await usdc.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
-      await pool.connect(trader2).swap(pumpUsdc, 0n, false);
+      await pool.connect(trader2).swap(pumpUsdc, 0n, false, trader2.address);
 
       await expect(
         pool.connect(creator).forceRealize(nftId)
@@ -1022,7 +1022,7 @@ describe("EXNIHILOPool", function () {
       const dump = ethers.parseEther("5000000");
       await baseToken.mint(trader2.address, dump);
       await baseToken.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
-      await pool.connect(trader2).swap(dump, 0n, true);
+      await pool.connect(trader2).swap(dump, 0n, true, trader2.address);
 
       await expect(
         pool.connect(other).forceRealize(nftId)
@@ -1039,7 +1039,7 @@ describe("EXNIHILOPool", function () {
       const dump = ethers.parseEther("5000000");
       await baseToken.mint(trader2.address, dump);
       await baseToken.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
-      await pool.connect(trader2).swap(dump, 0n, true);
+      await pool.connect(trader2).swap(dump, 0n, true, trader2.address);
 
       await usdc.mint(creator.address, pos.airUsdMinted);
       await usdc.connect(creator).approve(await pool.getAddress(), pos.airUsdMinted);
@@ -1064,7 +1064,7 @@ describe("EXNIHILOPool", function () {
       const swapIn = ethers.parseEther("10000");
       const [, , netOut] = await pool.quoteSwap(swapIn, true);
       const usdcBefore = await usdc.balanceOf(trader1.address);
-      await pool.connect(trader1).swap(swapIn, 0n, true);
+      await pool.connect(trader1).swap(swapIn, 0n, true, trader1.address);
       expect(await usdc.balanceOf(trader1.address) - usdcBefore).to.equal(netOut);
     });
 
@@ -1081,7 +1081,7 @@ describe("EXNIHILOPool", function () {
       expect(netOut).to.be.gt(0n);
       // Verify quote matches actual swap output.
       const tokenBefore = await baseToken.balanceOf(trader1.address);
-      await pool.connect(trader1).swap(swapIn, 0n, false);
+      await pool.connect(trader1).swap(swapIn, 0n, false, trader1.address);
       expect(await baseToken.balanceOf(trader1.address) - tokenBefore).to.equal(netOut);
     });
 
@@ -1097,6 +1097,52 @@ describe("EXNIHILOPool", function () {
       const { pool, creator } = await loadFixture(deployPoolFixture);
       await pool.connect(creator).removeLiquidity();
       expect(await pool.spotPrice()).to.equal(0n);
+    });
+
+    it("longPrice >= spotPrice (fresh pool: equal)", async function () {
+      const { pool } = await loadFixture(deployPoolFixture);
+      const spot = await pool.spotPrice();
+      const long = await pool.longPrice();
+      expect(long).to.be.gte(spot);
+      // No open positions yet → airUsd.totalSupply == backedAirUsd → longPrice == spotPrice
+      expect(long).to.equal(spot);
+    });
+
+    it("shortPrice <= spotPrice (fresh pool: equal)", async function () {
+      const { pool } = await loadFixture(deployPoolFixture);
+      const spot = await pool.spotPrice();
+      const short = await pool.shortPrice();
+      expect(short).to.be.lte(spot);
+      // No open positions yet → airToken.totalSupply == backedAirToken → shortPrice == spotPrice
+      expect(short).to.equal(spot);
+    });
+
+    it("longPrice increases after opening a long (airUsd supply grows)", async function () {
+      const { pool, trader1 } = await loadFixture(deployPoolFixture);
+      const longBefore = await pool.longPrice();
+      await pool.connect(trader1).openLong(ethers.parseUnits("100", 6), 0n, trader1.address);
+      const longAfter = await pool.longPrice();
+      expect(longAfter).to.be.gt(longBefore);
+    });
+
+    it("shortPrice decreases after opening a short (airToken supply grows)", async function () {
+      const { pool, trader1 } = await loadFixture(deployPoolFixture);
+      const shortBefore = await pool.shortPrice();
+      await pool.connect(trader1).openShort(ethers.parseUnits("100", 6), 0n, trader1.address);
+      const shortAfter = await pool.shortPrice();
+      expect(shortAfter).to.be.lt(shortBefore);
+    });
+
+    it("longPrice returns 0 when reserves are empty", async function () {
+      const { pool, creator } = await loadFixture(deployPoolFixture);
+      await pool.connect(creator).removeLiquidity();
+      expect(await pool.longPrice()).to.equal(0n);
+    });
+
+    it("shortPrice returns 0 when reserves are empty", async function () {
+      const { pool, creator } = await loadFixture(deployPoolFixture);
+      await pool.connect(creator).removeLiquidity();
+      expect(await pool.shortPrice()).to.equal(0n);
     });
 
     it("effectiveLeverageCap returns max when both caps disabled", async function () {
@@ -1180,7 +1226,7 @@ describe("EXNIHILOPool", function () {
       const pumpUsdc = ethers.parseUnits("500", 6);
       await usdc.mint(trader2.address, pumpUsdc);
       await usdc.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
-      await pool.connect(trader2).swap(pumpUsdc, 0n, false);
+      await pool.connect(trader2).swap(pumpUsdc, 0n, false, trader2.address);
       expect(await pool.isLongUnderwater(nftId)).to.equal(false);
     });
 
@@ -1206,7 +1252,7 @@ describe("EXNIHILOPool", function () {
       await usdc.mint(trader1.address, overCap);
       await usdc.connect(trader1).approve(poolAddr, ethers.MaxUint256);
       await expect(
-        pool.connect(trader1).openLong(overCap, 0n)
+        pool.connect(trader1).openLong(overCap, 0n, trader1.address)
       ).to.be.revertedWithCustomError(pool, "LeverageCapExceeded");
     });
   });
@@ -1248,14 +1294,14 @@ describe("EXNIHILOPool", function () {
       const nftId = await openLong(pool, trader1, LONG_NOTIONAL);
 
       // Step 2: pump — $9,999 USDC → PEPE
-      await pool.connect(trader1).swap(SWAP_IN_USDC, 0n, false);
+      await pool.connect(trader1).swap(SWAP_IN_USDC, 0n, false, trader1.address);
       const tokenReceived = (await baseToken.balanceOf(trader1.address)) - tokenBefore;
 
       // Step 3: close long (collects profit from the price increase)
       await pool.connect(trader1).closeLong(nftId, 0n);
 
       // Step 4: dump — sell all received PEPE back to USDC
-      await pool.connect(trader1).swap(tokenReceived, 0n, true);
+      await pool.connect(trader1).swap(tokenReceived, 0n, true, trader1.address);
 
       const netGain = (await usdc.balanceOf(trader1.address)) - usdcBefore;
 
@@ -1300,7 +1346,7 @@ describe("EXNIHILOPool", function () {
       expect(pos.lockedAmount).to.equal(lockedWithFee);
 
       // Pump the price so the long is in-the-money
-      await pool.connect(trader1).swap(SWAP_IN_USDC, 0n, false);
+      await pool.connect(trader1).swap(SWAP_IN_USDC, 0n, false, trader1.address);
 
       // ── SWAP-3 fee verification ──────────────────────────────────────────
       // After one open position + one USDC→PEPE swap:
@@ -1339,7 +1385,7 @@ describe("EXNIHILOPool", function () {
       const backedTokenBefore = await pool.backedAirToken();
 
       const tokenBefore = await baseToken.balanceOf(trader1.address);
-      await pool.connect(trader1).swap(SWAP_IN_USDC, 0n, false);
+      await pool.connect(trader1).swap(SWAP_IN_USDC, 0n, false, trader1.address);
       const tokenOut = (await baseToken.balanceOf(trader1.address)) - tokenBefore;
 
       // ~497k PEPE out of ~999k backed (standard pool handles the swap without
@@ -1355,7 +1401,7 @@ describe("EXNIHILOPool", function () {
       const { pool, usdc, trader1 } = await loadFixture(deployPoolFixture);
 
       const nftId = await openLong(pool, trader1, LONG_NOTIONAL);
-      await pool.connect(trader1).swap(SWAP_IN_USDC, 0n, false);
+      await pool.connect(trader1).swap(SWAP_IN_USDC, 0n, false, trader1.address);
 
       const usdcBeforeClose = await usdc.balanceOf(trader1.address);
       await pool.connect(trader1).closeLong(nftId, 0n);
@@ -1373,13 +1419,13 @@ describe("EXNIHILOPool", function () {
 
       const tokenBefore = await baseToken.balanceOf(trader1.address);
       const nftId      = await openLong(pool, trader1, LONG_NOTIONAL);
-      await pool.connect(trader1).swap(SWAP_IN_USDC, 0n, false);
+      await pool.connect(trader1).swap(SWAP_IN_USDC, 0n, false, trader1.address);
       const tokenReceived = (await baseToken.balanceOf(trader1.address)) - tokenBefore;
 
       await pool.connect(trader1).closeLong(nftId, 0n);
 
       const usdcBeforeReswap = await usdc.balanceOf(trader1.address);
-      await pool.connect(trader1).swap(tokenReceived, 0n, true);
+      await pool.connect(trader1).swap(tokenReceived, 0n, true, trader1.address);
       const usdcFromReswap = (await usdc.balanceOf(trader1.address)) - usdcBeforeReswap;
 
       // Round-trip slippage means the reswap always returns less than was put in

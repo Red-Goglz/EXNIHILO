@@ -174,7 +174,7 @@ async function openLong(
   trader: HardhatEthersSigner,
   usdcAmount: bigint
 ): Promise<bigint> {
-  const tx = await pool.connect(trader).openLong(usdcAmount, 0n);
+  const tx = await pool.connect(trader).openLong(usdcAmount, 0n, trader.address);
   const receipt = await tx.wait();
   const log = receipt!.logs
     .map((l) => { try { return pool.interface.parseLog(l); } catch { return null; } })
@@ -188,7 +188,7 @@ async function openShort(
   trader: HardhatEthersSigner,
   usdcAmount: bigint
 ): Promise<bigint> {
-  const tx = await pool.connect(trader).openShort(usdcAmount, 0n);
+  const tx = await pool.connect(trader).openShort(usdcAmount, 0n, trader.address);
   const receipt = await tx.wait();
   const log = receipt!.logs
     .map((l) => { try { return pool.interface.parseLog(l); } catch { return null; } })
@@ -482,7 +482,7 @@ describe("Coverage — swap() when reserves are empty", function () {
     await pool.connect(creator).removeLiquidity();
 
     await expect(
-      pool.connect(trader1).swap(ethers.parseEther("100"), 0n, true)
+      pool.connect(trader1).swap(ethers.parseEther("100"), 0n, true, trader1.address)
     ).to.be.revertedWithCustomError(pool, "InsufficientBackedReserves");
   });
 
@@ -491,7 +491,7 @@ describe("Coverage — swap() when reserves are empty", function () {
     await pool.connect(creator).removeLiquidity();
 
     await expect(
-      pool.connect(trader1).swap(ethers.parseUnits("100", 6), 0n, false)
+      pool.connect(trader1).swap(ethers.parseUnits("100", 6), 0n, false, trader1.address)
     ).to.be.revertedWithCustomError(pool, "InsufficientBackedReserves");
   });
 });
@@ -507,7 +507,7 @@ describe("Coverage — openLong/openShort when reserves are empty", function () 
     await pool.connect(creator).removeLiquidity();
 
     await expect(
-      pool.connect(trader1).openLong(ethers.parseUnits("100", 6), 0n)
+      pool.connect(trader1).openLong(ethers.parseUnits("100", 6), 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool, "InsufficientBackedReserves");
   });
 
@@ -516,21 +516,21 @@ describe("Coverage — openLong/openShort when reserves are empty", function () 
     await pool.connect(creator).removeLiquidity();
 
     await expect(
-      pool.connect(trader1).openShort(ethers.parseUnits("100", 6), 0n)
+      pool.connect(trader1).openShort(ethers.parseUnits("100", 6), 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool, "InsufficientBackedReserves");
   });
 
   it("openLong reverts with ZeroAmount when usdcAmount is zero", async function () {
     const { pool, trader1 } = await loadFixture(deployPoolFixture);
     await expect(
-      pool.connect(trader1).openLong(0n, 0n)
+      pool.connect(trader1).openLong(0n, 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool, "ZeroAmount");
   });
 
   it("openShort reverts with ZeroAmount when usdcNotional is zero", async function () {
     const { pool, trader1 } = await loadFixture(deployPoolFixture);
     await expect(
-      pool.connect(trader1).openShort(0n, 0n)
+      pool.connect(trader1).openShort(0n, 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool, "ZeroAmount");
   });
 });
@@ -750,7 +750,7 @@ describe("Coverage — closeShort edge branches", function () {
     // Dump a very large amount of token to collapse the token price.
     // This makes airToken very cheap to buy back, creating a profitable short.
     const dumpAmt = initToken6 * 50n; // 50x initial token supply — massive dump
-    await pool.connect(trader2).swap(dumpAmt, 0n, true);
+    await pool.connect(trader2).swap(dumpAmt, 0n, true, trader2.address);
 
     // Verify the short is now profitable before calling closeShort.
     const airUsdAddr = await pool.airUsdToken();
@@ -829,7 +829,7 @@ describe("Coverage — closeShort edge branches", function () {
     const pos = await posNFT.getPosition(shortNftId);
 
     // Dump hard to collapse price.
-    await pool.connect(trader2).swap(initToken6 * 50n, 0n, true);
+    await pool.connect(trader2).swap(initToken6 * 50n, 0n, true, trader2.address);
 
     const airUsdAddr = await pool.airUsdToken();
     const airUsdToken = await ethers.getContractAt("AirToken", airUsdAddr);
@@ -899,7 +899,7 @@ describe("Coverage — closeShort edge branches", function () {
     const shortNftId = await openShort(pool, trader1, ethers.parseUnits("100", 6));
     const pos = await posNFT.getPosition(shortNftId);
 
-    await pool.connect(trader2).swap(initToken6 * 50n, 0n, true);
+    await pool.connect(trader2).swap(initToken6 * 50n, 0n, true, trader2.address);
 
     const airUsdAddr = await pool.airUsdToken();
     const airUsdToken = await ethers.getContractAt("AirToken", airUsdAddr);
@@ -992,7 +992,7 @@ describe("Coverage — forceRealize edge branches", function () {
     const dump = ethers.parseEther("5000000");
     await baseToken.mint(trader2.address, dump);
     await baseToken.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
-    await pool.connect(trader2).swap(dump, 0n, true);
+    await pool.connect(trader2).swap(dump, 0n, true, trader2.address);
 
     // Deploy pool-2.
     const baseToken2 = (await (await ethers.getContractFactory("MockERC20"))
@@ -1031,7 +1031,7 @@ describe("Coverage — forceRealize edge branches", function () {
     const dumpToken = ethers.parseEther("5000000");
     await baseToken.mint(trader2.address, dumpToken);
     await baseToken.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
-    await pool.connect(trader2).swap(dumpToken, 0n, true);
+    await pool.connect(trader2).swap(dumpToken, 0n, true, trader2.address);
 
     // LP tries to force-realize; should fail because position is profitable.
     await baseToken.mint(creator.address, pos.airTokenMinted);
@@ -1122,7 +1122,7 @@ describe("Coverage — openShort with zero airToken supply", function () {
     await pool.connect(creator).removeLiquidity();
 
     await expect(
-      pool.connect(trader1).openShort(ethers.parseUnits("100", 6), 0n)
+      pool.connect(trader1).openShort(ethers.parseUnits("100", 6), 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool, "InsufficientBackedReserves");
   });
 });
@@ -1258,7 +1258,7 @@ describe("Coverage — openLong slippage guard (minAirTokenOut)", function () {
     const { pool, trader1 } = await loadFixture(deployPoolFixture);
     // minAirTokenOut = MaxUint256 will always fail the slippage check.
     await expect(
-      pool.connect(trader1).openLong(ethers.parseUnits("100", 6), ethers.MaxUint256)
+      pool.connect(trader1).openLong(ethers.parseUnits("100", 6), ethers.MaxUint256, trader1.address)
     ).to.be.revertedWithCustomError(pool, "InsufficientOutput");
   });
 });
@@ -1326,7 +1326,7 @@ describe("Coverage — openShort ZeroAmount when airTokenMinted rounds to zero",
 
     // notional = 1 raw unit; airTokenMinted = 1 * 1e6 / 1e12 = 0 → ZeroAmount
     await expect(
-      pool.connect(trader1).openShort(1n, 0n)
+      pool.connect(trader1).openShort(1n, 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool, "ZeroAmount");
   });
 });
@@ -1341,7 +1341,7 @@ describe("Coverage — openShort slippage guard (minAirUsdOut)", function () {
     const { pool, trader1 } = await loadFixture(deployPoolFixture);
     // minAirUsdOut = MaxUint256 will always fail the slippage check.
     await expect(
-      pool.connect(trader1).openShort(ethers.parseUnits("100", 6), ethers.MaxUint256)
+      pool.connect(trader1).openShort(ethers.parseUnits("100", 6), ethers.MaxUint256, trader1.address)
     ).to.be.revertedWithCustomError(pool, "InsufficientOutput");
   });
 });
@@ -1527,7 +1527,7 @@ describe("Coverage — swap/openLong/openShort with only backedAirUsd = 0", func
     expect(await pool.backedAirToken()).to.be.gt(0n);
 
     await expect(
-      pool.connect(trader1).swap(ethers.parseEther("100"), 0n, true)
+      pool.connect(trader1).swap(ethers.parseEther("100"), 0n, true, trader1.address)
     ).to.be.revertedWithCustomError(pool, "InsufficientBackedReserves");
   });
 
@@ -1536,7 +1536,7 @@ describe("Coverage — swap/openLong/openShort with only backedAirUsd = 0", func
     await zeroBackedAirUsd(poolAddress);
 
     await expect(
-      pool.connect(trader1).openLong(ethers.parseUnits("100", 6), 0n)
+      pool.connect(trader1).openLong(ethers.parseUnits("100", 6), 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool, "InsufficientBackedReserves");
   });
 
@@ -1545,7 +1545,7 @@ describe("Coverage — swap/openLong/openShort with only backedAirUsd = 0", func
     await zeroBackedAirUsd(poolAddress);
 
     await expect(
-      pool.connect(trader1).openShort(ethers.parseUnits("100", 6), 0n)
+      pool.connect(trader1).openShort(ethers.parseUnits("100", 6), 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool, "InsufficientBackedReserves");
   });
 });
@@ -1592,7 +1592,7 @@ describe("Coverage — closeLong slippage guard", function () {
     const pumpUsdc = ethers.parseUnits("5000", 6);
     await usdc.mint(trader2.address, pumpUsdc);
     await usdc.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
-    await pool.connect(trader2).swap(pumpUsdc, 0n, false);
+    await pool.connect(trader2).swap(pumpUsdc, 0n, false, trader2.address);
 
     // Verify position is profitable first.
     const pos = await (await ethers.getContractAt("PositionNFT", await pool.positionNFT())).getPosition(nftId);
@@ -1622,7 +1622,7 @@ describe("Coverage — _swapUsdcToToken slippage guard", function () {
     const { pool, trader1 } = await loadFixture(deployPoolFixture);
     // Set minAmountOut = MaxUint256 for USDC→token swap.
     await expect(
-      pool.connect(trader1).swap(ethers.parseUnits("100", 6), ethers.MaxUint256, false)
+      pool.connect(trader1).swap(ethers.parseUnits("100", 6), ethers.MaxUint256, false, trader1.address)
     ).to.be.revertedWithCustomError(pool, "InsufficientOutput");
   });
 });
@@ -1713,7 +1713,7 @@ describe("Coverage — effectiveLeverageCap when only maxPositionUsd is set (usd
 
     // 100 USDC exceeds the 10 USDC cap → LeverageCapExceeded.
     await expect(
-      pool.connect(trader1).openLong(ethers.parseUnits("100", 6), 0n)
+      pool.connect(trader1).openLong(ethers.parseUnits("100", 6), 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool, "LeverageCapExceeded");
   });
 });
@@ -1840,7 +1840,7 @@ describe("Coverage — openShort with airToken totalSupply = 0 (storage-forced)"
     // backedAirToken and backedAirUsd are still non-zero (not zeroed).
     // openShort checks airTokenSupplyBefore == 0 → InsufficientBackedReserves.
     await expect(
-      pool.connect(trader1).openShort(ethers.parseUnits("100", 6), 0n)
+      pool.connect(trader1).openShort(ethers.parseUnits("100", 6), 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool, "InsufficientBackedReserves");
   });
 });
@@ -1909,7 +1909,7 @@ describe("Coverage — ReentrancyGuard nonReentrant revert paths", function () {
     // Set up the re-entrant call: during swap(token→USDC)'s token transferFrom,
     // the token will call back into pool.swap() with the same args.
     const reentrantCall = pool.interface.encodeFunctionData("swap", [
-      ethers.parseEther("100"), 0n, true
+      ethers.parseEther("100"), 0n, true, trader1.address
     ]);
     await reenToken.setReentrantCall(poolAddr, reentrantCall);
 
@@ -1917,7 +1917,7 @@ describe("Coverage — ReentrancyGuard nonReentrant revert paths", function () {
     // but because the inner swap fires BEFORE super.transferFrom, the lock
     // should already be set when the re-entrant call arrives.
     await expect(
-      pool.connect(trader1).swap(ethers.parseEther("1000"), 0n, true)
+      pool.connect(trader1).swap(ethers.parseEther("1000"), 0n, true, trader1.address)
     ).to.be.revertedWithCustomError(pool, "ReentrancyGuardReentrantCall");
   });
 
@@ -1931,7 +1931,7 @@ describe("Coverage — ReentrancyGuard nonReentrant revert paths", function () {
 
     // Re-enter swap from within addLiquidity's token transferFrom.
     const swapCall = pool.interface.encodeFunctionData("swap", [
-      ethers.parseEther("100"), 0n, true
+      ethers.parseEther("100"), 0n, true, trader1.address
     ]);
     await reenToken.setReentrantCall(poolAddr, swapCall);
 
@@ -2018,12 +2018,12 @@ describe("Coverage — ReentrancyGuard nonReentrant revert paths", function () {
     // Re-enter openLong() itself during openLong's usdc.transferFrom (fee collection).
     // This covers openLong's nonReentrant "else" branch.
     const reentrantCall = pool.interface.encodeFunctionData("openLong", [
-      ethers.parseUnits("50", 6), 0n
+      ethers.parseUnits("50", 6), 0n, trader1.address
     ]);
     await reenUsdc.setReentrantCall(poolAddr, reentrantCall);
 
     await expect(
-      pool.connect(trader1).openLong(ethers.parseUnits("100", 6), 0n)
+      pool.connect(trader1).openLong(ethers.parseUnits("100", 6), 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool, "ReentrancyGuardReentrantCall");
   });
 
@@ -2032,12 +2032,12 @@ describe("Coverage — ReentrancyGuard nonReentrant revert paths", function () {
 
     // Re-enter openShort() itself — covers openShort's nonReentrant "else" branch.
     const reentrantCall = pool.interface.encodeFunctionData("openShort", [
-      ethers.parseUnits("50", 6), 0n
+      ethers.parseUnits("50", 6), 0n, trader1.address
     ]);
     await reenUsdc.setReentrantCall(poolAddr, reentrantCall);
 
     await expect(
-      pool.connect(trader1).openShort(ethers.parseUnits("100", 6), 0n)
+      pool.connect(trader1).openShort(ethers.parseUnits("100", 6), 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool, "ReentrancyGuardReentrantCall");
   });
 
@@ -2072,7 +2072,7 @@ describe("Coverage — ReentrancyGuard nonReentrant revert paths", function () {
     const pos = await posNFT.getPosition(nftId);
     // Set reentrancy during realizeLong's usdc.safeTransferFrom.
     const reentrantCall = pool.interface.encodeFunctionData("swap", [
-      ethers.parseEther("100"), 0n, true
+      ethers.parseEther("100"), 0n, true, trader1.address
     ]);
     await reenUsdc.setReentrantCall(poolAddr, reentrantCall);
 
@@ -2092,7 +2092,7 @@ describe("Coverage — ReentrancyGuard nonReentrant revert paths", function () {
 
     // Now set reentrancy: during realizeShort's token.safeTransferFrom, re-enter swap.
     const reentrantCall = pool.interface.encodeFunctionData("swap", [
-      ethers.parseEther("100"), 0n, true
+      ethers.parseEther("100"), 0n, true, trader1.address
     ]);
     await reenToken.setReentrantCall(poolAddr, reentrantCall);
 
@@ -2121,12 +2121,12 @@ describe("Coverage — ReentrancyGuard nonReentrant revert paths", function () {
     // opened yet, this will revert because of position not found. That's OK —
     // the reentrancy guard fires first.
     const reentrantCall = pool.interface.encodeFunctionData("openShort", [
-      ethers.parseUnits("50", 6), 0n
+      ethers.parseUnits("50", 6), 0n, trader1.address
     ]);
     await reenUsdc.setReentrantCall(poolAddr, reentrantCall);
 
     await expect(
-      pool.connect(trader1).openShort(ethers.parseUnits("100", 6), 0n)
+      pool.connect(trader1).openShort(ethers.parseUnits("100", 6), 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool, "ReentrancyGuardReentrantCall");
   });
 
@@ -2146,7 +2146,7 @@ describe("Coverage — ReentrancyGuard nonReentrant revert paths", function () {
     const nftId = await openLong(pool, trader1, ethers.parseUnits("500", 6));
     const dumpAmt = ethers.parseEther("5000000");
     await token.mint(trader1.address, dumpAmt);
-    await pool.connect(trader1).swap(dumpAmt, 0n, true);
+    await pool.connect(trader1).swap(dumpAmt, 0n, true, trader1.address);
 
     // LP (creator) needs to call forceRealize, which calls
     // usdc.safeTransferFrom(msg.sender, ..., airUsdMinted) for underwater long.
@@ -2156,7 +2156,7 @@ describe("Coverage — ReentrancyGuard nonReentrant revert paths", function () {
 
     // Set reentrancy: during forceRealize's usdc.safeTransferFrom, re-enter swap.
     const reentrantCall = pool.interface.encodeFunctionData("swap", [
-      ethers.parseEther("100"), 0n, true
+      ethers.parseEther("100"), 0n, true, trader1.address
     ]);
     await reenUsdc.setReentrantCall(poolAddr, reentrantCall);
 
@@ -2277,7 +2277,7 @@ describe("Coverage — FeeOnTransferNotSupported guard in _transferIn", function
     const { pool, fotToken, trader1 } = await deployPoolWithFeeOnTransferToken();
     await fotToken.enableFee();
     await expect(
-      pool.connect(trader1).swap(ethers.parseEther("1000"), 0n, true)
+      pool.connect(trader1).swap(ethers.parseEther("1000"), 0n, true, trader1.address)
     ).to.be.revertedWithCustomError(pool, "FeeOnTransferNotSupported");
   });
 
@@ -2287,7 +2287,7 @@ describe("Coverage — FeeOnTransferNotSupported guard in _transferIn", function
     const { pool, fotUsdc, trader1 } = await deployPoolWithFeeOnTransferUsdc();
     await fotUsdc.enableFee();
     await expect(
-      pool.connect(trader1).swap(ethers.parseUnits("100", 6), 0n, false)
+      pool.connect(trader1).swap(ethers.parseUnits("100", 6), 0n, false, trader1.address)
     ).to.be.revertedWithCustomError(pool, "FeeOnTransferNotSupported");
   });
 
@@ -2297,7 +2297,7 @@ describe("Coverage — FeeOnTransferNotSupported guard in _transferIn", function
     const { pool, fotUsdc, trader1 } = await deployPoolWithFeeOnTransferUsdc();
     await fotUsdc.enableFee();
     await expect(
-      pool.connect(trader1).openLong(ethers.parseUnits("100", 6), 0n)
+      pool.connect(trader1).openLong(ethers.parseUnits("100", 6), 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool, "FeeOnTransferNotSupported");
   });
 
@@ -2307,7 +2307,7 @@ describe("Coverage — FeeOnTransferNotSupported guard in _transferIn", function
     const { pool, fotUsdc, trader1 } = await deployPoolWithFeeOnTransferUsdc();
     await fotUsdc.enableFee();
     await expect(
-      pool.connect(trader1).openShort(ethers.parseUnits("100", 6), 0n)
+      pool.connect(trader1).openShort(ethers.parseUnits("100", 6), 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool, "FeeOnTransferNotSupported");
   });
 
@@ -2395,7 +2395,7 @@ describe("Coverage — FeeOnTransferNotSupported guard in _transferIn", function
     const dumpAmt = ethers.parseEther("5000000");
     await token.mint(trader1.address, dumpAmt);
     await token.connect(trader1).approve(poolAddr, ethers.MaxUint256);
-    await pool.connect(trader1).swap(dumpAmt, 0n, true);
+    await pool.connect(trader1).swap(dumpAmt, 0n, true, trader1.address);
 
     // LP (creator) prepares USDC to cover the debt.
     const posNFTAddr = await pool.positionNFT();
@@ -2421,7 +2421,7 @@ describe("Coverage — FeeOnTransferNotSupported guard in _transferIn", function
     // Pump token price to make the short underwater.
     const pumpAmt = ethers.parseUnits("5000", 6);
     await usdc.mint(trader1.address, pumpAmt);
-    await pool.connect(trader1).swap(pumpAmt, 0n, false);
+    await pool.connect(trader1).swap(pumpAmt, 0n, false, trader1.address);
 
     // LP (creator) prepares token to cover the synthetic debt.
     const posNFTAddr = await pool.positionNFT();
@@ -2456,7 +2456,7 @@ describe("Coverage — ZeroAmount guards on openLong / openShort output", functi
   it("openShort reverts ZeroAmount when usdcNotional is too tiny to produce nonzero airUsdOut", async function () {
     const { pool, trader1 } = await loadFixture(deployPoolFixture);
     await expect(
-      pool.connect(trader1).openShort(1n, 0n)
+      pool.connect(trader1).openShort(1n, 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool, "ZeroAmount");
   });
 
@@ -2517,7 +2517,7 @@ describe("Coverage — ZeroAmount guards on openLong / openShort output", functi
     //               = 1e6 * 1 / 1e9 = 0 → ZeroAmount.
     const { pool, trader1 } = await deployExtremeRatioPool();
     await expect(
-      pool.connect(trader1).openShort(ethers.parseUnits("1", 6), 0n)
+      pool.connect(trader1).openShort(ethers.parseUnits("1", 6), 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool, "ZeroAmount");
   });
 
@@ -2528,7 +2528,7 @@ describe("Coverage — ZeroAmount guards on openLong / openShort output", functi
     //           = cpOut(1, 1e9, 1) ≈ 9900 / 1e13 = 0 → ZeroAmount.
     const { pool, trader1 } = await deployExtremeRatioPool();
     await expect(
-      pool.connect(trader1).openLong(1n, 0n)
+      pool.connect(trader1).openLong(1n, 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool, "ZeroAmount");
   });
 });
