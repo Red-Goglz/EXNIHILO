@@ -6,9 +6,7 @@
   "scripts": {
     "dev": "npm run dev -w packages/site",
     "build": "npm run build -w packages/site",
-    "start": "cd packages/indexer && npx ponder start --schema exnihilo & node server.mjs",
-    "start:site": "node server.mjs",
-    "start:indexer": "cd packages/indexer && npx ponder start --schema exnihilo",
+    "start": "cd packages/site && npx vite preview --host --port 3000",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -19,7 +17,6 @@
     "packages/blockchain",
     "packages/site",
     "packages/abis",
-    "packages/docs",
-    "packages/indexer"
+    "packages/docs"
   ]
 }

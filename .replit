@@ -10,16 +10,11 @@ runButton = "Project"
 
 [[workflows.workflow]]
 name = "Project"
-mode = "parallel"
 author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
 args = "Start application"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Start Indexer"
 
 [[workflows.workflow]]
 name = "Start application"
@@ -27,22 +22,11 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "npm run build && node server.mjs"
+args = "npm run build && npm start"
 waitForPort = 3000
 
 [workflows.workflow.metadata]
 outputType = "webview"
-
-[[workflows.workflow]]
-name = "Start Indexer"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "cd packages/indexer && npx ponder start --schema exnihilo"
-
-[workflows.workflow.metadata]
-outputType = "console"
 
 [[ports]]
 localPort = 3000
@@ -51,4 +35,4 @@ externalPort = 80
 [deployment]
 deploymentTarget = "cloudrun"
 build = ["sh", "-c", "npm run build"]
-run = ["sh", "-c", "cd packages/indexer && npx ponder start --schema exnihilo & node server.mjs"]
+run = ["sh", "-c", "cd packages/site && npx vite preview --host --port 3000"]

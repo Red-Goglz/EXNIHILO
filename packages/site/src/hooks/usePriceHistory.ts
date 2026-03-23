@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 
-// Use relative URL so requests go through the vite proxy to Ponder
-const API_BASE = "";
+// Indexer URL — set VITE_INDEXER_URL to your Ponder Replit URL
+// e.g. https://exnihilo-indexer.your-username.repl.co
+const INDEXER_URL = import.meta.env.VITE_INDEXER_URL || "";
 
 export interface PricePoint {
   timestamp: number;
@@ -27,8 +28,9 @@ export function usePriceHistory(poolAddress: string, limit = 200) {
   return useQuery<PricePoint[]>({
     queryKey: ["priceHistory", poolAddress, limit],
     queryFn: async () => {
+      if (!INDEXER_URL) throw new Error("VITE_INDEXER_URL not set");
       const res = await fetch(
-        `${API_BASE}/prices/${poolAddress.toLowerCase()}?limit=${limit}`
+        `${INDEXER_URL}/prices/${poolAddress.toLowerCase()}?limit=${limit}`
       );
       if (!res.ok) throw new Error(`Indexer returned ${res.status}`);
       const data: ApiResponse = await res.json();
@@ -40,8 +42,9 @@ export function usePriceHistory(poolAddress: string, limit = 200) {
         event: p.event,
       }));
     },
-    staleTime: 15_000, // refetch every 15s
+    staleTime: 15_000,
     refetchInterval: 15_000,
     retry: 1,
+    enabled: !!INDEXER_URL, // don't fetch if no indexer configured
   });
 }

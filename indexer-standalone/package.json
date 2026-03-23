@@ -1,0 +1,15 @@
+{
+  "name": "exnihilo-indexer",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "ponder dev --schema exnihilo",
+    "start": "ponder start --schema exnihilo",
+    "build": "echo 'No build step needed — ponder start handles everything'",
+    "codegen": "ponder codegen"
+  },
+  "dependencies": {
+    "ponder": "^1.0.0"
+  }
+}

@@ -6,7 +6,7 @@ import {
   userActivity,
   dailyMetrics,
 } from "ponder:schema";
-import { exnihiloPoolAbi } from "../../abis/EXNIHILOPool.js";
+import { exnihiloPoolAbi } from "../EXNIHILOPool.js";
 
 // ── Fee constants (match contract) ───────────────────────────────────────────
 const PROTOCOL_FEE_BPS = 200n;
