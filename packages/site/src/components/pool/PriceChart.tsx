@@ -157,7 +157,6 @@ export default function PriceChart({
     spotSvg.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ") +
     " " + [...shortSvg].reverse().map((p) => `L${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ") + " Z";
 
-  const spotEnd  = spotSvg[spotSvg.length - 1];
   const longEnd  = longSvg[longSvg.length - 1];
   const shortEnd = shortSvg[shortSvg.length - 1];
 

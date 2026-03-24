@@ -162,15 +162,6 @@ export default function PoolPriceChart({
   const longEnd  = longSvg[longSvg.length - 1];
   const shortEnd = shortSvg[shortSvg.length - 1];
 
-  const pathLen = useMemo(() => {
-    let len = 0;
-    for (let i = 1; i < spotSvg.length; i++) {
-      const dx = spotSvg[i].x - spotSvg[i - 1].x;
-      const dy = spotSvg[i].y - spotSvg[i - 1].y;
-      len += Math.sqrt(dx * dx + dy * dy);
-    }
-    return Math.ceil(len);
-  }, [spotSvg]);
 
   const DUR = "3s";
   const DOT_DUR = "3s";
