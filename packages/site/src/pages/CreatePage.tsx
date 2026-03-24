@@ -4,26 +4,21 @@ import { useAccount, useChainId, useReadContracts, useWriteContract, useWaitForT
 import { useQueryClient } from "@tanstack/react-query";
 import { decodeEventLog, isAddress } from "viem";
 import { exnihiloFactoryAbi, erc20Abi } from "@exnihilio/abis";
-import { getAddresses, HARDHAT_CHAIN_ID } from "../contracts/addresses.ts";
+import { getAddresses, FUJI_CHAIN_ID, HARDHAT_CHAIN_ID } from "../contracts/addresses.ts";
 import { parseUnits, formatUsdc } from "../lib/format.ts";
 import TokenInput from "../components/shared/TokenInput.tsx";
 import TxButton from "../components/shared/TxButton.tsx";
-import ChainGuard from "../components/wallet/ChainGuard.tsx";
 
 export default function CreatePage() {
-  return (
-    <ChainGuard>
-      <CreateContent />
-    </ChainGuard>
-  );
+  return <CreateContent />;
 }
 
 function CreateContent() {
-  const { address } = useAccount();
+  const { address, isConnected } = useAccount();
   const chainId = useChainId();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const addrs = getAddresses(chainId);
+  const addrs = getAddresses(chainId || FUJI_CHAIN_ID);
 
   const [tokenAddress, setTokenAddress] = useState("");
   const [seedUsdc, setSeedUsdc] = useState("");
@@ -457,7 +452,17 @@ function CreateContent() {
         </details>
 
         {/* Action buttons */}
-        {showFillIn && (
+        {!isConnected && (
+          <button
+            disabled
+            className="btn-terminal"
+            style={{ width: "100%", justifyContent: "center" }}
+          >
+            CONNECT WALLET TO CREATE
+          </button>
+        )}
+
+        {isConnected && showFillIn && (
           <button
             disabled
             className="btn-terminal"
@@ -467,7 +472,7 @@ function CreateContent() {
           </button>
         )}
 
-        {showLoadingApproval && (
+        {isConnected && showLoadingApproval && (
           <button
             disabled
             className="btn-terminal"
@@ -478,7 +483,7 @@ function CreateContent() {
           </button>
         )}
 
-        {showUsdcApprove && (
+        {isConnected && showUsdcApprove && (
           <TxButton
             idleLabel="Approve USDC"
             status={usdcApproveStatus}
@@ -494,7 +499,7 @@ function CreateContent() {
           />
         )}
 
-        {showTokenApprove && (
+        {isConnected && showTokenApprove && (
           <TxButton
             idleLabel={`Approve ${tokenSymbol}`}
             status={tokenApproveStatus}
@@ -510,7 +515,7 @@ function CreateContent() {
           />
         )}
 
-        {showCreate && (
+        {isConnected && showCreate && (
           <TxButton
             idleLabel="Create Market"
             status={createStatus}

@@ -1,10 +1,12 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useAccount, useChainId, useReadContracts } from "wagmi";
 import { exnihiloPoolAbi, erc20Abi, lpNFTAbi } from "@exnihilio/abis";
-import { getAddresses } from "../contracts/addresses.ts";
+import { getAddresses, FUJI_CHAIN_ID } from "../contracts/addresses.ts";
 import { formatUsdc, formatToken, decodeSpotPrice } from "../lib/format.ts";
+import { usePriceHistory } from "../hooks/usePriceHistory.ts";
 import ChainGuard from "../components/wallet/ChainGuard.tsx";
+import PoolPriceChart from "../components/pool/PoolPriceChart.tsx";
 import LongShortPanel from "../components/trade/LongShortPanel.tsx";
 import LpPanel from "../components/trade/LpPanel.tsx";
 import SwapPanel from "../components/trade/SwapPanel.tsx";
@@ -64,7 +66,7 @@ function StarsWithTooltip({ count }: { count: 1 | 2 | 3 | 4 | 5 }) {
           <span style={{ position: "absolute", top: -1, left: -1, width: 8, height: 8, borderTop: "1px solid var(--cyan)", borderLeft: "1px solid var(--cyan)" }} />
           <span style={{ position: "absolute", bottom: -1, right: -1, width: 8, height: 8, borderBottom: "1px solid var(--cyan)", borderRight: "1px solid var(--cyan)" }} />
 
-          {STAR_LEVELS.map(({ stars, label, threshold }) => (
+          {[...STAR_LEVELS].reverse().map(({ stars, label, threshold }) => (
             <div key={stars} style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <span style={{ fontSize: "0.72rem", letterSpacing: "0.04em" }}>
                 {([1, 2, 3, 4, 5] as const).map((i) => (
@@ -98,20 +100,25 @@ function formatPct(pct: number): string {
 }
 
 export default function PoolPage() {
-  return (
-    <ChainGuard>
-      <PoolContent />
-    </ChainGuard>
-  );
+  return <PoolContent />;
 }
 
 function PoolContent() {
   const { poolAddr } = useParams<{ poolAddr: string }>();
   const { address: userAddress } = useAccount();
   const chainId = useChainId();
-  const addresses = getAddresses(chainId);
+  const addresses = getAddresses(chainId || FUJI_CHAIN_ID);
 
   const [tab, setTab] = useState<Tab>("trade");
+  const tradePanelRef = useRef<HTMLDivElement>(null);
+  const [panelHeight, setPanelHeight] = useState(0);
+
+  useEffect(() => {
+    if (!tradePanelRef.current) return;
+    const ro = new ResizeObserver(([entry]) => setPanelHeight(entry.contentRect.height));
+    ro.observe(tradePanelRef.current);
+    return () => ro.disconnect();
+  }, []);
 
   if (!poolAddr) return (
     <p style={{ color: "var(--red)", fontFamily: "var(--font-mono)", fontSize: "0.8rem" }}>
@@ -172,6 +179,8 @@ function PoolContent() {
       : [],
     query: { enabled: lpNftId !== undefined },
   });
+
+  const { data: priceHistory } = usePriceHistory(poolAddress);
 
   const lpOwner   = lpOwnerData?.[0]?.result as `0x${string}` | undefined;
   const isLpHolder = !!userAddress && !!lpOwner &&
@@ -335,102 +344,174 @@ function PoolContent() {
           </div>
         </div>
         <div className="stat-box">
-          <div className="stat-label">RATING</div>
+          <div className="stat-label">LIQUIDITY</div>
           <div style={{ marginTop: 4 }}>
             <StarsWithTooltip count={rating} />
           </div>
         </div>
       </div>
 
-      {/* Trade panel */}
-      <div
-        style={{
-          maxWidth: 500,
-          background: "var(--surface)",
-          border: "1px solid var(--border)",
-          position: "relative",
-        }}
-      >
-        {/* Cyber corner decoration */}
-        <span
+      {/* Trade panel + Chart */}
+      <div style={{ display: "flex", gap: 24, alignItems: "flex-start" }}>
+        {/* Trade panel */}
+        <div
+          ref={tradePanelRef}
           style={{
-            position: "absolute",
-            top: -1, left: -1,
-            width: 12, height: 12,
-            borderTop: "1px solid var(--cyan)",
-            borderLeft: "1px solid var(--cyan)",
-            pointerEvents: "none",
+            width: 500,
+            minWidth: 380,
+            flexShrink: 0,
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            position: "relative",
           }}
-        />
-        <span
-          style={{
-            position: "absolute",
-            bottom: -1, right: -1,
-            width: 12, height: 12,
-            borderBottom: "1px solid var(--cyan)",
-            borderRight: "1px solid var(--cyan)",
-            pointerEvents: "none",
-          }}
-        />
+        >
+          {/* Cyber corner decoration */}
+          <span
+            style={{
+              position: "absolute",
+              top: -1, left: -1,
+              width: 12, height: 12,
+              borderTop: "1px solid var(--cyan)",
+              borderLeft: "1px solid var(--cyan)",
+              pointerEvents: "none",
+            }}
+          />
+          <span
+            style={{
+              position: "absolute",
+              bottom: -1, right: -1,
+              width: 12, height: 12,
+              borderBottom: "1px solid var(--cyan)",
+              borderRight: "1px solid var(--cyan)",
+              pointerEvents: "none",
+            }}
+          />
 
-        {/* Tab bar */}
-        <div className="tab-bar" style={{ margin: 0 }}>
-          {tabs.map(({ key, label }) => (
-            <button
-              key={key}
-              onClick={() => setTab(key)}
-              className={`tab-item${tab === key ? " active" : ""}`}
-            >
-              {label}
-            </button>
-          ))}
+          {/* Tab bar */}
+          <div className="tab-bar" style={{ margin: 0 }}>
+            {tabs.map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => setTab(key)}
+                className={`tab-item${tab === key ? " active" : ""}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Panel content */}
+          <div style={{ padding: "20px 24px 24px" }}>
+            <ChainGuard>
+              {underlyingToken && underlyingUsdc ? (
+                <>
+                  {tab === "trade" && (
+                    <LongShortPanel
+                      poolAddress={poolAddress}
+                      underlyingUsdc={underlyingUsdc}
+                      tokenSymbol={tokenSymbol}
+                      tokenDecimals={tokenDecimals}
+                    />
+                  )}
+                  {tab === "swap" && (
+                    <SwapPanel
+                      poolAddress={poolAddress}
+                      underlyingToken={underlyingToken}
+                      underlyingUsdc={underlyingUsdc}
+                      tokenSymbol={tokenSymbol}
+                      tokenDecimals={tokenDecimals}
+                    />
+                  )}
+                  {tab === "lp" && isLpHolder && (
+                    <LpPanel
+                      poolAddress={poolAddress}
+                      lpNftAddress={addresses.lpNFT}
+                      underlyingToken={underlyingToken}
+                      underlyingUsdc={underlyingUsdc}
+                      tokenSymbol={tokenSymbol}
+                      tokenDecimals={tokenDecimals}
+                    />
+                  )}
+                </>
+              ) : (
+                <p
+                  style={{
+                    fontFamily: "var(--font-mono)",
+                    fontSize: "0.7rem",
+                    color: "var(--muted)",
+                    letterSpacing: "0.1em",
+                  }}
+                >
+                  <span className="spinner">⟳</span> LOADING
+                  <span className="cursor-blink">_</span>
+                </p>
+              )}
+            </ChainGuard>
+          </div>
         </div>
 
-        {/* Panel content */}
-        <div style={{ padding: "20px 24px 24px" }}>
-          {underlyingToken && underlyingUsdc ? (
-            <>
-              {tab === "trade" && (
-                <LongShortPanel
-                  poolAddress={poolAddress}
-                  underlyingUsdc={underlyingUsdc}
-                  tokenSymbol={tokenSymbol}
-                  tokenDecimals={tokenDecimals}
-                />
-              )}
-              {tab === "swap" && (
-                <SwapPanel
-                  poolAddress={poolAddress}
-                  underlyingToken={underlyingToken}
-                  underlyingUsdc={underlyingUsdc}
-                  tokenSymbol={tokenSymbol}
-                  tokenDecimals={tokenDecimals}
-                />
-              )}
-              {tab === "lp" && isLpHolder && (
-                <LpPanel
-                  poolAddress={poolAddress}
-                  lpNftAddress={addresses.lpNFT}
-                  underlyingToken={underlyingToken}
-                  underlyingUsdc={underlyingUsdc}
-                  tokenSymbol={tokenSymbol}
-                  tokenDecimals={tokenDecimals}
-                />
-              )}
-            </>
-          ) : (
-            <p
-              style={{
-                fontFamily: "var(--font-mono)",
-                fontSize: "0.7rem",
-                color: "var(--muted)",
-                letterSpacing: "0.1em",
-              }}
-            >
-              <span className="spinner">⟳</span> LOADING
-              <span className="cursor-blink">_</span>
-            </p>
-          )}
+        {/* Price chart */}
+        <div
+          style={{
+            flex: 1,
+            minWidth: 300,
+            height: panelHeight || 420,
+            position: "relative",
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            overflow: "hidden",
+          }}
+        >
+          {/* Cyber corner decoration */}
+          <span
+            style={{
+              position: "absolute",
+              top: -1, left: -1,
+              width: 12, height: 12,
+              borderTop: "1px solid var(--cyan)",
+              borderLeft: "1px solid var(--cyan)",
+              pointerEvents: "none",
+              zIndex: 1,
+            }}
+          />
+          <span
+            style={{
+              position: "absolute",
+              bottom: -1, right: -1,
+              width: 12, height: 12,
+              borderBottom: "1px solid var(--cyan)",
+              borderRight: "1px solid var(--cyan)",
+              pointerEvents: "none",
+              zIndex: 1,
+            }}
+          />
+
+          {/* Token label overlay */}
+          <div
+            style={{
+              position: "absolute",
+              top: 16,
+              left: 20,
+              zIndex: 2,
+              fontFamily: "var(--font-display)",
+              fontSize: "1.4rem",
+              color: "rgba(255,255,255,0.12)",
+              letterSpacing: "0.08em",
+              lineHeight: 1,
+              pointerEvents: "none",
+            }}
+          >
+            {tokenSymbol}
+          </div>
+
+          <PoolPriceChart
+            poolAddress={poolAddress}
+            highlightLine={null}
+            priceData={priceHistory}
+            spotLabel={price}
+            longLabel={longPrice}
+            shortLabel={shortPrice}
+          />
         </div>
       </div>
     </div>

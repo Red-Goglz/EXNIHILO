@@ -18,7 +18,7 @@ const COLUMNS: { key: SortCol; label: string }[] = [
   { key: "positions", label: "POSITIONS" },
   { key: "pctLong",   label: "% LONG" },
   { key: "pctShort",  label: "% SHORT" },
-  { key: "rating",    label: "RATING" },
+  { key: "rating",    label: "LIQUIDITY" },
 ];
 
 function comparePools(a: PoolMeta | undefined, b: PoolMeta | undefined, col: SortCol, dir: SortDir): number {
