@@ -12,6 +12,7 @@ import MarketsPage from "./pages/MarketsPage.tsx";
 import PoolPage from "./pages/PoolPage.tsx";
 import PortfolioPage from "./pages/PortfolioPage.tsx";
 import CreatePage from "./pages/CreatePage.tsx";
+import AnalyticsPage from "./pages/AnalyticsPage.tsx";
 
 const queryClient = new QueryClient();
 
@@ -26,6 +27,7 @@ const router = createBrowserRouter([
       { path: "markets/:poolAddr", element: <PoolPage /> },
       { path: "portfolio", element: <PortfolioPage /> },
       { path: "create", element: <CreatePage /> },
+      { path: "analytics", element: <AnalyticsPage /> },
     ],
   },
 ]);

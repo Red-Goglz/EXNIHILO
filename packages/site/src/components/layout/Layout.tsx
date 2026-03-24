@@ -11,6 +11,7 @@ const NAV_LINKS = [
   { to: "/app/markets",   label: "MARKETS",   exact: false },
   { to: "/app/portfolio", label: "PORTFOLIO", exact: false },
   { to: "/app/create",    label: "CREATE",    exact: false },
+  { to: "/app/analytics", label: "ANALYTICS", exact: false },
 ] as const;
 
 const MAX_WIDTH = 1280;
