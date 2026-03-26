@@ -9,6 +9,7 @@ import TokenInput from "../shared/TokenInput.tsx";
 import TxButton from "../shared/TxButton.tsx";
 
 const POSITION_FEE_BPS = 500n;
+const IMPACT_FEE_BPS = 1500n;
 const MIN_POSITION_FEE = 50_000n; // 0.05 USDC (6 dec)
 
 interface LongShortPanelProps {
@@ -45,6 +46,8 @@ export default function LongShortPanel({
       { ...poolContract, functionName: "swapFeeBps" },
       { ...poolContract, functionName: "airToken" },
       { ...poolContract, functionName: "airUsdToken" },
+      { ...poolContract, functionName: "longOpenInterest" },
+      { ...poolContract, functionName: "shortOpenInterest" },
       {
         address: underlyingUsdc,
         abi: erc20Abi,
@@ -60,7 +63,9 @@ export default function LongShortPanel({
   const swapFeeBps = data?.[4]?.result as bigint | undefined;
   const airTokenAddress = data?.[5]?.result as `0x${string}` | undefined;
   const airUsdAddress = data?.[6]?.result as `0x${string}` | undefined;
-  const allowance = data?.[7]?.result as bigint | undefined;
+  const longOI = data?.[7]?.result as bigint | undefined;
+  const shortOI = data?.[8]?.result as bigint | undefined;
+  const allowance = data?.[9]?.result as bigint | undefined;
 
   const { data: supplyData } = useReadContracts({
     contracts:
@@ -125,8 +130,13 @@ export default function LongShortPanel({
       ? (previewOut * (10_000n - slippageBps)) / 10_000n
       : 0n;
 
-  const feePctRaw = (usdcRaw * POSITION_FEE_BPS) / 10_000n;
-  const feePulled = feePctRaw < MIN_POSITION_FEE ? MIN_POSITION_FEE : feePctRaw;
+  const baseFeeRaw = (usdcRaw * POSITION_FEE_BPS) / 10_000n;
+  const baseFee = baseFeeRaw < MIN_POSITION_FEE ? MIN_POSITION_FEE : baseFeeRaw;
+  const oi = (isLong ? longOI : shortOI) ?? 0n;
+  const impactFee = backedAirUsd && backedAirUsd > 0n
+    ? (IMPACT_FEE_BPS * usdcRaw * (2n * oi + usdcRaw)) / (2n * backedAirUsd * 10_000n)
+    : 0n;
+  const feePulled = baseFee + impactFee;
 
   // Router: skip per-trade approval when router has sufficient allowance
   const { routerAddress, routerAllowance } = useRouterApproval(underlyingUsdc);
@@ -205,7 +215,11 @@ export default function LongShortPanel({
         </div>
         <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", padding: "10px 12px" }}>
           <div className="stat-label">POSITION FEE</div>
-          <div style={{ fontSize: "0.82rem", color: "var(--body)" }}>5.00%</div>
+          <div style={{ fontSize: "0.82rem", color: "var(--body)" }}>
+            {usdcRaw > 0n && feePulled > 0n
+              ? `${formatUsdc(feePulled)} ($${(Number(feePulled) * 100 / Number(usdcRaw)).toFixed(1)}%)`
+              : "5% + impact"}
+          </div>
         </div>
       </div>
 
@@ -329,7 +343,7 @@ export default function LongShortPanel({
       {/* Fee note */}
       {usdcRaw > 0n && (
         <p style={{ fontFamily: "var(--font-mono)", fontSize: "0.62rem", color: "var(--muted)", letterSpacing: "0.05em" }}>
-          Fee from wallet: {formatUsdc(feePulled)} {feePctRaw < MIN_POSITION_FEE ? "(min $0.05)" : "(5% of notional)"}
+          Fee from wallet: {formatUsdc(feePulled)} {baseFeeRaw < MIN_POSITION_FEE ? "(min $0.05 + impact)" : `(5% base${impactFee > 0n ? " + impact" : ""})`}
         </p>
       )}
 

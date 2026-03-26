@@ -155,23 +155,29 @@ async function main() {
 
   // ── 6. Create markets ────────────────────────────────────────────────────────
   //    Seed sizes chosen to give varied TVLs and prices similar to localhost.
-  const marketSpecs: [string, bigint, bigint][] = [
-    // ARENA   — small pool, ~$0.001/token
-    ["ARENA",   500n   * 1_000_000n,  500_000n * 10n ** 18n],
-    // NOCHILL — medium pool, ~$1/token
-    ["NOCHILL", 20_000n * 1_000_000n,  20_000n * 10n ** 18n],
-    // RGOGLZ  — larger pool, ~$5/token
-    ["RGOGLZ",  50_000n * 1_000_000n,  10_000n * 10n ** 18n],
-    // BANDS   — small pool, very cheap (~$0.0001/token)
-    ["BANDS",   1_000n  * 1_000_000n, 10_000_000n * 10n ** 18n],
-    // WAVAX   — large pool, ~$25/token
-    ["WAVAX",  100_000n * 1_000_000n,   4_000n * 10n ** 18n],
+  //   format: [symbol, usdcSeed, tokenSeed, maxPositionUsd, maxPositionBps]
+  const marketSpecs: [string, bigint, bigint, bigint, bigint][] = [
+    // ARENA — small pool, ~$0.001/token, capped at $10
+    ["ARENA",   500n   * 1_000_000n,  500_000n * 10n ** 18n,
+      10n * 1_000_000n, 0n],
+    // NOCHILL — medium pool, ~$1/token, no caps
+    ["NOCHILL", 20_000n * 1_000_000n,  20_000n * 10n ** 18n,
+      0n, 0n],
+    // RGOGLZ — larger pool, ~$5/token, capped at 1% of pool
+    ["RGOGLZ",  50_000n * 1_000_000n,  10_000n * 10n ** 18n,
+      0n, 100n],
+    // BANDS — small pool, very cheap (~$0.0001/token), capped at $10 + 5%
+    ["BANDS",   1_000n  * 1_000_000n, 10_000_000n * 10n ** 18n,
+      10n * 1_000_000n, 500n],
+    // WAVAX — large pool, ~$25/token, no caps
+    ["WAVAX",  100_000n * 1_000_000n,   4_000n * 10n ** 18n,
+      0n, 0n],
   ];
 
   console.log("\n─── Creating markets ───────────────────────────────────");
   const poolAddresses: Record<string, string> = {};
 
-  for (const [symbol, usdcSeed, tokenSeed] of marketSpecs) {
+  for (const [symbol, usdcSeed, tokenSeed, maxPosUsd, maxPosBps] of marketSpecs) {
     const baseToken = baseTokens.find(t => t.symbol === symbol)!;
 
     await (await usdc.connect(deployer).approve(factoryAddress, usdcSeed)).wait();
@@ -181,8 +187,8 @@ async function main() {
       baseToken.address,
       usdcSeed,
       tokenSeed,
-      0n, // maxPositionUsd — no cap
-      0n  // maxPositionBps — no cap
+      maxPosUsd,
+      maxPosBps
     );
     const receipt = await tx.wait();
 

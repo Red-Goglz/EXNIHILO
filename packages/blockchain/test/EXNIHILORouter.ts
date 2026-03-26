@@ -23,16 +23,20 @@ const SWAP_FEE_BPS   = 100n;
 const BPS_DENOM      = 10_000n;
 const LP_FEE_BPS     = 300n;
 const PROTO_FEE_BPS  = 200n;
+const IMPACT_FEE_BPS = 1500n;
 const MIN_POS_FEE    = 50_000n; // 0.05 USDC
 const MAX_POS_USD    = ethers.parseUnits("9000", 6);
 const MAX_POS_BPS    = 9000n;
 
-/** Compute the position fee exactly as the pool + router do. */
-function positionFee(notional: bigint): bigint {
-  const fee =
+/** Compute the position fee exactly as the pool + router do (base + OI-integral impact). */
+function positionFee(notional: bigint, backedAirUsd: bigint = INITIAL_USDC, oi: bigint = 0n): bigint {
+  let fee =
     (notional * PROTO_FEE_BPS) / BPS_DENOM +
     (notional * LP_FEE_BPS) / BPS_DENOM;
-  return fee < MIN_POS_FEE ? MIN_POS_FEE : fee;
+  if (fee < MIN_POS_FEE) fee = MIN_POS_FEE;
+  const impact = (IMPACT_FEE_BPS * notional * (2n * oi + notional))
+               / (2n * backedAirUsd * BPS_DENOM);
+  return fee + impact;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -420,13 +424,16 @@ describe("EXNIHILORouter", function () {
         ethers.parseUnits("999", 6),
       ];
 
+      let longOI = 0n; // track cumulative long OI
       for (const notional of notionals) {
-        const expectedFee = positionFee(notional);
+        const backedUsd = await (await ethers.getContractAt("EXNIHILOPool", poolAddress)).backedAirUsd();
+        const expectedFee = positionFee(notional, backedUsd, longOI);
         const balBefore = await usdc.balanceOf(trader1.address);
         await router.connect(trader1).openLong(poolAddress, notional, 0n);
         const balAfter = await usdc.balanceOf(trader1.address);
         expect(balBefore - balAfter).to.equal(expectedFee,
           `Fee mismatch for notional=${notional.toString()}`);
+        longOI += notional;
       }
     });
 
@@ -434,12 +441,13 @@ describe("EXNIHILORouter", function () {
       const { router, usdc, trader1, poolAddress } =
         await loadFixture(deployRouterFixture);
 
-      // $0.50 notional → 5% = $0.025 → below $0.05 min → fee = $0.05
+      // $0.50 notional → 5% = $0.025 → below $0.05 min → fee = $0.05 + tiny impact
       const notional = ethers.parseUnits("0.50", 6);
+      const expectedFee = positionFee(notional);
       const balBefore = await usdc.balanceOf(trader1.address);
       await router.connect(trader1).openLong(poolAddress, notional, 0n);
       const balAfter = await usdc.balanceOf(trader1.address);
-      expect(balBefore - balAfter).to.equal(MIN_POS_FEE);
+      expect(balBefore - balAfter).to.equal(expectedFee);
     });
   });
 
@@ -497,15 +505,20 @@ describe("EXNIHILORouter", function () {
         await loadFixture(deployRouterFixture);
 
       const notional = ethers.parseUnits("100", 6);
-      const fee = positionFee(notional);
-      const numTrades = 5n;
+      const numTrades = 5;
 
-      // Give exactly enough for 5 trades
-      const totalNeeded = fee * numTrades;
+      // With OI-integral fee, each trade costs more — compute total across all 5
+      let totalNeeded = 0n;
+      let oi = 0n;
+      for (let i = 0; i < numTrades; i++) {
+        totalNeeded += positionFee(notional, INITIAL_USDC, oi);
+        oi += notional;
+      }
+
       await usdc.mint(other.address, totalNeeded);
       await usdc.connect(other).approve(await router.getAddress(), totalNeeded);
 
-      for (let i = 0; i < Number(numTrades); i++) {
+      for (let i = 0; i < numTrades; i++) {
         await router.connect(other).openLong(poolAddress, notional, 0n);
       }
 
@@ -535,7 +548,12 @@ describe("EXNIHILORouter", function () {
       expect(posDirect.isLong).to.equal(true);
       expect(posRouter.pool).to.equal(posDirect.pool);
       expect(posRouter.usdcIn).to.equal(posDirect.usdcIn);
-      expect(posRouter.feesPaid).to.equal(posDirect.feesPaid);
+      // feesPaid differs because the 2nd position has higher OI (integral fee)
+      // but both should be > base fee
+      const baseFee = (notional * (PROTO_FEE_BPS + LP_FEE_BPS)) / BPS_DENOM;
+      expect(posRouter.feesPaid).to.be.gte(baseFee);
+      expect(posDirect.feesPaid).to.be.gte(baseFee);
+      expect(posDirect.feesPaid).to.be.gt(posRouter.feesPaid); // 2nd position pays more (higher OI)
       // lockedAmount may differ slightly due to reserve changes between trades
       // but both should be non-zero
       expect(posRouter.lockedAmount).to.be.gt(0n);

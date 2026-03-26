@@ -123,9 +123,11 @@ interface ILpNFT {
  *                     of the input: fee = amountIn * reserveOut/reserveIn * feeBps.
  *                     This gives a true percentage-of-notional fee regardless of
  *                     trade size. Fee stays in pool as passive LP yield.
- *   Position open:    5 % flat on USDC notional.
+ *   Position open:    5 % flat on USDC notional + quadratic impact fee.
  *                       3 % → lpFeesAccumulated (claimable via claimFees)
  *                       2 % → protocolTreasury  (transferred immediately)
+ *                       Impact fee = 1500 × N × (2×OI+N) / (2 × backedAirUsd × 10000) → LP
+ *                       OI-integral formula: split-proof, scales with cumulative OI.
  *
  * ── Security ─────────────────────────────────────────────────────────────────
  *
@@ -149,6 +151,13 @@ contract EXNIHILOPool is ReentrancyGuard {
     uint256 private constant MIN_POSITION_FEE = 50_000; // 0.05 USDC
     /// @dev 1 % of profit taken by the protocol on closeLong / closeShort.
     uint256 private constant CLOSE_FEE_BPS    = 100;   // 1 % of surplus → protocol
+    /// @dev Impact fee scaling factor. Uses OI-based integral formula:
+    ///        impactFee = IMPACT_FEE_BPS × N × (2×OI + N) / (2 × backedAirUsd × BPS_DENOM)
+    ///      where OI = same-side open interest before this position.
+    ///      Split-proof: the integral from OI=0 to OI=N is identical whether computed
+    ///      as one position or many smaller ones.
+    ///      All impact fee revenue goes to the LP to compensate for price distortion.
+    uint256 private constant IMPACT_FEE_BPS   = 1500;  // 15 % impact scaling rate
 
     // ── Immutables ────────────────────────────────────────────────────────────
 
@@ -458,7 +467,7 @@ contract EXNIHILOPool is ReentrancyGuard {
 
         _checkLeverageCap(usdcAmount);
 
-        // ── Fee split (5 % total on notional, minimum 0.05 USDC) ─────────────
+        // ── Fee split (5 % base + quadratic impact fee, minimum 0.05 USDC) ──
         uint256 protocolFee = (usdcAmount * PROTOCOL_FEE_BPS) / BPS_DENOM;
         uint256 lpFee       = (usdcAmount * LP_FEE_BPS)       / BPS_DENOM;
         uint256 totalFee    = protocolFee + lpFee;
@@ -467,6 +476,14 @@ contract EXNIHILOPool is ReentrancyGuard {
             protocolFee = (MIN_POSITION_FEE * PROTOCOL_FEE_BPS) / (PROTOCOL_FEE_BPS + LP_FEE_BPS);
             lpFee       = MIN_POSITION_FEE - protocolFee;
         }
+        // Impact fee: OI-based integral formula (split-proof).
+        // Fee = integral of marginal rate from current OI to OI+N.
+        // Uses longOpenInterest BEFORE this position is added.
+        //   impactFee = IMPACT_FEE_BPS × N × (2×OI + N) / (2 × backedAirUsd × BPS_DENOM)
+        uint256 impactFee = (IMPACT_FEE_BPS * usdcAmount * (2 * longOpenInterest + usdcAmount))
+                          / (2 * backedAirUsd * BPS_DENOM);
+        lpFee    += impactFee;
+        totalFee += impactFee;
 
         // SWAP-2: compute airToken output before any state changes.
         // reserveIn  = airUsd.totalSupply() before the synthetic mint below.
@@ -679,7 +696,7 @@ contract EXNIHILOPool is ReentrancyGuard {
 
         _checkLeverageCap(usdcNotional);
 
-        // ── Fee split (5 % total on notional, minimum 0.05 USDC) ─────────────
+        // ── Fee split (5 % base + quadratic impact fee, minimum 0.05 USDC) ──
         uint256 protocolFee = (usdcNotional * PROTOCOL_FEE_BPS) / BPS_DENOM;
         uint256 lpFee       = (usdcNotional * LP_FEE_BPS)       / BPS_DENOM;
         uint256 totalFee    = protocolFee + lpFee;
@@ -688,6 +705,12 @@ contract EXNIHILOPool is ReentrancyGuard {
             protocolFee = (MIN_POSITION_FEE * PROTOCOL_FEE_BPS) / (PROTOCOL_FEE_BPS + LP_FEE_BPS);
             lpFee       = MIN_POSITION_FEE - protocolFee;
         }
+        // Impact fee: OI-based integral formula (split-proof).
+        // Uses shortOpenInterest BEFORE this position is added.
+        uint256 impactFee = (IMPACT_FEE_BPS * usdcNotional * (2 * shortOpenInterest + usdcNotional))
+                          / (2 * backedAirUsd * BPS_DENOM);
+        lpFee    += impactFee;
+        totalFee += impactFee;
 
         // Compute synthetic airToken to mint using the current SWAP-1 reference rate:
         //   airTokenMinted = usdcNotional * airToken.totalSupply() / backedAirUsd

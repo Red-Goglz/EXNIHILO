@@ -43,4 +43,4 @@ Every position (long or short) is an ERC-721 token. The NFT custodies the locked
 
 ## Single-LP Model
 
-Each pool has exactly one liquidity provider, identified by an LP NFT. The LP earns swap fees passively and collects a 3% fee on every position opened. Transferring the LP NFT transfers all LP rights.
+Each pool has exactly one liquidity provider, identified by an LP NFT. The LP earns swap fees passively, collects a 3% base fee on every position opened, and receives a dynamic impact fee that scales with position size relative to pool liquidity. Transferring the LP NFT transfers all LP rights.

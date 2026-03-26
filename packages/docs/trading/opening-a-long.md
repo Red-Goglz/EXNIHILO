@@ -5,7 +5,7 @@ A long position profits when the token price goes up relative to USDC.
 ## How it works
 
 1. You specify a USDC amount (your position size)
-2. The protocol takes a 5% open fee (3% to LP, 2% to protocol treasury)
+2. The protocol takes a 5% base fee (3% to LP, 2% to protocol treasury) plus a dynamic impact fee (to LP) that scales with position size relative to pool liquidity
 3. Synthetic (unbacked) airUsd is minted
 4. The synthetic airUsd is swapped through SWAP-2 for airToken tokens
 5. The airToken tokens are locked in the PositionNFT contract
@@ -35,7 +35,7 @@ If either cap is active and your position exceeds it, the transaction reverts.
 
 You open a long with 100 USDC on a RGOGLZ/USDC pool:
 
-1. 5 USDC fee taken (3 to LP, 2 to treasury)
+1. ~5.08 USDC fee taken (3 base + 0.08 impact to LP, 2 to treasury)
 2. mints 100 synthetic airUsd
 3. Swapped for airToken → locked in your NFT
 4. If RGOGLZ price rises, your airToken is worth more airUsd when you close → profit

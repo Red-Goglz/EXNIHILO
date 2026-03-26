@@ -31,7 +31,8 @@ import {
 const SWAP_FEE_BPS  = 100n;
 const LP_FEE_BPS    = 300n;
 const PROTO_FEE_BPS = 200n;
-const OPEN_FEE_BPS  = LP_FEE_BPS + PROTO_FEE_BPS; // 5 % total
+const OPEN_FEE_BPS  = LP_FEE_BPS + PROTO_FEE_BPS; // 5 % total (base only)
+const IMPACT_FEE_BPS = 1500n;                      // impact fee scaling rate
 const BPS_DENOM     = 10_000n;
 const E6            = 10n ** 6n;   // 1 USDC
 const E18           = 10n ** 18n;  // 1 token
@@ -327,7 +328,11 @@ async function runSequence(params: Params): Promise<void> {
   // came exclusively from trading operations (pump swap + realizeLong).
   //
   // Budget: 5% open fee + worst-case realizeLong notional + pump swap + buffer.
-  const openFee      = (params.longUsdc * OPEN_FEE_BPS) / BPS_DENOM;
+  const baseFee      = (params.longUsdc * OPEN_FEE_BPS) / BPS_DENOM;
+  // OI=0 for first position: integral formula simplifies to N²*BPS/(2*U*10000)
+  const impactFee    = (IMPACT_FEE_BPS * params.longUsdc * params.longUsdc)
+                     / (2n * params.lpUsdc * BPS_DENOM);
+  const openFee      = baseFee + impactFee;
   const traderBudget = openFee + params.longUsdc + params.swapUsdc + 10n * E6;
 
   await usdc.mint(trader.address, traderBudget);

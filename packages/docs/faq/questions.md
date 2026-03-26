@@ -45,7 +45,7 @@ From current pool reserves at the time of closing. See [P&L Calculation](/tradin
 Only one LP per pool — the market creator. If you want to LP, create your own market.
 
 ### How do LPs make money?
-Two ways: 3% fee on every position opened + passive swap fee yield. See [Fee Earnings](/lp/fees).
+Three ways: 3% base fee on every position opened + dynamic impact fee (scales with position size) + passive swap fee yield. See [Fee Earnings](/lp/fees).
 
 ### Can the LP rug the pool?
 The LP can withdraw liquidity only when there is no open position. The LP can force-realize underwater positions. If you are in profit, the LP can't close or withdraw the liquidity. 

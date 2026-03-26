@@ -6,7 +6,7 @@ import PoolCard from "../components/pool/PoolCard.tsx";
 import type { PoolMeta } from "../components/pool/PoolCard.tsx";
 import { Link } from "react-router-dom";
 
-type SortCol = "market" | "spot" | "long" | "short" | "tvl" | "positions" | "pctLong" | "pctShort" | "rating";
+type SortCol = "market" | "spot" | "long" | "short" | "tvl" | "apr" | "positions" | "pctLong" | "pctShort" | "rating";
 type SortDir = "asc" | "desc";
 
 const COLUMNS: { key: SortCol; label: string }[] = [
@@ -15,6 +15,7 @@ const COLUMNS: { key: SortCol; label: string }[] = [
   { key: "long",      label: "LONG" },
   { key: "short",     label: "SHORT" },
   { key: "tvl",       label: "TOTAL TVL" },
+  { key: "apr",       label: "APR (7D)" },
   { key: "positions", label: "POSITIONS" },
   { key: "pctLong",   label: "% LONG" },
   { key: "pctShort",  label: "% SHORT" },
@@ -33,6 +34,7 @@ function comparePools(a: PoolMeta | undefined, b: PoolMeta | undefined, col: Sor
     case "long":      cmp = a.longRaw < b.longRaw ? -1 : a.longRaw > b.longRaw ? 1 : 0; break;
     case "short":     cmp = a.shortRaw < b.shortRaw ? -1 : a.shortRaw > b.shortRaw ? 1 : 0; break;
     case "tvl":       cmp = a.tvlRaw < b.tvlRaw ? -1 : a.tvlRaw > b.tvlRaw ? 1 : 0; break;
+    case "apr":       cmp = a.apr7d - b.apr7d; break;
     case "positions": cmp = a.positions - b.positions; break;
     case "pctLong":   cmp = a.pctLong - b.pctLong; break;
     case "pctShort":  cmp = a.pctShort - b.pctShort; break;

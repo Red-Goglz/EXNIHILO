@@ -5,6 +5,7 @@ import { exnihiloPoolAbi, erc20Abi, lpNFTAbi } from "@exnihilio/abis";
 import { getAddresses, FUJI_CHAIN_ID } from "../contracts/addresses.ts";
 import { formatUsdc, formatToken, decodeSpotPrice } from "../lib/format.ts";
 import { usePriceHistory } from "../hooks/usePriceHistory.ts";
+import { usePoolApr } from "../hooks/usePoolApr.ts";
 import ChainGuard from "../components/wallet/ChainGuard.tsx";
 import PoolPriceChart from "../components/pool/PoolPriceChart.tsx";
 import LongShortPanel from "../components/trade/LongShortPanel.tsx";
@@ -181,6 +182,7 @@ function PoolContent() {
   });
 
   const { data: priceHistory } = usePriceHistory(poolAddress);
+  const { data: aprData } = usePoolApr(poolAddress);
 
   const lpOwner   = lpOwnerData?.[0]?.result as `0x${string}` | undefined;
   const isLpHolder = !!userAddress && !!lpOwner &&
@@ -318,6 +320,30 @@ function PoolContent() {
           </div>
         </div>
       </div>
+
+      {/* APR bar */}
+      {aprData && (
+        <div className="grid grid-cols-3 gap-3 mb-3">
+          <div className="stat-box">
+            <div className="stat-label">APR (24H)</div>
+            <div className="stat-value" style={{ color: aprData["1d"].apr > 0 ? "var(--green)" : "var(--muted)" }}>
+              {aprData["1d"].apr.toFixed(1)}%
+            </div>
+          </div>
+          <div className="stat-box" style={{ border: "1px solid var(--green)", boxShadow: "0 0 8px rgba(0,255,100,0.08)" }}>
+            <div className="stat-label" style={{ color: "var(--green)" }}>APR (7D)</div>
+            <div className="stat-value" style={{ color: "var(--green)", fontWeight: 700 }}>
+              {aprData["7d"].apr.toFixed(1)}%
+            </div>
+          </div>
+          <div className="stat-box">
+            <div className="stat-label">APR (30D)</div>
+            <div className="stat-value" style={{ color: aprData["30d"].apr > 0 ? "var(--green)" : "var(--muted)" }}>
+              {aprData["30d"].apr.toFixed(1)}%
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Stats — row 2: positions, OI, rating */}
       <div className="grid grid-cols-4 gap-3 mb-8">

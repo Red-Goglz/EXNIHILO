@@ -11,6 +11,9 @@ interface IEXNIHILOFactory {
 interface IEXNIHILOPool {
     function underlyingToken() external view returns (IERC20);
     function underlyingUsdc() external view returns (IERC20);
+    function backedAirUsd() external view returns (uint256);
+    function longOpenInterest() external view returns (uint256);
+    function shortOpenInterest() external view returns (uint256);
 
     function openLong(uint256 usdcAmount, uint256 minAirTokenOut, address recipient) external;
     function openShort(uint256 usdcNotional, uint256 minAirUsdOut, address recipient) external;
@@ -39,6 +42,7 @@ contract EXNIHILORouter {
     uint256 private constant LP_FEE_BPS       = 300;   // 3 %
     uint256 private constant PROTOCOL_FEE_BPS = 200;   // 2 %
     uint256 private constant MIN_POSITION_FEE = 50_000; // 0.05 USDC (6 dec)
+    uint256 private constant IMPACT_FEE_BPS   = 1500;  // 15 % impact scaling rate
 
     error PoolNotRegistered();
 
@@ -52,12 +56,22 @@ contract EXNIHILORouter {
         usdc    = IERC20(usdc_);
     }
 
-    /// @dev Replicates the pool's fee calculation so the router pulls exactly
-    ///      what the pool will consume — no excess, no refund needed.
-    function _positionFee(uint256 notional) internal pure returns (uint256) {
+    /// @dev Replicates the pool's fee calculation (base + OI-integral impact)
+    ///      so the router pulls exactly what the pool will consume.
+    function _positionFee(uint256 notional, address pool, bool isLong) internal view returns (uint256) {
         uint256 fee = (notional * PROTOCOL_FEE_BPS) / BPS_DENOM
                     + (notional * LP_FEE_BPS)       / BPS_DENOM;
-        return fee < MIN_POSITION_FEE ? MIN_POSITION_FEE : fee;
+        if (fee < MIN_POSITION_FEE) {
+            fee = MIN_POSITION_FEE;
+        }
+        // OI-integral impact fee — must match EXNIHILOPool.openLong / openShort.
+        uint256 backedUsd = IEXNIHILOPool(pool).backedAirUsd();
+        uint256 oi = isLong
+            ? IEXNIHILOPool(pool).longOpenInterest()
+            : IEXNIHILOPool(pool).shortOpenInterest();
+        uint256 impactFee = (IMPACT_FEE_BPS * notional * (2 * oi + notional))
+                          / (2 * backedUsd * BPS_DENOM);
+        return fee + impactFee;
     }
 
     /// @notice Open a long position on `pool`. Caller must have approved USDC to this router.
@@ -66,7 +80,7 @@ contract EXNIHILORouter {
         uint256 usdcAmount,
         uint256 minAirTokenOut
     ) external onlyPool(pool) {
-        uint256 fee = _positionFee(usdcAmount);
+        uint256 fee = _positionFee(usdcAmount, pool, true);
         usdc.safeTransferFrom(msg.sender, address(this), fee);
         usdc.forceApprove(pool, fee);
         IEXNIHILOPool(pool).openLong(usdcAmount, minAirTokenOut, msg.sender);
@@ -79,7 +93,7 @@ contract EXNIHILORouter {
         uint256 usdcNotional,
         uint256 minAirUsdOut
     ) external onlyPool(pool) {
-        uint256 fee = _positionFee(usdcNotional);
+        uint256 fee = _positionFee(usdcNotional, pool, false);
         usdc.safeTransferFrom(msg.sender, address(this), fee);
         usdc.forceApprove(pool, fee);
         IEXNIHILOPool(pool).openShort(usdcNotional, minAirUsdOut, msg.sender);

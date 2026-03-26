@@ -327,18 +327,20 @@ describe("EXNIHILOPool", function () {
 
   describe("2. Open Long", function () {
 
-    it("deducts 3% LP fee and 2% protocol fee from notional", async function () {
+    it("deducts base LP/protocol fee + impact fee from notional", async function () {
       const { pool, usdc, treasury, trader1 } = await loadFixture(deployPoolFixture);
 
       const usdcIn      = ethers.parseUnits("100", 6);
       const protocolFee = (usdcIn * PROTO_FEE_BPS) / BPS_DENOM;
       const lpFee       = (usdcIn * LP_FEE_BPS)    / BPS_DENOM;
+      // OI=0 for first position: impact = 1500 * N * N / (2 * U * 10000)
+      const impactFee   = (1500n * usdcIn * usdcIn) / (2n * INITIAL_USDC * BPS_DENOM);
 
       const treasuryBefore = await usdc.balanceOf(treasury.address);
       await openLong(pool, trader1, usdcIn);
 
       expect(await usdc.balanceOf(treasury.address)).to.equal(treasuryBefore + protocolFee);
-      expect(await pool.lpFeesAccumulated()).to.equal(lpFee);
+      expect(await pool.lpFeesAccumulated()).to.equal(lpFee + impactFee);
     });
 
     it("mints the long NFT to the trader", async function () {
@@ -557,18 +559,20 @@ describe("EXNIHILOPool", function () {
 
   describe("5. Open Short", function () {
 
-    it("deducts 3% LP fee and 2% protocol fee from notional", async function () {
+    it("deducts base LP/protocol fee + impact fee from notional", async function () {
       const { pool, usdc, treasury, trader1 } = await loadFixture(deployPoolFixture);
 
       const usdcIn      = ethers.parseUnits("100", 6);
       const protocolFee = (usdcIn * PROTO_FEE_BPS) / BPS_DENOM;
       const lpFee       = (usdcIn * LP_FEE_BPS)    / BPS_DENOM;
+      // OI=0 for first position: impact = 1500 * N * N / (2 * U * 10000)
+      const impactFee   = (1500n * usdcIn * usdcIn) / (2n * INITIAL_USDC * BPS_DENOM);
 
       const treasuryBefore = await usdc.balanceOf(treasury.address);
       await openShort(pool, trader1, usdcIn);
 
       expect(await usdc.balanceOf(treasury.address)).to.equal(treasuryBefore + protocolFee);
-      expect(await pool.lpFeesAccumulated()).to.equal(lpFee);
+      expect(await pool.lpFeesAccumulated()).to.equal(lpFee + impactFee);
     });
 
     it("mints the short NFT to the trader", async function () {
@@ -1265,7 +1269,11 @@ describe("EXNIHILOPool", function () {
      * $9,999 leaves $0.50 headroom for the long fee without running dry.
      */
     const LONG_NOTIONAL = ethers.parseUnits("10",   6); // $10 notional long
-    const LONG_FEE      = (ethers.parseUnits("10", 6) * 500n) / 10_000n; // $0.50
+    // Base fee = $0.50 + impact fee = 1500*10*10/(2*10000*10000) = $0.00075
+    const LONG_BASE_FEE = (ethers.parseUnits("10", 6) * 500n) / 10_000n; // $0.50
+    const LONG_IMPACT   = (1500n * ethers.parseUnits("10", 6) * ethers.parseUnits("10", 6))
+                        / (2n * INITIAL_USDC * 10_000n);
+    const LONG_FEE      = LONG_BASE_FEE + LONG_IMPACT;
     const SWAP_IN_USDC  = ethers.parseUnits("9999", 6); // $9,999 USDC→PEPE swap
 
     /**

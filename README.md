@@ -166,11 +166,12 @@ Spot price: `backedAirUsd / backedAirToken` (USDC per whole token).
 
 ## Fee Structure
 
-| Fee | Amount | Destination                            |
-|---|---|----------------------------------------|
-| Open fee | 5% of notional (min $0.05) | 3% LP claimable + 2% protocol treasury |
-| Close fee | 1% of profit surplus | prtocol treasury                       |
-| Swap fee | 100 bps = 1% (immutable per pool) | LP reserves                            |
+| Fee | Amount | Destination |
+|---|---|---|
+| Open fee (base) | 5% of notional (min $0.05) | 3% LP claimable + 2% protocol treasury |
+| Open fee (impact) | Dynamic: `1500 × N × (2×OI+N) / (2 × pool × 10000)` | LP claimable |
+| Close fee | 1% of profit surplus | Protocol treasury |
+| Swap fee | 100 bps = 1% (immutable per pool) | LP reserves |
 
 ## Tech Stack
 

@@ -117,40 +117,45 @@ async function main() {
   //    Each market is seeded by deployer (who becomes the LP NFT holder).
   //    LP sizes intentionally varied to give the UI different TVLs / prices.
   //    format: [symbolIndex, usdcSeed (6dec), tokenSeed (18dec), swapFeeBps]
-  const marketSpecs: [string, bigint, bigint, bigint][] = [
-    // ARENA — small pool, low price (~$0.001 / token)
-    ["ARENA",   500n   * 1_000_000n,  500_000n * 10n ** 18n, 100n],
-    // NOCHILL — medium pool, ~$1 / token
-    ["NOCHILL", 20_000n * 1_000_000n,  20_000n * 10n ** 18n, 100n],
-    // RGOGLZ  — larger pool, ~$5 / token
-    ["RGOGLZ",  50_000n * 1_000_000n,  10_000n * 10n ** 18n, 50n ],
-    // BANDS   — small pool, very cheap token (~$0.0001)
-    ["BANDS",   1_000n  * 1_000_000n, 10_000_000n * 10n ** 18n, 100n],
-    // WAVAX   — large pool, ~$25 / token (close to real AVAX price)
-    ["WAVAX",  100_000n * 1_000_000n,   4_000n * 10n ** 18n, 30n ],
+  //   format: [symbol, usdcSeed, tokenSeed, feeBps, maxPositionUsd, maxPositionBps]
+  //   maxPositionUsd: hard USD cap per position (6 dec). 0 = no cap.
+  //   maxPositionBps: % cap on backedAirUsd in bps (10–9900). 0 = no cap.
+  const marketSpecs: [string, bigint, bigint, bigint, bigint, bigint][] = [
+    // ARENA — small pool, low price (~$0.001 / token), capped at $10 per position
+    ["ARENA",   500n   * 1_000_000n,  500_000n * 10n ** 18n, 100n,
+      10n * 1_000_000n, // maxPositionUsd = $10
+      0n],              // no bps cap
+    // NOCHILL — medium pool, ~$1 / token, no caps
+    ["NOCHILL", 20_000n * 1_000_000n,  20_000n * 10n ** 18n, 100n,
+      0n, 0n],
+    // RGOGLZ  — larger pool, ~$5 / token, capped at 1% of pool per position
+    ["RGOGLZ",  50_000n * 1_000_000n,  10_000n * 10n ** 18n, 50n,
+      0n,               // no USD cap
+      100n],            // maxPositionBps = 1% of backedAirUsd
+    // BANDS   — small pool, very cheap token (~$0.0001), capped at $10 and 5%
+    ["BANDS",   1_000n  * 1_000_000n, 10_000_000n * 10n ** 18n, 100n,
+      10n * 1_000_000n, // maxPositionUsd = $10
+      500n],            // maxPositionBps = 5% of backedAirUsd
+    // WAVAX   — large pool, ~$25 / token, no caps
+    ["WAVAX",  100_000n * 1_000_000n,   4_000n * 10n ** 18n, 30n,
+      0n, 0n],
   ];
 
   console.log("\n─── Creating markets ───────────────────────────────────");
   const poolAddresses: Record<string, string> = {};
 
-  for (const [symbol, usdcSeed, tokenSeed, feeBps] of marketSpecs) {
+  for (const [symbol, usdcSeed, tokenSeed, feeBps, maxPosUsd, maxPosBps] of marketSpecs) {
     const baseToken = baseTokens.find(t => t.symbol === symbol)!;
 
     await usdc.connect(deployer).approve(factoryAddress, usdcSeed);
     await baseToken.contract.connect(deployer).approve(factoryAddress, tokenSeed);
 
-    // createMarket uses the factory's defaultSwapFeeBps unless overridden.
-    // We re-deploy the factory without per-market fee override, so set it via
-    // a custom factory call if available, otherwise use a separate pool deploy.
-    // Since EXNIHILOFactory.createMarket doesn't take feeBps, we use the
-    // factory default (100 bps = 1%) for all except WAVAX which we leave at 1%
-    // (minor difference — fee tiers would need factory support to differentiate).
     const tx = await factory.connect(deployer).createMarket(
       baseToken.address,
       usdcSeed,
       tokenSeed,
-      0n, // maxPositionUsd — no cap
-      0n  // maxPositionBps — no cap
+      maxPosUsd,
+      maxPosBps
     );
     const receipt = await tx.wait();
 
@@ -165,8 +170,11 @@ async function main() {
 
     poolAddresses[symbol] = poolAddr;
     const spotRaw = await (await ethers.getContractAt("EXNIHILOPool", poolAddr)).spotPrice();
-    const spotUsd = Number(spotRaw) / 1e6; // raw USDC units → USD
-    console.log(`  ${symbol.padEnd(7)} pool: ${poolAddr}  spot ~$${spotUsd.toFixed(4)}`);
+    const spotUsd = Number(spotRaw) / 1e6;
+    const capLabel = maxPosUsd > 0n || maxPosBps > 0n
+      ? `caps: ${maxPosUsd > 0n ? "$" + Number(maxPosUsd) / 1e6 : "—"}/${maxPosBps > 0n ? maxPosBps + "bps" : "—"}`
+      : "no caps";
+    console.log(`  ${symbol.padEnd(7)} pool: ${poolAddr}  spot ~$${spotUsd.toFixed(4)}  [${capLabel}]`);
   }
 
   // 8. Write addresses JSON for the frontend

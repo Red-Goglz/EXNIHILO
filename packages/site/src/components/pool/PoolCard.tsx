@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useReadContracts } from "wagmi";
 import { exnihiloPoolAbi, erc20Abi } from "@exnihilio/abis";
 import { formatUsdc, formatUsdcCompact, decodeSpotPrice } from "../../lib/format.ts";
+import { usePoolApr } from "../../hooks/usePoolApr.ts";
 
 const STAR_LEVELS = [
   { stars: 5, label: "DEEP LIQUIDITY", threshold: "> $1M" },
@@ -115,6 +116,7 @@ export interface PoolMeta {
   positions: number;
   pctLong: number;
   pctShort: number;
+  apr7d: number;
 }
 
 interface PoolCardProps {
@@ -198,6 +200,11 @@ export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
   const hasOiData = longOpenInterest !== undefined && shortOpenInterest !== undefined;
   const rating = starRating(totalTvlRaw);
 
+  // Fetch APR from indexer
+  const { data: aprData } = usePoolApr(poolAddress);
+  const apr7d = aprData?.["7d"]?.apr ?? 0;
+  const apr1d = aprData?.["1d"]?.apr ?? 0;
+
   // Report all sortable fields up to parent for filter/sort
   useEffect(() => {
     if (symbol !== "…" && onData) {
@@ -211,9 +218,10 @@ export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
         positions: Number(openPositionCount ?? 0n),
         pctLong,
         pctShort,
+        apr7d,
       });
     }
-  }, [symbol, rating, priceRaw, longPriceRaw, shortPriceRaw, totalTvlRaw, openPositionCount, pctLong, pctShort, onData]);
+  }, [symbol, rating, priceRaw, longPriceRaw, shortPriceRaw, totalTvlRaw, openPositionCount, pctLong, pctShort, apr7d, onData]);
 
   return (
     <tr onClick={() => navigate(`/app/markets/${poolAddress}`)}>
@@ -225,6 +233,14 @@ export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
       <td style={{ color: "var(--green)" }}>{longPrice}</td>
       <td style={{ color: "var(--red)" }}>{shortPrice}</td>
       <td>{totalTvl}</td>
+      <td style={{ color: apr7d > 0 ? "var(--green)" : "var(--muted)", fontWeight: apr7d > 0 ? 600 : 400 }}>
+        {aprData ? `${apr7d.toFixed(1)}%` : "—"}
+        {apr1d > 0 && aprData && (
+          <span style={{ fontSize: "0.55rem", color: "var(--dim)", marginLeft: 4 }}>
+            ({apr1d.toFixed(0)}% 24h)
+          </span>
+        )}
+      </td>
       <td>{openPositionCount?.toString() ?? "—"}</td>
       <td style={{ color: pctColor(pctLong), fontWeight: pctLong > 0 ? 600 : 400 }}>
         {hasOiData ? formatPct(pctLong) : "—"}
