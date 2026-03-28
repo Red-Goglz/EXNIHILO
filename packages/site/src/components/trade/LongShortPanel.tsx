@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useAccount, useReadContracts, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
 import { exnihiloPoolAbi, exnihiloRouterAbi, erc20Abi } from "@exnihilio/abis";
@@ -54,6 +54,8 @@ export default function LongShortPanel({
         functionName: "allowance",
         args: [address ?? "0x0000000000000000000000000000000000000000", poolAddress],
       },
+      { ...poolContract, functionName: "maxPositionUsd" },
+      { ...poolContract, functionName: "maxPositionBps" },
     ],
   });
 
@@ -66,6 +68,8 @@ export default function LongShortPanel({
   const longOI = data?.[7]?.result as bigint | undefined;
   const shortOI = data?.[8]?.result as bigint | undefined;
   const allowance = data?.[9]?.result as bigint | undefined;
+  const maxPositionUsd = data?.[10]?.result as bigint | undefined;
+  const maxPositionBps = data?.[11]?.result as bigint | undefined;
 
   const { data: supplyData } = useReadContracts({
     contracts:
@@ -138,12 +142,27 @@ export default function LongShortPanel({
     : 0n;
   const feePulled = baseFee + impactFee;
 
+  const MAX_UINT256 = 2n ** 256n - 1n;
+  const hasLeverageCap = leverageCap !== undefined && leverageCap !== MAX_UINT256;
+  const overCap = hasLeverageCap && usdcRaw > 0n && usdcRaw > leverageCap!;
+
+  // Build cap description for display
+  const capDescription = (() => {
+    if (!hasLeverageCap) return null;
+    const parts: string[] = [];
+    if (maxPositionUsd !== undefined && maxPositionUsd > 0n)
+      parts.push(`$${formatUsdc(maxPositionUsd)} hard`);
+    if (maxPositionBps !== undefined && maxPositionBps > 0n)
+      parts.push(`${Number(maxPositionBps) / 100}% of pool`);
+    return parts.length > 0 ? parts.join(" / ") : null;
+  })();
+
   // Router: skip per-trade approval when router has sufficient allowance
   const { routerAddress, routerAllowance } = useRouterApproval(underlyingUsdc);
   const useRouter = !!routerAddress && routerAllowance !== undefined && routerAllowance >= feePulled && usdcRaw > 0n;
 
-  const { writeContract: writeApprove, data: approveHash, isPending: approvePending } = useWriteContract();
-  const { isLoading: approveConfirming, isSuccess: approveSuccess } = useWaitForTransactionReceipt({ hash: approveHash });
+  const { writeContract: writeApprove, data: approveHash, isPending: approvePending, isError: approveRejected } = useWriteContract();
+  const { isLoading: approveConfirming, isSuccess: approveSuccess, isError: approveFailed } = useWaitForTransactionReceipt({ hash: approveHash });
 
   const needsApproval = !useRouter && !approveSuccess && allowance !== undefined && feePulled > allowance;
 
@@ -151,16 +170,50 @@ export default function LongShortPanel({
     if (approveSuccess) queryClient.invalidateQueries();
   }, [approveSuccess, queryClient]);
 
-  const { writeContract: writeOpen, data: openHash, isPending: openPending } = useWriteContract();
-  const { isLoading: openConfirming, isSuccess: openSuccess } = useWaitForTransactionReceipt({ hash: openHash });
+  const { writeContract: writeOpen, data: openHash, isPending: openPending, isError: openRejected, reset: resetOpen } = useWriteContract();
+  const { isLoading: openConfirming, isSuccess: openSuccess, isError: openFailed } = useWaitForTransactionReceipt({ hash: openHash });
+
+  // 8-second timeout for mining
+  const [openTimedOut, setOpenTimedOut] = useState(false);
+  useEffect(() => {
+    if (!openHash || openSuccess || openFailed) { setOpenTimedOut(false); return; }
+    const timer = setTimeout(() => setOpenTimedOut(true), 8_000);
+    return () => clearTimeout(timer);
+  }, [openHash, openSuccess, openFailed]);
+
+  // Toast notifications (bottom-right)
+  const [toast, setToast] = useState<{ message: string; key: number } | null>(null);
+  const showToast = useCallback((message: string) => {
+    setToast({ message, key: Date.now() });
+  }, []);
+
+  // Auto-dismiss toast after 5s
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 5_000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  // Show toast on error/timeout
+  useEffect(() => { if (openRejected) showToast("TRANSACTION REJECTED"); }, [openRejected, showToast]);
+  useEffect(() => { if (openFailed) showToast("TRANSACTION FAILED"); }, [openFailed, showToast]);
+  useEffect(() => { if (openTimedOut) showToast("CONFIRMATION TIMED OUT"); }, [openTimedOut, showToast]);
+  useEffect(() => { if (approveRejected) showToast("APPROVAL REJECTED"); }, [approveRejected, showToast]);
+  useEffect(() => { if (approveFailed) showToast("APPROVAL FAILED"); }, [approveFailed, showToast]);
+
+  // Reset error state when user changes input so they can retry
+  useEffect(() => {
+    if (openRejected || openTimedOut) resetOpen();
+  }, [usdcInput, isLong]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleOpenSuccess = () => {
     queryClient.invalidateQueries();
     setUsdcInput("");
   };
 
-  const approveStatus = approvePending ? "pending" : approveConfirming ? "confirming" : approveSuccess ? "success" : "idle";
-  const openStatus = openPending ? "pending" : openConfirming ? "confirming" : openSuccess ? "success" : "idle";
+  const approveStatus = approvePending ? "pending" : approveConfirming ? "confirming" : approveSuccess ? "success" : (approveRejected || approveFailed) ? "error" : "idle";
+  const openStatus = openPending ? "pending" : openConfirming ? "confirming" : openSuccess ? "success" : (openRejected || openFailed || openTimedOut) ? "error" : "idle";
+  const openErrorLabel = openTimedOut ? "TIMED OUT" : openRejected ? "REJECTED" : "FAILED";
 
   return (
     <div className="flex flex-col gap-4">
@@ -207,11 +260,16 @@ export default function LongShortPanel({
 
       {/* Info bar */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-        <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", padding: "10px 12px" }}>
-          <div className="stat-label">LEVERAGE CAP</div>
-          <div style={{ fontSize: "0.82rem", color: "var(--body)" }}>
-            {leverageCap === undefined ? "—" : leverageCap === 2n ** 256n - 1n ? "UNLIMITED" : `${leverageCap}×`}
+        <div style={{ background: "var(--surface-2)", border: `1px solid ${overCap ? "var(--red)" : "var(--border)"}`, padding: "10px 12px", transition: "border-color 0.15s" }}>
+          <div className="stat-label">POSITION CAP</div>
+          <div style={{ fontSize: "0.82rem", color: overCap ? "var(--red)" : "var(--body)" }}>
+            {leverageCap === undefined ? "—" : !hasLeverageCap ? "NONE" : `$${formatUsdc(leverageCap!)}`}
           </div>
+          {capDescription && (
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.55rem", color: "var(--muted)", marginTop: 2 }}>
+              {capDescription}
+            </div>
+          )}
         </div>
         <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", padding: "10px 12px" }}>
           <div className="stat-label">POSITION FEE</div>
@@ -230,6 +288,8 @@ export default function LongShortPanel({
         tokenAddress={underlyingUsdc}
         decimals={6}
         symbol="USDC"
+        capRaw={hasLeverageCap ? leverageCap : undefined}
+        capLabel="POSITION CAP"
       />
 
       {/* Slippage control */}
@@ -340,8 +400,25 @@ export default function LongShortPanel({
         </div>
       </div>
 
+      {/* Over-cap warning */}
+      {overCap && (
+        <div
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "0.62rem",
+            letterSpacing: "0.05em",
+            color: "var(--red)",
+            background: "rgba(239,68,68,0.08)",
+            border: "1px solid var(--red)",
+            padding: "8px 10px",
+          }}
+        >
+          EXCEEDS POSITION CAP — max ${formatUsdc(leverageCap!)} USDC
+        </div>
+      )}
+
       {/* Fee note */}
-      {usdcRaw > 0n && (
+      {usdcRaw > 0n && !overCap && (
         <p style={{ fontFamily: "var(--font-mono)", fontSize: "0.62rem", color: "var(--muted)", letterSpacing: "0.05em" }}>
           Fee from wallet: {formatUsdc(feePulled)} {baseFeeRaw < MIN_POSITION_FEE ? "(min $0.05 + impact)" : `(5% base${impactFee > 0n ? " + impact" : ""})`}
         </p>
@@ -397,6 +474,7 @@ export default function LongShortPanel({
         <TxButton
           idleLabel={isLong ? `Open Long ${tokenSymbol}` : `Open Short ${tokenSymbol}`}
           status={openStatus}
+          errorLabel={openErrorLabel}
           variant={isLong ? "green" : "red"}
           onClick={() => {
             if (useRouter) {
@@ -431,9 +509,35 @@ export default function LongShortPanel({
               );
             }
           }}
-          disabled={usdcRaw === 0n || minOut === 0n}
+          disabled={usdcRaw === 0n || minOut === 0n || overCap}
           style={{ width: "100%", justifyContent: "center" }}
         />
+      )}
+
+      {/* Error / timeout toast — bottom-right */}
+      {toast && (
+        <div
+          key={toast.key}
+          style={{
+            position: "fixed",
+            bottom: 24,
+            right: 24,
+            zIndex: 9999,
+            background: "var(--surface)",
+            border: "1px solid var(--red)",
+            padding: "12px 20px",
+            fontFamily: "var(--font-mono)",
+            fontSize: "0.65rem",
+            letterSpacing: "0.08em",
+            color: "var(--red)",
+            boxShadow: "0 4px 24px rgba(239,68,68,0.25)",
+            animation: "toast-in 0.2s ease-out",
+            cursor: "pointer",
+          }}
+          onClick={() => setToast(null)}
+        >
+          {toast.message}
+        </div>
       )}
     </div>
   );

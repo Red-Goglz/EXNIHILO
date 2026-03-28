@@ -11,6 +11,8 @@ interface TokenInputProps {
   decimals?: number;
   symbol?: string;
   disabled?: boolean;
+  capRaw?: bigint;
+  capLabel?: string;
 }
 
 export default function TokenInput({
@@ -21,6 +23,8 @@ export default function TokenInput({
   decimals = 18,
   symbol,
   disabled,
+  capRaw,
+  capLabel,
 }: TokenInputProps) {
   const { address } = useAccount();
 
@@ -40,13 +44,18 @@ export default function TokenInput({
     if (/^\d*\.?\d*$/.test(val)) onChange(val);
   };
 
+  const formatRaw = (raw: bigint) => {
+    const scale = 10n ** BigInt(decimals);
+    const whole = raw / scale;
+    const frac = raw % scale;
+    const fracStr = frac.toString().padStart(decimals, "0").replace(/0+$/, "");
+    return fracStr ? `${whole}.${fracStr}` : whole.toString();
+  };
+
   const setMax = () => {
     if (balance === undefined) return;
-    const scale = 10n ** BigInt(decimals);
-    const whole = balance / scale;
-    const frac = balance % scale;
-    const fracStr = frac.toString().padStart(decimals, "0").replace(/0+$/, "");
-    onChange(fracStr ? `${whole}.${fracStr}` : whole.toString());
+    const effective = capRaw !== undefined && capRaw < balance ? capRaw : balance;
+    onChange(formatRaw(effective));
   };
 
   return (
@@ -77,6 +86,19 @@ export default function TokenInput({
           </span>
         )}
       </div>
+
+      {capRaw !== undefined && (
+        <span
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "0.62rem",
+            color: "var(--orange)",
+            letterSpacing: "0.05em",
+          }}
+        >
+          {capLabel ?? "MAX"}: {formatRaw(capRaw)} {symbol}
+        </span>
+      )}
 
       {/* Input row */}
       <div className="flex gap-0">

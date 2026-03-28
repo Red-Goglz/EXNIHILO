@@ -309,6 +309,7 @@ function FeedCard({
       { ...poolContract, functionName: "airUsdToken" },
       { ...poolContract, functionName: "longPrice" },
       { ...poolContract, functionName: "shortPrice" },
+      { ...poolContract, functionName: "effectiveLeverageCap" },
     ],
   });
 
@@ -317,6 +318,12 @@ function FeedCard({
   const airUsdAddr   = poolData?.[2]?.result as `0x${string}` | undefined;
   const longPriceRaw  = poolData?.[3]?.result as bigint | undefined;
   const shortPriceRaw = poolData?.[4]?.result as bigint | undefined;
+  const leverageCap   = poolData?.[5]?.result as bigint | undefined;
+
+  const MAX_UINT256 = 2n ** 256n - 1n;
+  const hasLeverageCap = leverageCap !== undefined && leverageCap !== MAX_UINT256;
+  const capUsdc = hasLeverageCap ? Number(leverageCap!) / 1_000_000 : Infinity;
+  const overCap = hasLeverageCap && usdcRaw > 0n && usdcRaw > leverageCap!;
   const longPriceDisplay  = longPriceRaw !== undefined && longPriceRaw > 0n
     ? decodeSpotPrice(longPriceRaw, tokenDecimals) : "—";
   const shortPriceDisplay = shortPriceRaw !== undefined && shortPriceRaw > 0n
@@ -613,25 +620,28 @@ function FeedCard({
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0 }}>
             {presets.map((amount, i) => {
               const active = direction === "long" && preset === amount;
+              const exceedsCap = amount > capUsdc;
               return (
                 <button
                   key={amount}
-                  onClick={() => selectTrade("long", amount)}
-                  onMouseEnter={() => setHoverPreview({ dir: "long", amount })}
+                  onClick={() => !exceedsCap && selectTrade("long", amount)}
+                  onMouseEnter={() => !exceedsCap && setHoverPreview({ dir: "long", amount })}
                   onMouseLeave={() => setHoverPreview(null)}
+                  disabled={exceedsCap}
                   style={{
                     padding: "10px 4px",
                     fontFamily: "var(--font-mono)",
                     fontSize: "0.68rem",
                     letterSpacing: "0.04em",
                     fontWeight: 600,
-                    background: active ? "rgba(0,255,136,0.22)" : "transparent",
+                    background: exceedsCap ? "transparent" : active ? "rgba(0,255,136,0.22)" : "transparent",
                     border: "none",
                     borderRight: i % 2 === 0 ? "1px solid rgba(0,255,136,0.12)" : "none",
                     borderBottom: i < 2 ? "1px solid rgba(0,255,136,0.12)" : "none",
-                    color: active ? "#fff" : "var(--green)",
-                    cursor: "pointer",
+                    color: exceedsCap ? "var(--dim)" : active ? "#fff" : "var(--green)",
+                    cursor: exceedsCap ? "not-allowed" : "pointer",
                     transition: "all 0.1s",
+                    textDecoration: exceedsCap ? "line-through" : "none",
                   }}
                 >
                   ${amount}
@@ -640,7 +650,7 @@ function FeedCard({
             })}
             <input
               type="number"
-              placeholder="$…"
+              placeholder={hasLeverageCap ? `≤$${capUsdc}` : "$…"}
               value={customLong}
               onChange={(e) => handleCustomChange("long", e.target.value)}
               onFocus={() => handleCustomFocus("long")}
@@ -652,7 +662,7 @@ function FeedCard({
                 fontWeight: 600,
                 background: isCustomLong ? "rgba(0,255,136,0.22)" : "transparent",
                 border: "none",
-                color: "var(--green)",
+                color: isCustomLong && parseFloat(customLong) > capUsdc ? "var(--red)" : "var(--green)",
                 outline: "none",
                 width: "100%",
                 boxSizing: "border-box",
@@ -691,25 +701,28 @@ function FeedCard({
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0 }}>
             {presets.map((amount, i) => {
               const active = direction === "short" && preset === amount;
+              const exceedsCap = amount > capUsdc;
               return (
                 <button
                   key={amount}
-                  onClick={() => selectTrade("short", amount)}
-                  onMouseEnter={() => setHoverPreview({ dir: "short", amount })}
+                  onClick={() => !exceedsCap && selectTrade("short", amount)}
+                  onMouseEnter={() => !exceedsCap && setHoverPreview({ dir: "short", amount })}
                   onMouseLeave={() => setHoverPreview(null)}
+                  disabled={exceedsCap}
                   style={{
                     padding: "10px 4px",
                     fontFamily: "var(--font-mono)",
                     fontSize: "0.68rem",
                     letterSpacing: "0.04em",
                     fontWeight: 600,
-                    background: active ? "rgba(255,59,48,0.22)" : "transparent",
+                    background: exceedsCap ? "transparent" : active ? "rgba(255,59,48,0.22)" : "transparent",
                     border: "none",
                     borderRight: i % 2 === 0 ? "1px solid rgba(255,59,48,0.12)" : "none",
                     borderBottom: i < 2 ? "1px solid rgba(255,59,48,0.12)" : "none",
-                    color: active ? "#fff" : "var(--red)",
-                    cursor: "pointer",
+                    color: exceedsCap ? "var(--dim)" : active ? "#fff" : "var(--red)",
+                    cursor: exceedsCap ? "not-allowed" : "pointer",
                     transition: "all 0.1s",
+                    textDecoration: exceedsCap ? "line-through" : "none",
                   }}
                 >
                   ${amount}
@@ -718,7 +731,7 @@ function FeedCard({
             })}
             <input
               type="number"
-              placeholder="$…"
+              placeholder={hasLeverageCap ? `≤$${capUsdc}` : "$…"}
               value={customShort}
               onChange={(e) => handleCustomChange("short", e.target.value)}
               onFocus={() => handleCustomFocus("short")}
@@ -730,7 +743,7 @@ function FeedCard({
                 fontWeight: 600,
                 background: isCustomShort ? "rgba(255,59,48,0.22)" : "transparent",
                 border: "none",
-                color: "var(--red)",
+                color: isCustomShort && parseFloat(customShort) > capUsdc ? "var(--red)" : "var(--red)",
                 outline: "none",
                 width: "100%",
                 boxSizing: "border-box",
@@ -739,6 +752,13 @@ function FeedCard({
           </div>
         </div>
       </div>
+
+      {/* Cap indicator */}
+      {hasLeverageCap && (
+        <div style={{ padding: "0 14px 4px", fontFamily: "var(--font-mono)", fontSize: "0.54rem", letterSpacing: "0.06em", color: "var(--orange)" }}>
+          POSITION CAP: ${formatUsdc(leverageCap!)}
+        </div>
+      )}
 
       {/* ── Confirm section (shows on hover preview OR selected trade) ── */}
       {showConfirm && (
@@ -786,8 +806,26 @@ function FeedCard({
             </span>
           </div>
 
+          {/* Over-cap warning */}
+          {overCap && !isHoverOnly && (
+            <div
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: "0.58rem",
+                letterSpacing: "0.05em",
+                color: "var(--red)",
+                background: "rgba(239,68,68,0.08)",
+                border: "1px solid var(--red)",
+                padding: "6px 8px",
+                textAlign: "center",
+              }}
+            >
+              EXCEEDS CAP — max ${formatUsdc(leverageCap!)} USDC
+            </div>
+          )}
+
           {/* Action buttons only when a trade is committed (not hover-only) */}
-          {!isHoverOnly && (
+          {!isHoverOnly && !overCap && (
             <>
               {!address && hasAmount && (
                 <p style={{ fontFamily: "var(--font-mono)", fontSize: "0.63rem", color: "var(--muted)", letterSpacing: "0.08em", textAlign: "center" }}>

@@ -557,6 +557,12 @@ body::after {
 .fade-up-d3    { animation-delay: 0.3s; }
 .fade-up-d4    { animation-delay: 0.4s; }
 
+/* ── Toast ─────────────────────────────────────────────────────────────── */
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 /* ── Responsive nav ────────────────────────────────────────────────────── */
 .mobile-only  { display: none !important; }
 .mobile-menu  { display: none !important; }

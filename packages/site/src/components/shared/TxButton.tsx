@@ -5,12 +5,14 @@ type TxStatus = "idle" | "pending" | "confirming" | "success" | "error";
 interface TxButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   status?: TxStatus;
   idleLabel: string;
+  errorLabel?: string;
   variant?: "cyan" | "red" | "green" | "default";
 }
 
 export default function TxButton({
   status = "idle",
   idleLabel,
+  errorLabel,
   disabled,
   className = "",
   variant = "cyan",
@@ -35,7 +37,7 @@ export default function TxButton({
       extraClass = "btn-terminal btn-green";
       break;
     case "error":
-      label = "FAILED";
+      label = errorLabel ?? "FAILED";
       extraClass = "btn-terminal btn-red";
       break;
     default:
