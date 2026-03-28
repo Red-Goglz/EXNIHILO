@@ -46,5 +46,9 @@ externalPort = 80
 
 [deployment]
 deploymentTarget = "cloudrun"
-build = ["sh", "-c", "npm run build"]
+build = [
+  "sh",
+  "-c",
+  "npm run build -w packages/docs && npm run build -w packages/site",
+]
 run = ["sh", "-c", "cd packages/site && npx vite preview --host --port 3000"]
