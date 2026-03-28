@@ -6,7 +6,7 @@ EXNIHILO is experimental software. Use at your own risk. Only trade with funds y
 
 ## Smart contract risk
 
-The protocol has not undergone a formal security audit. While the codebase follows security best practices (ReentrancyGuard, CEI, SafeERC20, reserve invariants) and has ~150 tests, undiscovered vulnerabilities may exist.
+The protocol has not undergone a formal security audit. While the codebase follows security best practices (ReentrancyGuard, CEI, SafeERC20, reserve invariants) and has ~390 tests, undiscovered vulnerabilities may exist.
 
 ## Loss of funds
 

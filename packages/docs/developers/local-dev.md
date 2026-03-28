@@ -72,7 +72,7 @@ Opens at `http://localhost:5173`.
 packages/
 ├── blockchain/         # Solidity contracts + Hardhat
 │   ├── contracts/      # EXNIHILOPool, Factory, AirToken, NFTs
-│   ├── test/           # ~150 tests
+│   ├── test/           # ~390 tests
 │   └── scripts/        # Deploy scripts (local, Fuji)
 ├── site/               # React 19 frontend
 │   └── src/

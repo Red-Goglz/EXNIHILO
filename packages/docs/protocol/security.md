@@ -70,7 +70,7 @@ EXNIHILO has not yet undergone a formal security audit. Use at your own risk.
 
 ## Test coverage
 
-The protocol has ~150 tests covering:
+The protocol has ~390 tests covering:
 - Core logic (swaps, positions, liquidity)
 - Edge cases and boundary conditions
 - Reentrancy attack vectors
