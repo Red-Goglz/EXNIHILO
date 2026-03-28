@@ -206,10 +206,13 @@ export default function LongShortPanel({
     if (openRejected || openTimedOut) resetOpen();
   }, [usdcInput, isLong]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleOpenSuccess = () => {
-    queryClient.invalidateQueries();
-    setUsdcInput("");
-  };
+  // Refresh all data once the tx is actually mined (not just submitted)
+  useEffect(() => {
+    if (openSuccess) {
+      queryClient.invalidateQueries();
+      setUsdcInput("");
+    }
+  }, [openSuccess, queryClient]);
 
   const approveStatus = approvePending ? "pending" : approveConfirming ? "confirming" : approveSuccess ? "success" : (approveRejected || approveFailed) ? "error" : "idle";
   const openStatus = openPending ? "pending" : openConfirming ? "confirming" : openSuccess ? "success" : (openRejected || openFailed || openTimedOut) ? "error" : "idle";
@@ -478,35 +481,26 @@ export default function LongShortPanel({
           variant={isLong ? "green" : "red"}
           onClick={() => {
             if (useRouter) {
-              writeOpen(
-                {
-                  address: routerAddress!,
-                  abi: exnihiloRouterAbi,
-                  functionName: isLong ? "openLong" : "openShort",
-                  args: [poolAddress, usdcRaw, minOut],
-                },
-                { onSuccess: handleOpenSuccess }
-              );
+              writeOpen({
+                address: routerAddress!,
+                abi: exnihiloRouterAbi,
+                functionName: isLong ? "openLong" : "openShort",
+                args: [poolAddress, usdcRaw, minOut],
+              });
             } else if (isLong) {
-              writeOpen(
-                {
-                  address: poolAddress,
-                  abi: exnihiloPoolAbi,
-                  functionName: "openLong",
-                  args: [usdcRaw, minOut, address!],
-                },
-                { onSuccess: handleOpenSuccess }
-              );
+              writeOpen({
+                address: poolAddress,
+                abi: exnihiloPoolAbi,
+                functionName: "openLong",
+                args: [usdcRaw, minOut, address!],
+              });
             } else {
-              writeOpen(
-                {
-                  address: poolAddress,
-                  abi: exnihiloPoolAbi,
-                  functionName: "openShort",
-                  args: [usdcRaw, minOut, address!],
-                },
-                { onSuccess: handleOpenSuccess }
-              );
+              writeOpen({
+                address: poolAddress,
+                abi: exnihiloPoolAbi,
+                functionName: "openShort",
+                args: [usdcRaw, minOut, address!],
+              });
             }
           }}
           disabled={usdcRaw === 0n || minOut === 0n || overCap}
