@@ -43,7 +43,7 @@ async function main() {
   await baseToken.connect(deployer).approve(await factory.getAddress(), ethers.MaxUint256);
   await usdc.connect(deployer).approve(await factory.getAddress(), ethers.MaxUint256);
 
-  const tx = await factory.connect(deployer).createMarket(await baseToken.getAddress(), USDC, TOKEN, 0n, 0n);
+  const tx = await factory.connect(deployer).createMarket(await baseToken.getAddress(), USDC, TOKEN, 0n, 0n, 0n, "airPEPE", "airPEPEUsd", 18);
   const receipt = await tx.wait();
   const log = receipt!.logs.map(l => { try { return factory.interface.parseLog(l); } catch { return null; } }).find(l => l?.name === "MarketCreated")!;
   const poolAddr = log.args.pool;

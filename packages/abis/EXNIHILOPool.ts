@@ -156,6 +156,91 @@ export const exnihiloPoolAbi = [
     "type": "error"
   },
   {
+    "inputs": [],
+    "name": "OnlyLpHolderOrDeployer",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "PoolAlreadyClosed",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "PoolClosing",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "RenewalExceedsCloseDate",
+    "type": "error"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "closedBy",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "closeDate",
+        "type": "uint256"
+      }
+    ],
+    "name": "PoolClosed",
+    "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "closeDate",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "closePool",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "factory",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "isClosing",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [
       {
         "internalType": "address",
@@ -643,6 +728,45 @@ export const exnihiloPoolAbi = [
   {
     "inputs": [],
     "name": "spotPrice",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "longPrice",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "shortPrice",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "effectiveLeverageCap",
     "outputs": [
       {
         "internalType": "uint256",

@@ -193,7 +193,10 @@ async function main() {
       tokenSeed,
       maxPosUsd,
       maxPosBps,
-      0n // positionDuration: 0 = default 7 days
+      0n, // positionDuration: 0 = default 7 days
+      `air${baseToken.symbol}`,
+      `air${baseToken.symbol}Usd`,
+      18
     );
     const receipt = await tx.wait();
 

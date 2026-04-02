@@ -9,6 +9,7 @@ import {
   useWaitForTransactionReceipt,
 } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
+import { useFormo } from "@formo/analytics";
 import {
   exnihiloFactoryAbi,
   exnihiloPoolAbi,
@@ -260,6 +261,7 @@ function FeedCard({
 }: FeedCardProps) {
   const { address } = useAccount();
   const queryClient = useQueryClient();
+  const analytics = useFormo();
   const { addAlert } = usePositionAlerts();
 
   const [direction, setDirection] = useState<"long" | "short" | null>(null);
@@ -437,12 +439,17 @@ function FeedCard({
   useEffect(() => {
     if (!openSuccess) return;
     queryClient.invalidateQueries();
+    analytics?.track(direction === "long" ? "Position Opened Long" : "Position Opened Short", {
+      pool: poolAddress,
+      tokenSymbol: symbol,
+      source: "feed",
+    });
     if (submittedReady.current) {
       setTxPhase("mined");
     } else {
       minedQueued.current = true;
     }
-  }, [openSuccess, queryClient]);
+  }, [openSuccess, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const approveBusy = approvePending || approveConfirming;
   const openBusy    = openPending    || openConfirming;

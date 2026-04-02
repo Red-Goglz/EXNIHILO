@@ -7,18 +7,18 @@ import * as fs from "fs";
 import * as path from "path";
 
 const DEPLOYED = {
-  usdc:        "0x120D9f9dD15388c0a1fa5a3146F3e07ae0e654Fa",
-  positionNFT: "0x2eEA6D323ab9b8Fb8cad53aC4B65EE09EAD69Ba4",
-  lpNFT:       "0xeE05397377E793675817bEC8553e4553BaC5ef7C",
-  factory:     "0xfb44B5D11b15F116Bc311eF519D22c259b952E5f",
-  router:      "0x313D8030D16251d4345b376058915A505638c0d5",
-  faucet:      "0x2fd7d27F2E5F2Da15765b2ec4242292f436e1533",
+  usdc:        "0x1539792fb1723bB6C504A393e1E5916e06361b49",
+  positionNFT: "0xc041AFa0F4E62685c1B717adCe6Af66dF817DC37",
+  lpNFT:       "0x0591D40AdC6bD090b020a69E3688EcB746dE79D6",
+  factory:     "0xe77E3d6B532c548F16Fbf65E6beCAAAc5d17A326",
+  router:      "0x0A59D214f83A1BB762624538b755271012a3D37C",
+  faucet:      "0x244Fb3964b54f2A9c68A0Dca3166A6Cbe39E3302",
   tokens: {
-    ARENA:   "0x93Cda24469E1Ee18663072fDb437b9F334a41011",
-    NOCHILL: "0x6F222d6FCF3224f5c172Fe2eF069ef26955D022F",
-    RGOGLZ:  "0x57477C7BAE4fF069074EdF6161281Fa4827A9172",
-    BANDS:   "0x2A0Cb7EF50F748139502f3015941d43d46B573De",
-    WAVAX:   "0x351F076488a7561eDa0083227048d18526A322ed",
+    ARENA:   "0xcF92bA028b0F38aE2A2f9e59Bfd575d30f240dDe",
+    NOCHILL: "0x0CaBE62b95818722811160bE22d0e7B78B5e81d0",
+    RGOGLZ:  "0xdC0dA911e369E8280824aAB1509c1e6098A461A5",
+    BANDS:   "0x5C01b8daf02f21b3705744b797A7912C61539Af6",
+    WAVAX:   "0x5bc78D769d4132CA7D2B67Cfcf896e1CFc977029",
   },
 };
 
@@ -66,7 +66,7 @@ async function main() {
     await (await token.connect(deployer).approve(DEPLOYED.factory, tokenSeed)).wait();
 
     const tx = await factory.connect(deployer).createMarket(
-      tokenAddr, usdcSeed, tokenSeed, maxPosUsd, maxPosBps, 0n
+      tokenAddr, usdcSeed, tokenSeed, maxPosUsd, maxPosBps, 0n, `air${symbol}`, `air${symbol}Usd`, 18
     );
     const receipt = await tx.wait();
 

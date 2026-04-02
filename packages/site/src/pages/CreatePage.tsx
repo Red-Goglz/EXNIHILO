@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAccount, useChainId, useReadContracts, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
+import { useFormo } from "@formo/analytics";
 import { decodeEventLog, isAddress } from "viem";
 import { exnihiloFactoryAbi, erc20Abi } from "@exnihilio/abis";
 import { getAddresses, FUJI_CHAIN_ID, HARDHAT_CHAIN_ID } from "../contracts/addresses.ts";
@@ -18,6 +19,7 @@ function CreateContent() {
   const chainId = useChainId();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const analytics = useFormo();
   const addrs = getAddresses(chainId || FUJI_CHAIN_ID);
 
   const [tokenAddress, setTokenAddress] = useState("");
@@ -25,6 +27,7 @@ function CreateContent() {
   const [seedToken, setSeedToken] = useState("");
   const [maxPositionUsd, setMaxPositionUsd] = useState("");
   const [maxPositionBps, setMaxPositionBps] = useState("");
+  const [positionDurationDays, setPositionDurationDays] = useState("");
 
   const tokenAddr = (isAddress(tokenAddress) ? tokenAddress : undefined) as
     | `0x${string}`
@@ -47,6 +50,7 @@ function CreateContent() {
   const seedTokenRaw = parseUnits(seedToken, tokenDecimals);
   const maxPosUsdRaw = parseUnits(maxPositionUsd || "0", 6);
   const maxPosBpsRaw = BigInt(maxPositionBps || "0");
+  const positionDurationRaw = BigInt(Math.floor(parseFloat(positionDurationDays || "0") * 86400));
 
   const factoryAddr = addrs.factory;
 
@@ -117,6 +121,12 @@ function CreateContent() {
         });
         if (decoded.args.pool) {
           queryClient.invalidateQueries();
+          analytics?.track("Market Created", {
+            pool: decoded.args.pool,
+            tokenAddress,
+            tokenSymbol,
+            seedUsdc: seedUsdcRaw.toString(),
+          });
           navigate(`/app/markets/${decoded.args.pool}`);
           break;
         }
@@ -124,7 +134,7 @@ function CreateContent() {
         // Not the MarketCreated log
       }
     }
-  }, [createSuccess, createReceipt]);
+  }, [createSuccess, createReceipt]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const usdcApproveStatus = usdcApprovePending
     ? "pending"
@@ -448,6 +458,25 @@ function CreateContent() {
                 className="input-terminal"
               />
             </div>
+            <div className="flex flex-col gap-1">
+              <label
+                style={{
+                  fontSize: "0.6rem",
+                  letterSpacing: "0.12em",
+                  color: "var(--muted)",
+                  textTransform: "uppercase",
+                }}
+              >
+                Position Duration in days (0 = default 7 days)
+              </label>
+              <input
+                type="text"
+                value={positionDurationDays}
+                onChange={(e) => setPositionDurationDays(e.target.value)}
+                placeholder="0"
+                className="input-terminal"
+              />
+            </div>
           </div>
         </details>
 
@@ -525,7 +554,7 @@ function CreateContent() {
                 address: factoryAddr,
                 abi: exnihiloFactoryAbi,
                 functionName: "createMarket",
-                args: [tokenAddr!, seedUsdcRaw, seedTokenRaw, maxPosUsdRaw, maxPosBpsRaw],
+                args: [tokenAddr!, seedUsdcRaw, seedTokenRaw, maxPosUsdRaw, maxPosBpsRaw, positionDurationRaw, `air${tokenSymbol}`, `air${tokenSymbol}Usd`, tokenDecimals],
               })
             }
             style={{ width: "100%", justifyContent: "center" }}

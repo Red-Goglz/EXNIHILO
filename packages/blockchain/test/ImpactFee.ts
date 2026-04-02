@@ -176,7 +176,10 @@ async function deployPoolWithLiquidity(
     initialToken,
     0n,  // no hard cap
     0n,  // no bps cap
-    0n
+    0n,
+    "airTKN",
+    "airTKNUsd",
+    18
   );
   const receipt = await tx.wait();
   const iface = factory.interface;

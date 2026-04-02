@@ -71,6 +71,6 @@ contract LpNFT is ERC721 {
 
         tokenId = _nextTokenId++;
         _poolOf[tokenId] = pool;
-        _safeMint(to, tokenId);
+        _mint(to, tokenId);
     }
 }

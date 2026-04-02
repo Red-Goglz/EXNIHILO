@@ -4,12 +4,12 @@ export const HARDHAT_CHAIN_ID = 31337;
 export const ADDRESSES = {
   // ── Avalanche Fuji testnet ──────────────────────────────────────────────────
   [FUJI_CHAIN_ID]: {
-    factory:     "0xfb44B5D11b15F116Bc311eF519D22c259b952E5f" as `0x${string}`,
-    positionNFT: "0x2eEA6D323ab9b8Fb8cad53aC4B65EE09EAD69Ba4" as `0x${string}`,
-    lpNFT:       "0xeE05397377E793675817bEC8553e4553BaC5ef7C" as `0x${string}`,
-    usdc:        "0x120D9f9dD15388c0a1fa5a3146F3e07ae0e654Fa" as `0x${string}`,
-    faucet:      "0x2fd7d27F2E5F2Da15765b2ec4242292f436e1533" as `0x${string}`,
-    router:      "0x313D8030D16251d4345b376058915A505638c0d5" as `0x${string}`,
+    factory:     "0xe77E3d6B532c548F16Fbf65E6beCAAAc5d17A326" as `0x${string}`,
+    positionNFT: "0xc041AFa0F4E62685c1B717adCe6Af66dF817DC37" as `0x${string}`,
+    lpNFT:       "0x0591D40AdC6bD090b020a69E3688EcB746dE79D6" as `0x${string}`,
+    usdc:        "0x1539792fb1723bB6C504A393e1E5916e06361b49" as `0x${string}`,
+    faucet:      "0x244Fb3964b54f2A9c68A0Dca3166A6Cbe39E3302" as `0x${string}`,
+    router:      "0x0A59D214f83A1BB762624538b755271012a3D37C" as `0x${string}`,
   },
 
   // ── Local Hardhat node (npx hardhat node) ───────────────────────────────────

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useWriteContract, useWaitForTransactionReceipt, useReadContracts } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
+import { useFormo } from "@formo/analytics";
 import { exnihiloPoolAbi, erc20Abi } from "@exnihilio/abis";
 import { formatUsdc, formatToken } from "../../lib/format.ts";
 import TxButton from "../shared/TxButton.tsx";
@@ -80,6 +81,7 @@ export default function PositionCard({
   position,
 }: PositionCardProps) {
   const queryClient = useQueryClient();
+  const analytics = useFormo();
 
   const poolContract = { address: position.pool, abi: exnihiloPoolAbi } as const;
 
@@ -150,7 +152,15 @@ export default function PositionCard({
     ? "success"
     : "idle";
 
-  const handleSuccess = () => queryClient.invalidateQueries();
+  const handleSuccess = (action: string) => {
+    queryClient.invalidateQueries();
+    analytics?.track(action, {
+      pool: position.pool,
+      tokenId: tokenId.toString(),
+      side: position.isLong ? "long" : "short",
+      tokenSymbol,
+    });
+  };
 
   // ── Countdown timer ─────────────────────────────────────────────────────
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
@@ -313,7 +323,7 @@ export default function PositionCard({
                   functionName: "renewPosition",
                   args: [tokenId],
                 },
-                { onSuccess: handleSuccess }
+                { onSuccess: () => handleSuccess("Position Renewed") }
               )
             }
             style={{ fontSize: "0.56rem", padding: "4px 10px" }}
@@ -403,12 +413,12 @@ export default function PositionCard({
               if (position.isLong) {
                 writeContract(
                   { address: position.pool, abi: exnihiloPoolAbi, functionName: "closeLong", args: [tokenId, 0n] },
-                  { onSuccess: handleSuccess }
+                  { onSuccess: () => handleSuccess("Position Closed") }
                 );
               } else {
                 writeContract(
                   { address: position.pool, abi: exnihiloPoolAbi, functionName: "closeShort", args: [tokenId, 0n] },
-                  { onSuccess: handleSuccess }
+                  { onSuccess: () => handleSuccess("Position Closed") }
                 );
               }
             }}
@@ -426,12 +436,12 @@ export default function PositionCard({
               if (position.isLong) {
                 writeContract(
                   { address: position.pool, abi: exnihiloPoolAbi, functionName: "realizeLong", args: [tokenId] },
-                  { onSuccess: handleSuccess }
+                  { onSuccess: () => handleSuccess("Position Realized") }
                 );
               } else {
                 writeContract(
                   { address: position.pool, abi: exnihiloPoolAbi, functionName: "realizeShort", args: [tokenId] },
-                  { onSuccess: handleSuccess }
+                  { onSuccess: () => handleSuccess("Position Realized") }
                 );
               }
             }}

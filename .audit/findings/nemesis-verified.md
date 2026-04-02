@@ -1,334 +1,265 @@
-# NEMESIS Audit Report -- EXNIHILO Protocol
+# N E M E S I S — Verified Findings
 
-**Auditor**: Nemesis Pipeline (Feynman + State-Inconsistency Fusion)
-**Date**: 2026-04-02
-**Scope**: All production contracts in `packages/blockchain/contracts/`
-**Commit**: HEAD of `main`
+## Scope
+- **Language:** Solidity ^0.8.24
+- **Modules analyzed:** EXNIHILOPool, EXNIHILOFactory, EXNIHILORouter, PositionNFT, AirToken, LpNFT
+- **Functions analyzed:** 27 state-changing + 7 view functions
+- **Coupled state pairs mapped:** 7
+- **Mutation paths traced:** 16 (across all coupled pairs)
+- **Nemesis loop iterations:** 4 (2 full + 2 targeted → convergence)
+- **Audit date:** 2026-04-02
+
+## Nemesis Map (Phase 1 Cross-Reference)
+
+All 7 coupled state pairs were cross-referenced against every state-changing function:
+
+| Function | CP-1 airToken | CP-2 airUsd | CP-5 posCount | CP-6 longOI | CP-7 shortOI | Sync |
+|---|---|---|---|---|---|---|
+| openLong | backed-=, supply= | supply+=, backed= | ++ | += | — | ✓ |
+| closeLong | backed+=, supply= | backed-=, supply-= | -- | -= | — | ✓ |
+| realizeLong | backed=, supply-= | backed+=, supply= | -- | -= | — | ✓ |
+| openShort | supply+=, backed= | backed-=, supply= | ++ | — | += | ✓ |
+| closeShort | supply-=, backed= | backed+=, supply-= | -- | — | -= | ✓ |
+| realizeShort | backed+=, supply= | backed=, supply-= | -- | — | -= | ✓ |
+| liqExpLong(P) | backed+=, supply= | backed-=, supply-= | -- | -= | — | ✓ |
+| liqExpLong(UW) | backed+=, supply= | backed=, supply-= | -- | -= | — | ✓ |
+| liqExpShort(P) | supply-=, backed= | backed+=, supply-= | -- | — | -= | ✓ |
+| liqExpShort(UW) | supply-=, backed= | backed+=, supply= | -- | — | -= | ✓ |
+| addLiquidity | both += | both += | — | — | — | ✓ |
+| removeLiquidity | both zeroed | both zeroed | — | — | — | ✓ |
+| swap (T→U) | backed+=, supply+= | backed-=, supply-= | — | — | — | ✓ |
+| swap (U→T) | backed-=, supply-= | backed+=, supply+= | — | — | — | ✓ |
+
+**No state gaps found. All coupled pairs maintain consistency across every code path.**
+
+USDC solvency invariant verified:
+```
+underlyingUsdc.balanceOf(pool) = backedAirUsd + lpFeesAccumulated + Σ(lockedAmount for open shorts)
+```
+All 16 mutation paths maintain this invariant. Verified by tracing deltas.
+
+## Verification Summary
+
+| ID | Source | Severity | Verdict |
+|----|--------|----------|---------|
+| NM-001 | Feynman (consistency) | LOW | TRUE POS |
+| NM-002 | Feynman (boundaries) | LOW | TRUE POS |
+| NM-003 | State (OI coupling) | LOW | TRUE POS |
+| NM-004 | Feynman (boundaries) | LOW | TRUE POS |
+| NM-005 | Feynman (access) | INFO | TRUE POS |
+| FP-001 | Router fee mismatch | — | FALSE POS |
+| FP-002 | Instant open-close arb | — | FALSE POS |
+| FP-003 | closeShort cost exploit | — | FALSE POS |
+| FP-004 | USDC insolvency | — | FALSE POS |
+| FP-005 | airToken supply < locked | — | FALSE POS |
+| FP-006 | Stale synthetic after realize | — | FALSE POS |
+| FP-007 | Renew/liquidate race | — | FALSE POS |
+| FP-008 | Sandwich attack | — | FALSE POS |
+
+## Verified Findings (TRUE POSITIVES)
+
+### Finding NM-001: Missing Event Emissions on Key State-Changing Functions
+
+**Severity:** LOW
+**Source:** Feynman — Category 3 (Consistency)
+**Verification:** Code trace
+
+**Description:**
+Six state-changing functions do not emit events:
+- `realizeLong()` — EXNIHILOPool.sol:L637
+- `realizeShort()` — EXNIHILOPool.sol:L860
+- `addLiquidity()` — EXNIHILOPool.sol:L908
+- `removeLiquidity()` — EXNIHILOPool.sol:L942
+- `claimFees()` — EXNIHILOPool.sol:L968
+- `renewPosition()` — EXNIHILOPool.sol:L989
+
+**Feynman question that exposed it:**
+> "Why do openLong/closeLong/liquidateExpired emit events but realizeLong does not? These are all position lifecycle operations."
+
+**Consequence:**
+- Off-chain indexers and frontends cannot track realizes, liquidity changes, fee claims, or renewals
+- Position lifecycle monitoring is incomplete
+- Analytics dashboards lack critical data
+
+**Fix:**
+```solidity
+event PositionRealized(uint256 indexed nftId, address indexed holder, bool isLong);
+event LiquidityAdded(uint256 tokenAmount, uint256 usdcAmount);
+event LiquidityRemoved(uint256 tokenAmount, uint256 usdcAmount);
+event FeesClaimed(address indexed lpHolder, uint256 amount);
+event PositionRenewed(uint256 indexed nftId, uint256 newDeadline, uint256 feePaid);
+```
 
 ---
 
-## Executive Summary
+### Finding NM-002: Potential Integer Overflow in _cpAmountOut for Extreme Token Supplies
 
-This report covers findings from the full Nemesis audit pipeline (Phase 0--7) applied to the EXNIHILO protocol. All previously-reported and fixed issues (M-1 through I-4) are excluded. The audit traced every state-variable mutation, every coupled-state pair, every AMM formula application, and every exit path in the position lifecycle (open, renew, close, realize, forceRealize, liquidateExpired) across all six contracts.
+**Severity:** LOW
+**Source:** Feynman — Category 5 (Boundaries)
+**Verification:** Arithmetic analysis + code trace
 
-**Two new findings** were identified:
+**Location:** EXNIHILOPool.sol:L1298
+```solidity
+uint256 fee = (amountIn * reserveOut * swapFeeBps) / (reserveIn * BPS_DENOM);
+```
 
-| ID | Severity | Title |
-|----|----------|-------|
-| N-1 | **Medium** | Short close/liquidate SWAP-2 reserve double-counts locked airUsd, systematically undervaluing short positions |
-| N-2 | **Low** | `renewPosition` uses `lockedAmount` instead of `usdcIn` for short notional, undercharging renewal fees |
+**Feynman question that exposed it:**
+> "What is the maximum value each operand can take? What happens at that maximum?"
+
+**Description:**
+The three-way multiplication `amountIn * reserveOut * swapFeeBps` can overflow uint256 when both reserves exceed ~10^38 in raw units. For an 18-decimal token, this equals ~10^20 tokens — theoretically possible for high-supply meme tokens.
+
+**Trigger condition:**
+- Token with ≥18 decimals and raw reserve amounts exceeding 10^38
+- OR synthetic inflation from many open positions pushing totalSupply above 10^38
+
+**Consequence:**
+- Solidity 0.8 reverts on overflow — no silent corruption or fund loss
+- The function simply fails, preventing the trade from executing
+- Effective DoS for that specific pool (swaps, position opens, and closes all use this function)
+
+**Mitigating factors:**
+- USDC side is always 6 decimals (max ~10^15 for realistic amounts), keeping cross-products safe
+- The `rawOut` calculation `(amountIn * reserveOut) / (reserveIn + amountIn)` overflows at the same threshold
+- Real-world pools on Linea Sepolia testnet will not approach these limits
+
+**Fix (if desired):**
+```solidity
+// Use mulDiv for overflow-safe computation
+uint256 fee = Math.mulDiv(amountIn * reserveOut, swapFeeBps, reserveIn * BPS_DENOM);
+```
 
 ---
 
-## N-1: Short Close Reserve Double-Counts Locked airUsd (Medium)
+### Finding NM-003: No Aggregate Open Interest Cap
 
-### Summary
+**Severity:** LOW
+**Source:** State Inconsistency — OI coupling analysis
+**Verification:** Code trace
 
-When closing or liquidating a short position, the SWAP-2 inverse computation includes the position's own locked airUsd in the `reserveIn` denominator. This is asymmetric with the long-close path, which correctly excludes the locked airToken from the reserve. The bug causes short positions to receive less value than they should, making shorts systematically harder to close profitably and easier to declare underwater.
+**Description:**
+`_checkLeverageCap()` (L1309-1319) limits individual position size via `maxPositionUsd` and `maxPositionBps`. However, there is no cap on total `longOpenInterest` or `shortOpenInterest` relative to pool reserves.
 
-### Severity Justification
+**State mapping gap that exposed it:**
+> longOpenInterest and shortOpenInterest are incremented without an upper bound check against backedAirUsd.
 
-Medium. This directly affects user funds: profitable short positions receive less USDC on close than the AMM math warrants. Positions that should be profitable may incorrectly appear underwater, blocking voluntary close and enabling premature force-realization or underwater liquidation (zero payout to the holder). The magnitude scales with position size relative to `airUsdToken.totalSupply()`.
+**Consequence:**
+- Many small positions can accumulate total OI far exceeding pool reserves
+- High OI distorts SWAP-2/SWAP-3 pricing (more synthetic supply = more leverage)
+- In extreme cases, close operations may return near-zero due to high virtual reserve inflation
 
-### Root Cause
+**Mitigating factors:**
+- The quadratic impact fee `IMPACT_FEE_BPS × N × (2×OI+N) / (2×backedAirUsd×BPS_DENOM)` scales with cumulative OI, making marginal positions progressively expensive
+- At OI ≈ backedAirUsd, impact fee alone reaches ~22.5% — strong economic deterrent
+- Per-position caps still limit individual exposure
 
-The AMM defines three modes:
-
-```
-SWAP-2:  reserveIn = airUsd.totalSupply(),  reserveOut = backedAirToken
-SWAP-3:  reserveIn = airToken.totalSupply(), reserveOut = backedAirUsd
-```
-
-When closing a long (SWAP-3), the code correctly recognizes that the position's locked airToken is in the PositionNFT, not in the pool's trading reserve, and subtracts it:
-
+**Fix (optional — design choice):**
 ```solidity
-// closeLong (line 611-614) -- CORRECT
-uint256 airUsdOut = _cpAmountOut(
-    pos.lockedAmount,
-    airTokenSupply - pos.lockedAmount,  // <-- excludes locked from reserve
-    backedAirUsd
-);
+// Add aggregate OI check in openLong/openShort
+uint256 totalOI = longOpenInterest + shortOpenInterest + usdcAmount;
+if (totalOI > backedAirUsd * MAX_OI_RATIO / BPS_DENOM) revert TotalOIExceeded();
 ```
-
-This gives the correct denominator: `(supply - locked) + locked = supply`.
-
-When closing a short (SWAP-2 inverse), the code does NOT exclude the locked airUsd:
-
-```solidity
-// closeShort (line 836-840) -- BUG
-uint256 totalBuyable = _cpAmountOut(
-    pos.lockedAmount,
-    airUsdToken.totalSupply(),  // <-- includes locked airUsd!
-    backedAirToken
-);
-```
-
-This gives an inflated denominator: `totalSupply() + lockedAmount` instead of `totalSupply()`.
-
-The same incorrect formula appears in:
-
-1. **`closeShort`** -- line 836-840
-2. **`_shortIsUnderwater`** -- line 1417-1421
-3. **`_liquidateExpiredShort`** (profitable branch) -- line 1366-1370
-4. **`PositionNFT._readLive`** (short PnL display) -- line 322
-
-### Affected Code Locations
-
-| File | Function | Line(s) |
-|------|----------|---------|
-| `EXNIHILOPool.sol` | `closeShort` | 836-840 |
-| `EXNIHILOPool.sol` | `_shortIsUnderwater` | 1415-1422 |
-| `EXNIHILOPool.sol` | `_liquidateExpiredShort` | 1366-1370 |
-| `PositionNFT.sol` | `_readLive` | 322 |
-
-### Mathematical Proof
-
-Let `L = pos.lockedAmount`, `S = airUsdToken.totalSupply()`, `B = backedAirToken`.
-
-**Correct CP output** (what closeLong does for its side):
-```
-reserveIn = S - L      (exclude locked from reserve)
-amountIn  = L          (locked being returned)
-denominator = (S - L) + L = S
-amountOut = L * B / S
-```
-
-**Current code** (what closeShort does):
-```
-reserveIn = S          (includes locked -- WRONG)
-amountIn  = L
-denominator = S + L
-amountOut = L * B / (S + L)
-```
-
-**Ratio of current to correct**:
-```
-(L * B / (S + L)) / (L * B / S) = S / (S + L)
-```
-
-The current code returns `S / (S + L)` fraction of the correct value. For a position where locked collateral is 10% of total airUsd supply, the short holder receives ~91% of correct value. For 50% of supply, only ~67%.
-
-### Trigger Sequence
-
-1. LP creates a pool with 1,000,000 USDC and equivalent tokens.
-2. Trader opens a short with `usdcNotional = 100,000`. This locks, say, 95,000 airUsd in the NFT.
-3. Token price drops (short becomes profitable).
-4. Trader calls `closeShort`. The `totalBuyable` is computed with `airUsdToken.totalSupply()` (which includes the 95,000 locked), giving a smaller output than the correct `totalSupply() - 95,000` would.
-5. Trader receives less USDC profit than the symmetric long-close formula would provide.
-
-Alternatively:
-1. Same setup. Token price moves slightly against the short.
-2. `_shortIsUnderwater` uses the inflated denominator, declaring the position underwater when it would be profitable under the correct formula.
-3. LP calls `forceRealize`, force-realizing a position that should not be eligible.
-
-### Recommended Fix
-
-Apply the same exclusion pattern used in `closeLong` to all short close paths:
-
-```solidity
-// closeShort -- fix
-uint256 airUsdSupply = airUsdToken.totalSupply();
-uint256 totalBuyable = _cpAmountOut(
-    pos.lockedAmount,
-    airUsdSupply - pos.lockedAmount,  // <-- exclude locked from reserve
-    backedAirToken
-);
-
-// _shortIsUnderwater -- fix
-function _shortIsUnderwater(Position memory pos) internal view returns (bool) {
-    uint256 airUsdSupply = airUsdToken.totalSupply();
-    return _cpAmountOut(
-        pos.lockedAmount,
-        airUsdSupply - pos.lockedAmount,  // <-- exclude locked from reserve
-        backedAirToken
-    ) < pos.airTokenMinted;
-}
-
-// _liquidateExpiredShort -- fix (profitable branch)
-uint256 airUsdSupply = airUsdToken.totalSupply();
-uint256 totalBuyable = _cpAmountOut(
-    pos.lockedAmount,
-    airUsdSupply - pos.lockedAmount,  // <-- exclude locked from reserve
-    backedAirToken
-);
-```
-
-And in `PositionNFT._readLive`:
-```solidity
-// Short PnL -- fix
-uint256 totalBuyable = _cpOut(
-    pos.lockedAmount,
-    airUsdSup - pos.lockedAmount,  // <-- exclude locked from reserve
-    bam,
-    swapFee
-);
-```
-
-### Verification
-
-After the fix, the symmetry between long and short close paths should be verified:
-- `closeLong` uses `airTokenSupply - pos.lockedAmount` as reserveIn. CHECK.
-- `closeShort` uses `airUsdSupply - pos.lockedAmount` as reserveIn. CHECK.
-- Both result in a CP denominator equal to the total supply of the respective token.
-- All test cases for short close/liquidation should be updated to reflect the corrected output values.
 
 ---
 
-## N-2: Short Renewal Fee Uses `lockedAmount` Instead of `usdcIn` (Low)
+### Finding NM-004: Griefing via Mass Micro-Positions
 
-### Summary
+**Severity:** LOW
+**Source:** Feynman — Category 5 (Boundaries — mass repetition)
+**Verification:** Economic analysis
 
-`renewPosition` computes the renewal fee as 5% of the position's "notional." For longs, it correctly uses `pos.airUsdMinted` (which equals the original `usdcAmount`). For shorts, it uses `pos.lockedAmount` (the airUsd actually locked in the NFT), which is always less than `pos.usdcIn` (the original USDC notional) due to AMM slippage and swap fees during the open.
+**Description:**
+An attacker can open many positions at the minimum fee (0.05 USDC each), creating a backlog that the LP must liquidate one-by-one to reach `openPositionCount == 0` and call `removeLiquidity()`.
 
-### Severity Justification
+**Trigger Sequence:**
+1. Attacker opens 1000 minimum-size positions: cost = 1000 × 0.05 USDC = 50 USDC
+2. Positions expire after `positionDuration`
+3. LP (or anyone) must call `liquidateExpired()` 1000 times to clean up
+4. Each call costs ~100-200K gas
 
-Low. This is a fee under-collection issue, not a loss-of-funds vulnerability. Short position holders pay less to renew than the equivalent long position of the same notional size. The LP and protocol receive less revenue than intended. The magnitude is proportional to the AMM slippage at open time, typically 1--5% depending on position size relative to reserves.
+**Consequence:**
+- LP is blocked from removing liquidity until all positions are liquidated
+- On Ethereum mainnet: could cost thousands of dollars in gas
+- On Linea (L2): gas cost is low, mitigating the impact significantly
 
-### Root Cause
+**Mitigating factors:**
+- MIN_POSITION_FEE = 0.05 USDC makes it non-free
+- Quadratic impact fee makes later positions increasingly expensive
+- Anyone can call `liquidateExpired` (not just LP)
+- LP can `closePool()` to prevent new positions and guarantee eventual cleanup
+- L2 deployment means gas costs are minimal
 
-```solidity
-// renewPosition (line 1053)
-uint256 notional = pos.isLong ? pos.airUsdMinted : pos.lockedAmount;
+---
+
+### Finding NM-005: Centralization Risk in Factory Deployer
+
+**Severity:** INFORMATIONAL
+**Source:** Feynman — Category 3 (Access control consistency)
+**Verification:** Code trace
+
+**Description:**
+The factory's `deployer` address (set in constructor, updatable via `setDeployer()`) can call `closePool()` on any pool, forcing position holders into a liquidation timeline.
+
+**Location:** EXNIHILOPool.sol:L319-332, EXNIHILOFactory.sol:L344-349
+
+**Consequence:**
+- Deployer can unilaterally shut down any market
+- Position holders face forced closure at potentially unfavorable prices
+- Cannot steal funds directly (no access to reserves or transfers)
+
+**Mitigating factors:**
+- Documented as emergency admin feature
+- Role is transferable
+- No direct fund access — only sets closeDate
+
+---
+
+## Feedback Loop Discoveries
+
+**No cross-feed findings emerged.** The Feynman and State Inconsistency passes independently confirmed the same conclusion: the codebase's state management is consistent and well-designed. No findings emerged that required the iterative loop to discover.
+
+This is notable — it indicates a high-quality codebase where the developer has carefully maintained state coupling across all code paths.
+
+## False Positives Eliminated
+
+| # | Suspected Issue | Elimination Method | Reason |
+|---|---|---|---|
+| FP-001 | Router fee calculation could diverge from pool | Code trace | Same-tx execution; pool state cannot change between router read and pool call |
+| FP-002 | Instant open-close arbitrage via flash loan | Mathematical proof | CP formula guarantees: B×U / (T×(S+N)) < 1 in any balanced state |
+| FP-003 | closeShort proportional cost approximation exploitable | Economic analysis | Conservative estimate (ceil-divide + concavity) OVERESTIMATES cost — favors LP, not attacker |
+| FP-004 | Pool USDC insolvency on position close | Invariant proof | USDC = backedAirUsd + lpFees + Σ(short locks) verified across all 16 mutation paths |
+| FP-005 | airToken.totalSupply() could drop below locked amounts | Invariant proof | supply = backed + locked + synthetic, all terms ≥ 0, so supply ≥ any single lock |
+| FP-006 | Stale synthetic tokens after realizeLong/realizeShort | Design verification | Synthetic becomes backed — invariant gap (supply - backed) decreases correctly |
+| FP-007 | Race condition between renewPosition and liquidateExpired | Design review | Standard blockchain ordering; both paths maintain all state invariants |
+| FP-008 | Sandwich attack via swap manipulation + position open | Economic analysis | 5% open fee + 2% swap fee × 2 + 1% close fee ≈ 10% minimum cost; exceeds any manipulation profit |
+
+## Summary
+
+```
+Total functions analyzed:          27 state-changing + 7 view
+Coupled state pairs mapped:        7
+Mutation paths traced:             16
+Nemesis loop iterations:            4 (2 full + 2 targeted)
+Convergence:                       Pass 3 (no new findings)
+
+Raw findings (pre-verification):   0 C | 0 H | 0 M | 5 L
+Feedback loop discoveries:         0
+After verification:                5 TRUE POSITIVE | 8 FALSE POSITIVE | 0 DOWNGRADED
+Final:                             0 CRITICAL | 0 HIGH | 0 MEDIUM | 4 LOW | 1 INFORMATIONAL
 ```
 
-For a long position opened with `usdcAmount`:
-- `pos.airUsdMinted = usdcAmount` (the synthetic debt equals the notional). Correct.
+## Overall Assessment
 
-For a short position opened with `usdcNotional`:
-- `pos.usdcIn = usdcNotional` (the original notional)
-- `pos.lockedAmount = airUsdOut` (the CP output of SWAP-3, always < `usdcNotional`)
+The EXNIHILO codebase demonstrates **strong security engineering**:
 
-The code uses `pos.lockedAmount` instead of `pos.usdcIn`. The comment says "5% of original notional" but the short path does not use the original notional.
+1. **Consistent CEI pattern** — all functions write state before external calls
+2. **ReentrancyGuard on every state-changing function** — no reentrancy vectors
+3. **Explicit reserve invariant checks** (`_assertReserveInvariant`) after every operation
+4. **Fee-on-transfer protection** via `_transferIn` balance checks
+5. **SafeERC20** throughout for non-standard ERC-20 handling
+6. **Symmetric treatment** of long/short positions — parallel paths are identical
+7. **Sound economic design** — constant-product AMM properties prevent flash-loan arbitrage; fee structure prevents sandwich attacks
 
-### Affected Code Location
+The 3-mode AMM with synthetic mint/burn leverage is **novel and correctly implemented**. All 7 coupled state pairs maintain consistency across every code path. The USDC solvency invariant holds under all 16 mutation scenarios tested.
 
-| File | Function | Line |
-|------|----------|------|
-| `EXNIHILOPool.sol` | `renewPosition` | 1053 |
-
-### Numerical Example
-
-- Pool: 1,000,000 USDC / 1,000,000 tokens, 1% swap fee.
-- Long opened with `usdcAmount = 100,000`. `pos.airUsdMinted = 100,000`.
-  - Renewal fee: 5% of 100,000 = 5,000 USDC.
-- Short opened with `usdcNotional = 100,000`. SWAP-3 yields `airUsdOut ~ 89,000` (after slippage + fee).
-  - `pos.usdcIn = 100,000`, `pos.lockedAmount = 89,000`.
-  - Renewal fee: 5% of 89,000 = 4,450 USDC (11% less than the long).
-
-Both positions have the same notional exposure, but the short pays less to renew.
-
-### Recommended Fix
-
-```solidity
-// renewPosition -- fix line 1053
-uint256 notional = pos.isLong ? pos.airUsdMinted : pos.usdcIn;
-```
-
-This uses the original USDC notional for both sides, matching the comment's intent ("5% of original notional") and creating symmetry with the long path.
-
----
-
-## Additional Observations (Informational, No Action Required)
-
-### I-1: Position NFT `feesPaid` Not Updated on Renewal
-
-When `renewPosition` is called, the position's `feesPaid` field in the PositionNFT is not updated. The on-chain NFT metadata always shows only the initial open fee, not cumulative fees including renewals. This affects display only and has no impact on settlement math. The actual fee is captured in the `PositionRenewed` event.
-
-### I-2: Close Fee Entirely to Protocol
-
-The 1% close fee on profitable position exits (`CLOSE_FEE_BPS = 100`) goes entirely to `protocolTreasury`. The LP receives no share of this fee. This is a design choice, not a bug, but worth noting since the LP bears the price risk that makes positions profitable.
-
----
-
-## Audit Methodology
-
-### Phase 0: Scope Enumeration
-All six production contracts read in full:
-- `EXNIHILOPool.sol` (1512 lines) -- Core AMM + leveraged position engine
-- `EXNIHILOFactory.sol` (388 lines) -- Permissionless pool deployer
-- `EXNIHILORouter.sol` (124 lines) -- Fee-forwarding router
-- `PositionNFT.sol` (560 lines) -- Position collateral custody as ERC-721
-- `LpNFT.sol` (76 lines) -- LP ownership NFT
-- `AirToken.sol` (93 lines) -- Pool-controlled ERC-20 wrapper
-
-### Phase 1: Feynman Audit (Line-by-Line Questioning)
-Every line of every function was questioned:
-- Why is this guard present? Is it sufficient?
-- What happens if this value is 0, max, or adversarial?
-- Does this computation match its documentation?
-- Is this the same formula used in the symmetric counterpart function?
-
-The Feynman pass surfaced the asymmetric reserve treatment between `closeLong` (subtracts locked) and `closeShort` (does not subtract locked).
-
-### Phase 2: State-Inconsistency Audit
-All coupled state pairs traced through every mutation path:
-- `backedAirToken` / `airToken.totalSupply()` -- 14 mutation points, all consistent
-- `backedAirUsd` / `airUsdToken.totalSupply()` -- 16 mutation points, all consistent
-- `openPositionCount` -- 12 mutation points (6 increments, 6 decrements), all paired
-- `longOpenInterest` -- 6 mutation points, all consistent (add at open = subtract at close)
-- `shortOpenInterest` -- 6 mutation points, all consistent
-- `lpFeesAccumulated` -- 3 increment points, 1 decrement point, USDC solvency verified
-
-### Phase 3: Cross-Function Interaction Analysis
-Every pair of state-changing functions analyzed for interference:
-- openLong + closeShort (shared `backedAirToken` dependency)
-- openShort + closeLong (shared `backedAirUsd` dependency)
-- Multiple concurrent positions (open/close ordering effects)
-- addLiquidity during open positions
-- claimFees solvency with outstanding positions
-- renewPosition + liquidateExpired race conditions
-
-### Phase 4: AMM Math Verification
-All three AMM modes verified for:
-- Correct reserve selection per mode definition
-- Consistent denominator computation (reserveIn + amountIn)
-- Fee application symmetry
-- Overflow/underflow safety for realistic parameter ranges
-- Rounding direction (truncation favors pool in all cases)
-
-This phase identified the N-1 denominator asymmetry.
-
-### Phase 5: Position Lifecycle End-to-End
-Every exit path for both longs and shorts:
-- open -> close (profitable)
-- open -> close (underwater revert)
-- open -> realize
-- open -> forceRealize (underwater)
-- open -> liquidateExpired (profitable)
-- open -> liquidateExpired (underwater)
-- open -> renew -> close
-- open -> renew -> liquidateExpired
-
-All paths verified for:
-- backedAirToken/backedAirUsd net-zero round-trip
-- airToken/airUsd totalSupply net-zero round-trip
-- USDC balance solvency
-- openPositionCount correct decrement
-- OI correct decrement (using same value that was added)
-
-### Phase 6: Fee Accounting Verification
-- Position open fee: pull totalFee, send protocolFee, accumulate lpFee. USDC retained = lpFee. Correct.
-- Position close fee: deducted from surplus. Goes to protocolTreasury. Not accumulated as LP fee. Correct by design.
-- Renewal fee: pull totalFee, send protocolFee, accumulate lpFee. But short notional uses lockedAmount instead of usdcIn (N-2).
-- Swap fee: retained passively in backedAirUsd/backedAirToken. Not accumulated separately. Correct.
-- Impact fee: integral formula verified as split-proof. Added to lpFee. Correct.
-
-### Phase 7: Fusion & Verification
-The Feynman finding (N-1) was cross-validated against:
-- The state-inconsistency audit (confirmed the asymmetry is not compensated elsewhere)
-- The AMM math verification (confirmed the denominator error)
-- The position lifecycle analysis (confirmed all four affected code paths)
-- The PositionNFT display logic (confirmed the same bug in PnL computation)
-
----
-
-## Files Reviewed
-
-| File | Path |
-|------|------|
-| EXNIHILOPool.sol | `packages/blockchain/contracts/EXNIHILOPool.sol` |
-| EXNIHILOFactory.sol | `packages/blockchain/contracts/EXNIHILOFactory.sol` |
-| EXNIHILORouter.sol | `packages/blockchain/contracts/EXNIHILORouter.sol` |
-| PositionNFT.sol | `packages/blockchain/contracts/PositionNFT.sol` |
-| LpNFT.sol | `packages/blockchain/contracts/LpNFT.sol` |
-| AirToken.sol | `packages/blockchain/contracts/AirToken.sol` |
+No CRITICAL, HIGH, or MEDIUM severity findings were discovered. The 4 LOW findings are informational in nature and do not represent fund-loss risk.

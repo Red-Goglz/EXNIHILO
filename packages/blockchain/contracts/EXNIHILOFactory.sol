@@ -3,7 +3,6 @@ pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "./AirToken.sol";
 import "./EXNIHILOPool.sol";
@@ -74,6 +73,12 @@ contract EXNIHILOFactory is ReentrancyGuard {
     /// @notice Default swap fee in bps applied to all newly created pools (e.g. 200 = 2 %).
     uint256 public immutable defaultSwapFeeBps;
 
+    // ── Emergency admin ──────────────────────────────────────────────────────
+
+    /// @notice Emergency deployer address. Can close any pool.
+    ///         Set to msg.sender in the constructor. Updatable via setDeployer().
+    address public deployer;
+
     // ── Registry state ────────────────────────────────────────────────────────
 
     /// @notice True if `pool` was created by this factory.
@@ -82,45 +87,20 @@ contract EXNIHILOFactory is ReentrancyGuard {
     /// @notice Ordered list of all pools created by this factory.
     address[] public allPools;
 
-    /**
-     * @notice Maps an underlying token address to the first pool created for that token.
-     *         Subsequent pools for the same underlying token are recorded in allPools
-     *         but do NOT overwrite this entry (first-pool-wins).
-     */
-    mapping(address => address) public poolForToken;
 
     // ── Custom errors ─────────────────────────────────────────────────────────
 
     error ZeroAddress();
     error ZeroAmount();
-    error InvalidMaxPositionBps(uint256 bps);
-    error InvalidPositionDuration();
-    error LpNftIdMismatch(uint256 expected, uint256 actual);
+    error OnlyDeployer();
 
     // ── Events ────────────────────────────────────────────────────────────────
 
-    /**
-     * @notice Emitted once per successfully created market.
-     *
-     * @param pool            The newly deployed EXNIHILOPool address.
-     * @param tokenAddress    The underlying ERC-20 used as the base asset.
-     * @param usdcAmount      Initial USDC liquidity seeded by the creator.
-     * @param tokenAmount     Initial underlying token liquidity seeded by the creator.
-     * @param lpNftId         LP NFT token ID minted for the creator.
-     * @param creator         Address that called createMarket.
-     * @param maxPositionUsd  Hard per-position USDC cap (0 = disabled).
-     * @param maxPositionBps  Per-position cap as % of backedAirUsd in bps (0 = disabled).
-     */
     event MarketCreated(
         address indexed pool,
         address indexed tokenAddress,
-        uint256 usdcAmount,
-        uint256 tokenAmount,
-        uint256 lpNftId,
         address indexed creator,
-        uint256 maxPositionUsd,
-        uint256 maxPositionBps,
-        uint256 positionDuration
+        uint256 lpNftId
     );
 
     // ── Constructor ───────────────────────────────────────────────────────────
@@ -139,16 +119,12 @@ contract EXNIHILOFactory is ReentrancyGuard {
         address protocolTreasury_,
         uint256 defaultSwapFeeBps_
     ) {
-        if (positionNFT_      == address(0)) revert ZeroAddress();
-        if (lpNftContract_    == address(0)) revert ZeroAddress();
-        if (usdc_             == address(0)) revert ZeroAddress();
-        if (protocolTreasury_ == address(0)) revert ZeroAddress();
-
         positionNFT       = positionNFT_;
         lpNftContract     = LpNFT(lpNftContract_);
         usdc              = usdc_;
         protocolTreasury  = protocolTreasury_;
         defaultSwapFeeBps = defaultSwapFeeBps_;
+        deployer          = msg.sender;
     }
 
     // ── Market creation ───────────────────────────────────────────────────────
@@ -191,22 +167,15 @@ contract EXNIHILOFactory is ReentrancyGuard {
         uint256 tokenAmount,
         uint256 maxPositionUsd,
         uint256 maxPositionBps,
-        uint256 positionDuration
+        uint256 positionDuration,
+        string calldata airTokenName,
+        string calldata airUsdName,
+        uint8 tokenDecimals
     ) external nonReentrant returns (address pool, uint256 lpNftId) {
         // ── 1. Input validation ───────────────────────────────────────────────
 
-        if (tokenAddress == address(0)) revert ZeroAddress();
         if (usdcAmount   == 0)          revert ZeroAmount();
         if (tokenAmount  == 0)          revert ZeroAmount();
-
-        // Mirror the pool's own constructor guard so we fail early with a clear
-        // error before spending gas on deploying any child contracts.
-        if (maxPositionBps != 0 && (maxPositionBps < 10 || maxPositionBps > 9900)) {
-            revert InvalidMaxPositionBps(maxPositionBps);
-        }
-        if (positionDuration != 0 && (positionDuration < 1 hours || positionDuration > 365 days)) {
-            revert InvalidPositionDuration();
-        }
 
         // ── 2. Pull tokens from caller ────────────────────────────────────────
         //    Fee-on-transfer tokens are rejected by the pool's own _transferIn guard.
@@ -216,32 +185,13 @@ contract EXNIHILOFactory is ReentrancyGuard {
 
         // ── 3. Deploy AirToken for the token wrapper ───────────────────────────
 
-        string memory tokenSymbol  = _safeSymbol(tokenAddress);
-        uint8         tokenDecimals = _safeDecimals(tokenAddress);
-
-        // Name and symbol follow the convention: "air" + tokenSymbol.
-        string memory airTokenName   = string.concat("air", tokenSymbol);
-        string memory airUsdName    = string.concat("air", tokenSymbol, "Usd");
-
         AirToken airToken = new AirToken(airTokenName, airTokenName, tokenDecimals);
 
         // ── 4. Deploy AirToken for the USDC wrapper ───────────────────────────
 
         AirToken airUsdToken = new AirToken(airUsdName, airUsdName, 6);
 
-        // ── 5. Predict the next LP NFT id ─────────────────────────────────────
-        //
-        //   LpNFT._nextTokenId starts at 0 and is incremented exactly once per
-        //   call to lpNftContract.mint(), which only this factory can invoke.
-        //   Each createMarket mints exactly one LP NFT.
-        //   Therefore: _nextTokenId == allPools.length at any moment.
-        //
-        //   We capture it now, before pushing to allPools, so the predicted id
-        //   is consistent with what mint() will actually assign.
-
-        uint256 predictedLpNftId = allPools.length;
-
-        // ── 6. Deploy EXNIHILOPool ───────────────────────────────────────────
+        // ── 5. Deploy EXNIHILOPool ───────────────────────────────────────────
 
         EXNIHILOPool deployedPool = new EXNIHILOPool(
             address(airToken),
@@ -250,12 +200,13 @@ contract EXNIHILOFactory is ReentrancyGuard {
             usdc,
             positionNFT,
             address(lpNftContract),
-            predictedLpNftId,   // lpNftId_ — must match what mint() will return
+            allPools.length,    // lpNftId_ — equals LpNFT._nextTokenId
             protocolTreasury,
             maxPositionUsd,
             maxPositionBps,
             defaultSwapFeeBps,
-            positionDuration
+            positionDuration,
+            address(this)       // factory address for emergency deployer lookup
         );
 
         pool = address(deployedPool);
@@ -274,106 +225,36 @@ contract EXNIHILOFactory is ReentrancyGuard {
         // with the factory's LP NFT accounting invariant.
         lpNftId = lpNftContract.mint(address(this), pool);
 
-        if (lpNftId != predictedLpNftId) {
-            revert LpNftIdMismatch(predictedLpNftId, lpNftId);
-        }
-
         // ── 9. Seed the pool via addLiquidity (factory is the LP NFT holder) ──
 
-        // addLiquidity uses safeTransferFrom(msg.sender, ...) so the factory
-        // must approve the pool to pull the tokens it currently holds.
         IERC20(tokenAddress).forceApprove(pool, tokenAmount);
         IERC20(usdc).forceApprove(pool, usdcAmount);
 
-        // Factory is ownerOf(lpNftId) → onlyLpHolder passes.
         deployedPool.addLiquidity(tokenAmount, usdcAmount);
 
-        // ── 10. Revoke residual approvals (defence-in-depth) ──────────────────
+        // ── 10. Transfer LP NFT to market creator ─────────────────────────────
 
-        IERC20(tokenAddress).forceApprove(pool, 0);
-        IERC20(usdc).forceApprove(pool, 0);
-
-        // ── 11. Transfer LP NFT to market creator ─────────────────────────────
-
-        // Use safeTransferFrom so the recipient's onERC721Received hook is called
-        // if the creator is a contract.  The factory itself implements the hook
-        // to handle the temporary custody above.
-        IERC721(address(lpNftContract)).safeTransferFrom(address(this), msg.sender, lpNftId);
+        IERC721(address(lpNftContract)).transferFrom(address(this), msg.sender, lpNftId);
 
         // ── 12. Registry update and event ─────────────────────────────────────
 
         isPool[pool] = true;
         allPools.push(pool);
 
-        // Record the first pool for this underlying token only (first-pool-wins).
-        if (poolForToken[tokenAddress] == address(0)) {
-            poolForToken[tokenAddress] = pool;
-        }
-
-        emit MarketCreated(
-            pool,
-            tokenAddress,
-            usdcAmount,
-            tokenAmount,
-            lpNftId,
-            msg.sender,
-            maxPositionUsd,
-            maxPositionBps,
-            positionDuration
-        );
+        emit MarketCreated(pool, tokenAddress, msg.sender, lpNftId);
     }
 
-    // ── Views ─────────────────────────────────────────────────────────────────
+    // ── Emergency admin ────────────────────────────────────────────────────────
 
     /**
-     * @notice Returns the total number of pools created by this factory.
+     * @notice Transfer the deployer (emergency admin) role to a new address.
+     *         Only callable by the current deployer.
+     * @param newDeployer  New deployer address. Must not be zero.
      */
-    function allPoolsLength() external view returns (uint256) {
-        return allPools.length;
+    function setDeployer(address newDeployer) external {
+        if (msg.sender != deployer) revert OnlyDeployer();
+        deployer = newDeployer;
     }
 
-    // ── ERC-721 receiver ──────────────────────────────────────────────────────
 
-    /**
-     * @dev Required by IERC721Receiver so LpNFT._safeMint can transfer to this
-     *      contract.  Only the LP NFT is expected to be sent to the factory
-     *      (temporarily, during pool seeding).
-     */
-    function onERC721Received(
-        address, /* operator */
-        address, /* from     */
-        uint256, /* tokenId  */
-        bytes calldata /* data */
-    ) external pure returns (bytes4) {
-        return this.onERC721Received.selector;
-    }
-
-    // ── Internal helpers ──────────────────────────────────────────────────────
-
-    /**
-     * @dev Attempt to read the ERC-20 symbol from `token`.  Returns "TOKEN" if
-     *      the call reverts or the contract does not expose symbol() (e.g. some
-     *      non-standard ERC-20s).
-     */
-    function _safeSymbol(address token) internal view returns (string memory) {
-        try IERC20Metadata(token).symbol() returns (string memory sym) {
-            // Guard against an empty string response.
-            if (bytes(sym).length == 0) return "TOKEN";
-            return sym;
-        } catch {
-            return "TOKEN";
-        }
-    }
-
-    /**
-     * @dev Attempt to read the ERC-20 decimals from `token`.  Returns 18 if
-     *      the call reverts (safe default matching most underlying tokens).
-     */
-    function _safeDecimals(address token) internal view returns (uint8) {
-        try IERC20Metadata(token).decimals() returns (uint8 dec) {
-            return dec;
-        } catch {
-            return 18;
-        }
-    }
 }

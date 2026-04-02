@@ -183,7 +183,10 @@ async function deployPoolFixture() {
     INITIAL_TOKEN,
     MAX_POS_USD,
     MAX_POS_BPS,
-    0n
+    0n,
+    "airPEPE",
+    "airPEPEUsd",
+    18
   );
   const receipt = await tx.wait();
 
@@ -965,7 +968,7 @@ describe("EXNIHILOPool", function () {
       // Pool with maxPositionBps=10 (0.1 %), maxPositionUsd=0.
       const { factory, usdc, baseToken, creator, trader1 } = await loadFixture(deployFactoryFixtureForPool);
       await factory.connect(creator).createMarket(
-        await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 10n, 0n
+        await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 10n, 0n, "airPEPE", "airPEPEUsd", 18
       );
       const poolAddr = await factory.allPools(0n);
       const pool = await ethers.getContractAt("EXNIHILOPool", poolAddr);

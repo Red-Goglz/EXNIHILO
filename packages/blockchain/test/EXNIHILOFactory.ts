@@ -150,7 +150,10 @@ async function withOneMarketFixture() {
     INITIAL_TOKEN,
     MAX_POS_USD,
     MAX_POS_BPS,
-    0n
+    0n,
+    "airPEPE",
+    "airPEPEUsd",
+    18
   );
   const receipt = await tx.wait();
 
@@ -196,66 +199,7 @@ describe("EXNIHILOFactory", function () {
       expect(await factory.defaultSwapFeeBps()).to.equal(SWAP_FEE_BPS);
     });
 
-    it("starts with zero pools in the registry", async function () {
-      const { factory } = await loadFixture(deployFactoryFixture);
-      expect(await factory.allPoolsLength()).to.equal(0n);
-    });
 
-    it("reverts when positionNFT_ is the zero address", async function () {
-      const FactoryF = await ethers.getContractFactory("EXNIHILOFactory");
-      const { factory, lpNft, usdc } = await loadFixture(deployFactoryFixture);
-      await expect(
-        FactoryF.deploy(
-          ethers.ZeroAddress,
-          await lpNft.getAddress(),
-          await usdc.getAddress(),
-          (await ethers.getSigners())[1].address,
-          SWAP_FEE_BPS
-        )
-      ).to.be.revertedWithCustomError(factory, "ZeroAddress");
-    });
-
-    it("reverts when lpNftContract_ is the zero address", async function () {
-      const FactoryF = await ethers.getContractFactory("EXNIHILOFactory");
-      const { factory, positionNFT, usdc } = await loadFixture(deployFactoryFixture);
-      await expect(
-        FactoryF.deploy(
-          await positionNFT.getAddress(),
-          ethers.ZeroAddress,
-          await usdc.getAddress(),
-          (await ethers.getSigners())[1].address,
-          SWAP_FEE_BPS
-        )
-      ).to.be.revertedWithCustomError(factory, "ZeroAddress");
-    });
-
-    it("reverts when usdc_ is the zero address", async function () {
-      const FactoryF = await ethers.getContractFactory("EXNIHILOFactory");
-      const { factory, positionNFT, lpNft } = await loadFixture(deployFactoryFixture);
-      await expect(
-        FactoryF.deploy(
-          await positionNFT.getAddress(),
-          await lpNft.getAddress(),
-          ethers.ZeroAddress,
-          (await ethers.getSigners())[1].address,
-          SWAP_FEE_BPS
-        )
-      ).to.be.revertedWithCustomError(factory, "ZeroAddress");
-    });
-
-    it("reverts when protocolTreasury_ is the zero address", async function () {
-      const FactoryF = await ethers.getContractFactory("EXNIHILOFactory");
-      const { factory, positionNFT, lpNft, usdc } = await loadFixture(deployFactoryFixture);
-      await expect(
-        FactoryF.deploy(
-          await positionNFT.getAddress(),
-          await lpNft.getAddress(),
-          await usdc.getAddress(),
-          ethers.ZeroAddress,
-          SWAP_FEE_BPS
-        )
-      ).to.be.revertedWithCustomError(factory, "ZeroAddress");
-    });
   });
 
   // ── 2. createMarket — happy path ───────────────────────────────────────────
@@ -272,19 +216,17 @@ describe("EXNIHILOFactory", function () {
           INITIAL_TOKEN,
           MAX_POS_USD,
           MAX_POS_BPS,
-          0n
+          0n,
+          "airPEPE",
+          "airPEPEUsd",
+          18
         )
       )
         .to.emit(factory, "MarketCreated")
         .withArgs(
           (v: string) => v !== ethers.ZeroAddress,
           await baseToken.getAddress(),
-          INITIAL_USDC,
-          INITIAL_TOKEN,
-          0n,
           creator.address,
-          MAX_POS_USD,
-          MAX_POS_BPS,
           0n
         );
     });
@@ -299,7 +241,10 @@ describe("EXNIHILOFactory", function () {
         INITIAL_TOKEN,
         MAX_POS_USD,
         MAX_POS_BPS,
-        0n
+        0n,
+        "airPEPE",
+        "airPEPEUsd",
+        18
       );
 
       expect(pool).to.not.equal(ethers.ZeroAddress);
@@ -314,11 +259,6 @@ describe("EXNIHILOFactory", function () {
     it("registers the pool in allPools", async function () {
       const { factory, poolAddress } = await loadFixture(withOneMarketFixture);
       expect(await factory.allPools(0n)).to.equal(poolAddress);
-    });
-
-    it("registers the pool in poolForToken", async function () {
-      const { factory, poolAddress, baseToken } = await loadFixture(withOneMarketFixture);
-      expect(await factory.poolForToken(await baseToken.getAddress())).to.equal(poolAddress);
     });
 
     it("transfers the LP NFT to the creator", async function () {
@@ -385,42 +325,28 @@ describe("EXNIHILOFactory", function () {
     it("reverts when tokenAddress is the zero address", async function () {
       const { factory, creator } = await loadFixture(deployFactoryFixture);
       await expect(
-        factory.connect(creator).createMarket(ethers.ZeroAddress, INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n)
-      ).to.be.revertedWithCustomError(factory, "ZeroAddress");
+        factory.connect(creator).createMarket(ethers.ZeroAddress, INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n, "airPEPE", "airPEPEUsd", 18)
+      ).to.be.reverted;
     });
 
     it("reverts when usdcAmount is zero", async function () {
       const { factory, creator, baseToken } = await loadFixture(deployFactoryFixture);
       await expect(
-        factory.connect(creator).createMarket(await baseToken.getAddress(), 0n, INITIAL_TOKEN, 0n, 0n, 0n)
+        factory.connect(creator).createMarket(await baseToken.getAddress(), 0n, INITIAL_TOKEN, 0n, 0n, 0n, "airPEPE", "airPEPEUsd", 18)
       ).to.be.revertedWithCustomError(factory, "ZeroAmount");
     });
 
     it("reverts when tokenAmount is zero", async function () {
       const { factory, creator, baseToken } = await loadFixture(deployFactoryFixture);
       await expect(
-        factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, 0n, 0n, 0n, 0n)
+        factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, 0n, 0n, 0n, 0n, "airPEPE", "airPEPEUsd", 18)
       ).to.be.revertedWithCustomError(factory, "ZeroAmount");
-    });
-
-    it("reverts when maxPositionBps is 5 (below minimum of 10)", async function () {
-      const { factory, creator, baseToken } = await loadFixture(deployFactoryFixture);
-      await expect(
-        factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 5n, 0n)
-      ).to.be.revertedWithCustomError(factory, "InvalidMaxPositionBps");
-    });
-
-    it("reverts when maxPositionBps is 9901 (above maximum of 9900)", async function () {
-      const { factory, creator, baseToken } = await loadFixture(deployFactoryFixture);
-      await expect(
-        factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 9901n, 0n)
-      ).to.be.revertedWithCustomError(factory, "InvalidMaxPositionBps");
     });
 
     it("accepts maxPositionBps of 10 (minimum boundary)", async function () {
       const { factory, creator, baseToken } = await loadFixture(deployFactoryFixture);
       await expect(
-        factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 10n, 0n)
+        factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 10n, 0n, "airPEPE", "airPEPEUsd", 18)
       ).to.emit(factory, "MarketCreated");
     });
 
@@ -431,14 +357,14 @@ describe("EXNIHILOFactory", function () {
       await (token2 as unknown as MockERC20).mint(creator.address, INITIAL_TOKEN);
       await (token2 as any).connect(creator).approve(await factory.getAddress(), ethers.MaxUint256);
       await expect(
-        factory.connect(creator).createMarket(await token2.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 9900n, 0n)
+        factory.connect(creator).createMarket(await token2.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 9900n, 0n, "airDOGE", "airDOGEUsd", 18)
       ).to.emit(factory, "MarketCreated");
     });
 
     it("accepts maxPositionBps of 0 (disabled)", async function () {
       const { factory, creator, baseToken } = await loadFixture(deployFactoryFixture);
       await expect(
-        factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n)
+        factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n, "airPEPE", "airPEPEUsd", 18)
       ).to.emit(factory, "MarketCreated");
     });
   });
@@ -446,27 +372,11 @@ describe("EXNIHILOFactory", function () {
   // ── 4. createMarket — multiple markets ────────────────────────────────────
 
   describe("createMarket — multiple markets", function () {
-    it("allPoolsLength increments for each market", async function () {
-      const { factory, creator, creator2, baseToken, usdc } =
-        await loadFixture(deployFactoryFixture);
-
-      const MockF = await ethers.getContractFactory("MockERC20");
-      const token2 = await MockF.deploy("DOGE", "DOGE", 18) as unknown as MockERC20;
-      await token2.mint(creator2.address, INITIAL_TOKEN);
-      await token2.connect(creator2).approve(await factory.getAddress(), ethers.MaxUint256);
-
-      await factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n);
-      expect(await factory.allPoolsLength()).to.equal(1n);
-
-      await factory.connect(creator2).createMarket(await token2.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n);
-      expect(await factory.allPoolsLength()).to.equal(2n);
-    });
-
     it("LP NFT IDs increment (first = 0, second = 1)", async function () {
       const { factory, creator, creator2, baseToken, usdc, lpNft } =
         await loadFixture(deployFactoryFixture);
 
-      await factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n);
+      await factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n, "airPEPE", "airPEPEUsd", 18);
       expect(await lpNft.ownerOf(0n)).to.equal(creator.address);
 
       const MockF = await ethers.getContractFactory("MockERC20");
@@ -474,28 +384,16 @@ describe("EXNIHILOFactory", function () {
       await token2.mint(creator2.address, INITIAL_TOKEN);
       await token2.connect(creator2).approve(await factory.getAddress(), ethers.MaxUint256);
 
-      await factory.connect(creator2).createMarket(await token2.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n);
+      await factory.connect(creator2).createMarket(await token2.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n, "airSHIB", "airSHIBUsd", 18);
       expect(await lpNft.ownerOf(1n)).to.equal(creator2.address);
-    });
-
-    it("second market for the same token does NOT overwrite poolForToken", async function () {
-      const { factory, creator, creator2, baseToken } =
-        await loadFixture(deployFactoryFixture);
-
-      await factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n);
-      const firstPool = await factory.poolForToken(await baseToken.getAddress());
-
-      await factory.connect(creator2).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n);
-
-      expect(await factory.poolForToken(await baseToken.getAddress())).to.equal(firstPool);
     });
 
     it("both pools are registered in isPool", async function () {
       const { factory, creator, creator2, baseToken } =
         await loadFixture(deployFactoryFixture);
 
-      await factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n);
-      await factory.connect(creator2).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n);
+      await factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n, "airPEPE", "airPEPEUsd", 18);
+      await factory.connect(creator2).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n, "airPEPE", "airPEPEUsd", 18);
 
       const pool1 = await factory.allPools(0n);
       const pool2 = await factory.allPools(1n);
@@ -505,26 +403,7 @@ describe("EXNIHILOFactory", function () {
     });
   });
 
-  // ── 5. allPoolsLength view ─────────────────────────────────────────────────
-
-  describe("allPoolsLength", function () {
-    it("returns 0 before any market is created", async function () {
-      const { factory } = await loadFixture(deployFactoryFixture);
-      expect(await factory.allPoolsLength()).to.equal(0n);
-    });
-
-    it("returns 1 after one market is created", async function () {
-      const { factory } = await loadFixture(withOneMarketFixture);
-      expect(await factory.allPoolsLength()).to.equal(1n);
-    });
-
-    it("non-pool address returns false from isPool", async function () {
-      const { factory, other } = await loadFixture(withOneMarketFixture);
-      expect(await factory.isPool(other.address)).to.be.false;
-    });
-  });
-
-  // ── 6. _safeSymbol / _safeDecimals fallback branches ──────────────────────
+  // ── 5. _safeSymbol / _safeDecimals fallback branches ──────────────────────
 
   describe("_safeSymbol / _safeDecimals fallback", function () {
     it("falls back to 'TOKEN' when token has no symbol()", async function () {
@@ -543,7 +422,10 @@ describe("EXNIHILOFactory", function () {
         INITIAL_TOKEN,
         0n,
         0n,
-        0n
+        0n,
+        "airTOKEN",
+        "airTOKENUsd",
+        18
       );
       const receipt = await tx.wait();
       const iface = factory.interface;

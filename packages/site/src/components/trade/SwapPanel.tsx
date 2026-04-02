@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useAccount, useReadContracts, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
+import { useFormo } from "@formo/analytics";
 import { exnihiloPoolAbi, erc20Abi } from "@exnihilio/abis";
 import { parseUnits, formatToken } from "../../lib/format.ts";
 import { cpAmountOut } from "../../lib/amm.ts";
@@ -24,6 +25,7 @@ export default function SwapPanel({
 }: SwapPanelProps) {
   const { address } = useAccount();
   const queryClient = useQueryClient();
+  const analytics = useFormo();
 
   const [tokenToUsdc, setTokenToUsdc] = useState(true);
   const [amountIn, setAmountIn] = useState("");
@@ -115,6 +117,11 @@ export default function SwapPanel({
 
   const handleSwapSuccess = () => {
     queryClient.invalidateQueries();
+    analytics?.track("Swap Completed", {
+      pool: poolAddress,
+      direction: tokenToUsdc ? `${tokenSymbol}→USDC` : `USDC→${tokenSymbol}`,
+      amountIn: amountInRaw.toString(),
+    });
     setAmountIn("");
   };
 

@@ -128,7 +128,10 @@ async function deployRouterFixture() {
     INITIAL_TOKEN,
     MAX_POS_USD,
     MAX_POS_BPS,
-    0n
+    0n,
+    "airPEPE",
+    "airPEPEUsd",
+    18
   );
   const receipt = await tx.wait();
   const log = receipt!.logs

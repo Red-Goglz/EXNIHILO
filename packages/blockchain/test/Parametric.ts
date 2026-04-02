@@ -313,7 +313,10 @@ async function runSequence(params: Params): Promise<void> {
     params.lpToken,
     0n, // no position caps
     0n,
-    0n
+    0n,
+    "airTOKEN",
+    "airTOKENUsd",
+    18
   );
   const receiptCreate = await txCreate.wait();
 

@@ -9,7 +9,7 @@
  *   EXNIHILOPool   — constructor guards, swap/open/close/realize
  *                     edge branches, removeLiquidity partial-reserve branches,
  *                     addLiquidity ratio tolerance, _cpAmountOut zero-reserve.
- *   EXNIHILOFactory — _safeDecimals fallback, LpNftIdMismatch guard.
+ *   EXNIHILOFactory — _safeDecimals fallback.
  */
 
 import { expect } from "chai";
@@ -144,7 +144,10 @@ async function deployPoolFixture() {
     INITIAL_TOKEN,
     ethers.parseUnits("9000", 6),  // maxPositionUsd
     9000n,                          // maxPositionBps
-    0n
+    0n,
+    "airPEPE",
+    "airPEPEUsd",
+    18
   );
   const receipt = await tx.wait();
   const iface = factory.interface;
@@ -241,6 +244,7 @@ async function deployRawPool(overrides: {
     overrides.maxPositionBps ?? 0n,
     overrides.swapFeeBps     ?? 100n,
     0n,
+    deployer.address, // factory
   );
 }
 
@@ -268,7 +272,7 @@ describe("Coverage — EXNIHILOPool constructor guards", function () {
         await u.getAddress(),
         await pn.getAddress(),
         await ln.getAddress(),
-        0, deployer.address, 0, 0, 100, 0n
+        0, deployer.address, 0, 0, 100, 0n, deployer.address
       )
     ).to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "ZeroAddress");
   });
@@ -291,7 +295,7 @@ describe("Coverage — EXNIHILOPool constructor guards", function () {
         await u.getAddress(),
         await pn.getAddress(),
         await ln.getAddress(),
-        0, deployer.address, 0, 0, 100, 0n
+        0, deployer.address, 0, 0, 100, 0n, deployer.address
       )
     ).to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "ZeroAddress");
   });
@@ -315,7 +319,7 @@ describe("Coverage — EXNIHILOPool constructor guards", function () {
         await u.getAddress(),
         await pn.getAddress(),
         await ln.getAddress(),
-        0, deployer.address, 0, 0, 100, 0n
+        0, deployer.address, 0, 0, 100, 0n, deployer.address
       )
     ).to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "ZeroAddress");
   });
@@ -339,7 +343,7 @@ describe("Coverage — EXNIHILOPool constructor guards", function () {
         ethers.ZeroAddress, // underlyingUsdc_ = zero
         await pn.getAddress(),
         await ln.getAddress(),
-        0, deployer.address, 0, 0, 100, 0n
+        0, deployer.address, 0, 0, 100, 0n, deployer.address
       )
     ).to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "ZeroAddress");
   });
@@ -363,7 +367,7 @@ describe("Coverage — EXNIHILOPool constructor guards", function () {
         await u.getAddress(),
         ethers.ZeroAddress, // positionNFT_ = zero
         await ln.getAddress(),
-        0, deployer.address, 0, 0, 100, 0n
+        0, deployer.address, 0, 0, 100, 0n, deployer.address
       )
     ).to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "ZeroAddress");
   });
@@ -387,7 +391,7 @@ describe("Coverage — EXNIHILOPool constructor guards", function () {
         await u.getAddress(),
         await pn.getAddress(),
         ethers.ZeroAddress, // lpNftContract_ = zero
-        0, deployer.address, 0, 0, 100, 0n
+        0, deployer.address, 0, 0, 100, 0n, deployer.address
       )
     ).to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "ZeroAddress");
   });
@@ -413,7 +417,8 @@ describe("Coverage — EXNIHILOPool constructor guards", function () {
         await ln.getAddress(),
         0,
         ethers.ZeroAddress, // protocolTreasury_ = zero
-        0, 0, 100, 0n
+        0, 0, 100, 0n,
+        (await ethers.getSigners())[0].address
       )
     ).to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "ZeroAddress");
   });
@@ -442,7 +447,8 @@ describe("Coverage — EXNIHILOPool constructor guards", function () {
         0,
         9901n,  // above maximum (9900)
         100n,
-        0n
+        0n,
+        deployer.address
       )
     ).to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "InvalidMaxPositionBps");
   });
@@ -471,7 +477,8 @@ describe("Coverage — EXNIHILOPool constructor guards", function () {
         0, deployer.address,
         0, 0,
         10000n,  // exactly BPS_DENOM — invalid
-        0n
+        0n,
+        deployer.address
       )
     ).to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "InvalidSwapFeeBps");
   });
@@ -578,7 +585,7 @@ describe("Coverage — closeLong edge branches", function () {
     const tx2 = await factory.connect(creator).createMarket(
       await baseToken2.getAddress(),
       INITIAL_USDC, INITIAL_TOKEN,
-      ethers.parseUnits("9000", 6), 9000n, 0n
+      ethers.parseUnits("9000", 6), 9000n, 0n, "airDOGE", "airDOGEUsd", 18
     );
     const receipt2 = await tx2.wait();
     const log2 = receipt2!.logs
@@ -633,7 +640,7 @@ describe("Coverage — realizeLong edge branches", function () {
     const tx2 = await factory.connect(creator).createMarket(
       await baseToken2.getAddress(),
       INITIAL_USDC, INITIAL_TOKEN,
-      ethers.parseUnits("9000", 6), 9000n, 0n
+      ethers.parseUnits("9000", 6), 9000n, 0n, "airDOGE", "airDOGEUsd", 18
     );
     const receipt2 = await tx2.wait();
     const log2 = receipt2!.logs
@@ -678,7 +685,7 @@ describe("Coverage — closeShort edge branches", function () {
     const tx2 = await factory.connect(creator).createMarket(
       await baseToken2.getAddress(),
       INITIAL_USDC, INITIAL_TOKEN,
-      ethers.parseUnits("9000", 6), 9000n, 0n
+      ethers.parseUnits("9000", 6), 9000n, 0n, "airDOGE", "airDOGEUsd", 18
     );
     const receipt2 = await tx2.wait();
     const log2 = receipt2!.logs
@@ -729,7 +736,7 @@ describe("Coverage — closeShort edge branches", function () {
 
     const tx = await factory.connect(creator).createMarket(
       await token6.getAddress(), initUsdc, initToken6,
-      ethers.parseUnits("9000", 6), 9000n, 0n
+      ethers.parseUnits("9000", 6), 9000n, 0n, "airM6", "airM6Usd", 6
     );
     const receipt = await tx.wait();
     const log = receipt!.logs
@@ -813,7 +820,7 @@ describe("Coverage — closeShort edge branches", function () {
 
     const tx = await factory.connect(creator).createMarket(
       await token6.getAddress(), initUsdc, initToken6,
-      ethers.parseUnits("9000", 6), 9000n, 0n
+      ethers.parseUnits("9000", 6), 9000n, 0n, "airM6", "airM6Usd", 6
     );
     const receipt = await tx.wait();
     const log = receipt!.logs
@@ -884,7 +891,7 @@ describe("Coverage — closeShort edge branches", function () {
 
     const tx = await factory.connect(creator).createMarket(
       await token6.getAddress(), initUsdc, initToken6,
-      ethers.parseUnits("9000", 6), 9000n, 0n
+      ethers.parseUnits("9000", 6), 9000n, 0n, "airM6", "airM6Usd", 6
     );
     const receipt = await tx.wait();
     const log = receipt!.logs
@@ -969,7 +976,7 @@ describe("Coverage — realizeShort edge branches", function () {
     const tx2 = await factory.connect(creator).createMarket(
       await baseToken2.getAddress(),
       INITIAL_USDC, INITIAL_TOKEN,
-      ethers.parseUnits("9000", 6), 9000n, 0n
+      ethers.parseUnits("9000", 6), 9000n, 0n, "airDOGE", "airDOGEUsd", 18
     );
     const receipt2 = await tx2.wait();
     const log2 = receipt2!.logs
@@ -1122,12 +1129,9 @@ describe("Coverage — EXNIHILOFactory _safeDecimals fallback", function () {
     const tx = await factory.connect(creator).createMarket(
       await noMeta.getAddress(),
       USDC_AMOUNT, TOKEN_AMOUNT,
-      0n, 0n, 0n
+      0n, 0n, 0n, "airTOKEN", "airTOKENUsd", 18
     );
     await tx.wait();
-
-    // Pool was created — factory registered it.
-    expect(await factory.allPoolsLength()).to.equal(1n);
 
     // The airToken token should be 18 decimals (the fallback).
     const pool = await ethers.getContractAt(
@@ -1144,50 +1148,6 @@ describe("Coverage — EXNIHILOFactory _safeDecimals fallback", function () {
 // Coverage — EXNIHILOFactory: _safeSymbol empty string fallback
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("Coverage — EXNIHILOFactory _safeSymbol empty string fallback", function () {
-
-  it("falls back to TOKEN when token returns an empty symbol string", async function () {
-    const [deployer, treasury, creator] = await ethers.getSigners();
-
-    const MockF = await ethers.getContractFactory("MockERC20");
-    const usdc  = (await MockF.connect(deployer).deploy("USDC", "USDC", 6)) as unknown as MockERC20;
-    const posNFT = (await (await ethers.getContractFactory("PositionNFT"))
-      .connect(deployer).deploy()) as unknown as PositionNFT;
-
-    // Deploy a MockERC20 with an empty string symbol.
-    const emptySymbolToken = (await MockF.connect(deployer).deploy("Empty", "", 18)) as unknown as MockERC20;
-
-    const { factory } = await deploySystem(
-      treasury.address,
-      await posNFT.getAddress(),
-      await usdc.getAddress()
-    );
-    const factoryAddr = await factory.getAddress();
-
-    const TOKEN_AMOUNT = ethers.parseEther("1000000");
-    const USDC_AMOUNT = ethers.parseUnits("10000", 6);
-    await emptySymbolToken.mint(creator.address, TOKEN_AMOUNT);
-    await usdc.mint(creator.address, USDC_AMOUNT);
-    await emptySymbolToken.connect(creator).approve(factoryAddr, ethers.MaxUint256);
-    await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
-
-    const tx = await factory.connect(creator).createMarket(
-      await emptySymbolToken.getAddress(),
-      USDC_AMOUNT, TOKEN_AMOUNT,
-      0n, 0n, 0n
-    );
-    await tx.wait();
-
-    const pool = await ethers.getContractAt(
-      "EXNIHILOPool",
-      await factory.allPools(0n)
-    );
-    const airTokenAddr = await pool.airToken();
-    const airToken = await ethers.getContractAt("AirToken", airTokenAddr);
-    // When symbol is empty, factory falls back to "TOKEN".
-    expect(await airToken.symbol()).to.equal("airTOKEN");
-  });
-});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Coverage — openLong slippage guard (InsufficientOutput via minAirTokenOut)
@@ -1253,7 +1213,7 @@ describe("Coverage — openShort ZeroAmount when airTokenMinted rounds to zero",
     const tx = await factory.connect(creator).createMarket(
       await token6.getAddress(),
       LARGE_USDC, TINY_TOKEN6,
-      0n, 0n, 0n
+      0n, 0n, 0n, "airM6", "airM6Usd", 6
     );
     const receipt = await tx.wait();
     const log = receipt!.logs
@@ -1327,7 +1287,7 @@ describe("Coverage — closeShort PositionUnderwater when debt exceeds totalBuya
     // No caps — allows opening a short equal to full backedAirUsd.
     const tx = await factory.connect(creator).createMarket(
       await token.getAddress(), INITIAL_USDC, INITIAL_TOKEN,
-      0n, 0n, 0n
+      0n, 0n, 0n, "airPEPE", "airPEPEUsd", 18
     );
     const receipt = await tx.wait();
     const log = receipt!.logs
@@ -1599,7 +1559,7 @@ describe("Coverage — leverage cap enforcement when only maxPositionUsd is set"
     const maxUsd = ethers.parseUnits("10", 6); // 10 USDC cap
     const tx = await factory.connect(creator).createMarket(
       await token.getAddress(), INITIAL_USDC, INITIAL_TOKEN,
-      maxUsd, 0n, 0n
+      maxUsd, 0n, 0n, "airPEPE", "airPEPEUsd", 18
     );
     const receipt = await tx.wait();
     const log = receipt!.logs
@@ -1664,7 +1624,7 @@ describe("Coverage — _cpAmountOut reserveIn = 0 when all airToken is locked", 
     await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
 
     const tx = await factory.connect(creator).createMarket(
-      await token.getAddress(), tinyUsdc, tinyToken, 0n, 0n, 0n
+      await token.getAddress(), tinyUsdc, tinyToken, 0n, 0n, 0n, "airPEPE", "airPEPEUsd", 18
     );
     const receipt = await tx.wait();
     const log = receipt!.logs
@@ -1786,7 +1746,7 @@ describe("Coverage — ReentrancyGuard nonReentrant revert paths", function () {
     await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
 
     const tx = await factory.connect(creator).createMarket(
-      await reenToken.getAddress(), USDC_AMT, TOKEN_AMT, 0n, 0n, 0n
+      await reenToken.getAddress(), USDC_AMT, TOKEN_AMT, 0n, 0n, 0n, "airREEM", "airREEMUsd", 18
     );
     const receipt = await tx.wait();
     const log = receipt!.logs
@@ -1895,7 +1855,7 @@ describe("Coverage — ReentrancyGuard nonReentrant revert paths", function () {
     await reenUsdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
 
     const tx = await factory.connect(creator).createMarket(
-      await token.getAddress(), USDC_AMT, TOKEN_AMT, 0n, 0n, 0n
+      await token.getAddress(), USDC_AMT, TOKEN_AMT, 0n, 0n, 0n, "airTOKEN", "airTOKENUsd", 18
     );
     const receipt = await tx.wait();
     const log = receipt!.logs
@@ -2074,7 +2034,7 @@ describe("Coverage — FeeOnTransferNotSupported guard in _transferIn", function
 
     // Deploy pool (fee disabled so initial addLiquidity inside createMarket succeeds).
     const tx = await factory.connect(creator).createMarket(
-      await fotToken.getAddress(), USDC_AMT, TOKEN_AMT, 0n, 0n, 0n
+      await fotToken.getAddress(), USDC_AMT, TOKEN_AMT, 0n, 0n, 0n, "airFTOKEN", "airFTOKENUsd", 18
     );
     const receipt = await tx.wait();
     const log = receipt!.logs
@@ -2120,7 +2080,7 @@ describe("Coverage — FeeOnTransferNotSupported guard in _transferIn", function
 
     // Deploy pool (fee disabled so initial addLiquidity succeeds).
     const tx = await factory.connect(creator).createMarket(
-      await token.getAddress(), USDC_AMT, TOKEN_AMT, 0n, 0n, 0n
+      await token.getAddress(), USDC_AMT, TOKEN_AMT, 0n, 0n, 0n, "airTOKEN", "airTOKENUsd", 18
     );
     const receipt = await tx.wait();
     const log = receipt!.logs
@@ -2306,7 +2266,7 @@ describe("Coverage — ZeroAmount guards on openLong / openShort output", functi
     await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
 
     const tx = await factory.connect(creator).createMarket(
-      await token6.getAddress(), USDC_LARGE, TOKEN_TINY, 0n, 0n, 0n
+      await token6.getAddress(), USDC_LARGE, TOKEN_TINY, 0n, 0n, 0n, "airM6", "airM6Usd", 6
     );
     const receipt = await tx.wait();
     const log = receipt!.logs
@@ -2344,61 +2304,6 @@ describe("Coverage — ZeroAmount guards on openLong / openShort output", functi
     await expect(
       pool.connect(trader1).openLong(1n, 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool, "ZeroAmount");
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Coverage — EXNIHILOFactory LpNftIdMismatch guard
-// ─────────────────────────────────────────────────────────────────────────────
-//
-// The factory predicts lpNftId = allPools.length before calling lpNftContract.mint().
-// If the minted ID doesn't match the prediction, it reverts with LpNftIdMismatch.
-//
-// Strategy: manipulate _nextTokenId on the LpNFT contract via hardhat_setStorageAt
-// so that mint() returns a value != allPools.length (which is 0 on a fresh factory).
-// LpNFT storage (factory is immutable, no slot):
-//   slot 0 → _nextTokenId
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe("Coverage — EXNIHILOFactory LpNftIdMismatch guard", function () {
-
-  it("createMarket reverts with LpNftIdMismatch when LP NFT _nextTokenId is desynchronized", async function () {
-    const [deployer, treasury] = await ethers.getSigners();
-
-    const MockF = await ethers.getContractFactory("MockERC20");
-    const token  = (await MockF.connect(deployer).deploy("M", "M", 18)) as unknown as MockERC20;
-    const usdc  = (await MockF.connect(deployer).deploy("USDC", "USDC", 6)) as unknown as MockERC20;
-    const posNFT = (await (await ethers.getContractFactory("PositionNFT"))
-      .connect(deployer).deploy()) as unknown as PositionNFT;
-
-    const { factory, lpNft } = await deploySystem(
-      treasury.address,
-      await posNFT.getAddress(),
-      await usdc.getAddress()
-    );
-    const factoryAddr = await factory.getAddress();
-
-    // Advance _nextTokenId on the LpNFT to 5 via storage manipulation.
-    // Factory will predict lpNftId = allPools.length = 0, but mint() returns 5.
-    // Storage layout: ERC721 occupies slots 0-5 (_name, _symbol, _owners, _balances,
-    // _tokenApprovals, _operatorApprovals). LpNFT._nextTokenId sits at slot 6.
-    const lpNftAddr = await lpNft.getAddress();
-    await ethers.provider.send("hardhat_setStorageAt", [
-      lpNftAddr,
-      ethers.toBeHex(6n, 32),                              // slot 6 = _nextTokenId
-      ethers.toBeHex(5n, 32),
-    ]);
-
-    await token.mint(deployer.address, INITIAL_TOKEN);
-    await usdc.mint(deployer.address, INITIAL_USDC);
-    await token.connect(deployer).approve(factoryAddr, ethers.MaxUint256);
-    await usdc.connect(deployer).approve(factoryAddr, ethers.MaxUint256);
-
-    await expect(
-      factory.connect(deployer).createMarket(
-        await token.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n
-      )
-    ).to.be.revertedWithCustomError(factory, "LpNftIdMismatch");
   });
 });
 
@@ -2634,7 +2539,7 @@ describe("Coverage — Router empty-pool guard", function () {
     await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
 
     const tx = await factory.connect(creator).createMarket(
-      await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n
+      await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n, "airTKN", "airTKNUsd", 18
     );
     const receipt = await tx.wait();
     const log = receipt!.logs

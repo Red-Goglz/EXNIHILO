@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAccount, useSwitchChain } from "wagmi";
+import { useFormo } from "@formo/analytics";
 import { avalancheFuji, hardhat } from "viem/chains";
 import ConnectButton from "../wallet/ConnectButton.tsx";
 import FaucetButtons from "../wallet/FaucetButton.tsx";
@@ -24,8 +25,16 @@ const CHAIN_LABELS: Record<number, string> = {
 export default function Layout() {
   const { pathname } = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
-  const { chainId, isConnected } = useAccount();
+  const { address, chainId, isConnected } = useAccount();
   const { switchChain } = useSwitchChain();
+  const analytics = useFormo();
+
+  // Identify wallet on connect / page load
+  useEffect(() => {
+    if (address && analytics) {
+      analytics.identify({ address });
+    }
+  }, [address, analytics]);
 
   // Close mobile menu on route change
   useEffect(() => { setMenuOpen(false); }, [pathname]);

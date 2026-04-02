@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAccount, useReadContracts, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
+import { useFormo } from "@formo/analytics";
 import { exnihiloPoolAbi, exnihiloRouterAbi, erc20Abi } from "@exnihilio/abis";
 import { parseUnits, formatToken, formatUsdc } from "../../lib/format.ts";
 import { quoteLong, quoteShort } from "../../lib/amm.ts";
@@ -27,6 +28,7 @@ export default function LongShortPanel({
 }: LongShortPanelProps) {
   const { address } = useAccount();
   const queryClient = useQueryClient();
+  const analytics = useFormo();
 
   const [isLong, setIsLong] = useState(true);
   const [usdcInput, setUsdcInput] = useState("");
@@ -210,9 +212,15 @@ export default function LongShortPanel({
   useEffect(() => {
     if (openSuccess) {
       queryClient.invalidateQueries();
+      analytics?.track(isLong ? "Position Opened Long" : "Position Opened Short", {
+        pool: poolAddress,
+        tokenSymbol,
+        usdcNotional: usdcRaw.toString(),
+        fee: feePulled.toString(),
+      });
       setUsdcInput("");
     }
-  }, [openSuccess, queryClient]);
+  }, [openSuccess, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const approveStatus = approvePending ? "pending" : approveConfirming ? "confirming" : approveSuccess ? "success" : (approveRejected || approveFailed) ? "error" : "idle";
   const openStatus = openPending ? "pending" : openConfirming ? "confirming" : openSuccess ? "success" : (openRejected || openFailed || openTimedOut) ? "error" : "idle";

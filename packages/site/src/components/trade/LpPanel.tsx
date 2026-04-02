@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useAccount, useReadContracts, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
+import { useFormo } from "@formo/analytics";
 import { exnihiloPoolAbi, lpNFTAbi, erc20Abi } from "@exnihilio/abis";
 import { parseUnits, formatUsdc, formatToken } from "../../lib/format.ts";
 import TokenInput from "../shared/TokenInput.tsx";
@@ -25,6 +26,7 @@ export default function LpPanel({
 }: LpPanelProps) {
   const { address } = useAccount();
   const queryClient = useQueryClient();
+  const analytics = useFormo();
 
   const [tokenInput, setTokenInput] = useState("");
   const [usdcInput, setUsdcInput] = useState("");
@@ -276,7 +278,10 @@ export default function LpPanel({
                   functionName: "addLiquidity",
                   args: [tokenRaw, usdcRaw],
                 },
-                { onSuccess: handleSuccess }
+                { onSuccess: () => {
+                  handleSuccess();
+                  analytics?.track("Liquidity Added", { pool: poolAddress, tokenSymbol, usdcAmount: usdcRaw.toString() });
+                }}
               )
             }
             disabled={tokenRaw === 0n || usdcRaw === 0n}
@@ -330,7 +335,10 @@ export default function LpPanel({
                 abi: exnihiloPoolAbi,
                 functionName: "removeLiquidity",
               },
-              { onSuccess: handleSuccess }
+              { onSuccess: () => {
+                handleSuccess();
+                analytics?.track("Liquidity Removed", { pool: poolAddress, tokenSymbol });
+              }}
             )
           }
           disabled={hasOpenPositions}
@@ -350,7 +358,10 @@ export default function LpPanel({
               abi: exnihiloPoolAbi,
               functionName: "claimFees",
             },
-            { onSuccess: handleSuccess }
+            { onSuccess: () => {
+              handleSuccess();
+              analytics?.track("Fees Claimed", { pool: poolAddress, amount: lpFees?.toString() });
+            }}
           )
         }
         disabled={!lpFees || lpFees === 0n}

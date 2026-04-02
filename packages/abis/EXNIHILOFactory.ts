@@ -89,6 +89,56 @@ export const exnihiloFactoryAbi = [
     "type": "error"
   },
   {
+    "inputs": [],
+    "name": "OnlyDeployer",
+    "type": "error"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "oldDeployer",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "newDeployer",
+        "type": "address"
+      }
+    ],
+    "name": "DeployerUpdated",
+    "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "deployer",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "newDeployer",
+        "type": "address"
+      }
+    ],
+    "name": "setDeployer",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
     "anonymous": false,
     "inputs": [
       {
@@ -212,6 +262,21 @@ export const exnihiloFactoryAbi = [
         "internalType": "uint256",
         "name": "positionDuration",
         "type": "uint256"
+      },
+      {
+        "internalType": "string",
+        "name": "airTokenName",
+        "type": "string"
+      },
+      {
+        "internalType": "string",
+        "name": "airUsdName",
+        "type": "string"
+      },
+      {
+        "internalType": "uint8",
+        "name": "tokenDecimals",
+        "type": "uint8"
       }
     ],
     "name": "createMarket",

@@ -87,6 +87,13 @@ interface ILpNFT {
     function ownerOf(uint256 tokenId) external view returns (address);
 }
 
+/**
+ * @dev Minimal interface to EXNIHILOFactory — pool reads the emergency deployer.
+ */
+interface IEXNIHILOFactory {
+    function deployer() external view returns (address);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // EXNIHILOPool
 // ─────────────────────────────────────────────────────────────────────────────
@@ -204,6 +211,8 @@ contract EXNIHILOPool is ReentrancyGuard {
     /// @notice Swap fee in bps applied to all AMM modes (e.g. 100 = 1 %). Applied in SWAP-1, SWAP-2, and SWAP-3.
     uint256 public immutable swapFeeBps;
 
+    /// @notice Factory that deployed this pool. Used to look up the emergency deployer.
+    IEXNIHILOFactory public immutable factory;
 
     // ── Mutable state ─────────────────────────────────────────────────────────
 
@@ -229,6 +238,10 @@ contract EXNIHILOPool is ReentrancyGuard {
     ///         Set at market creation (1 hour – 1 year, default 7 days).
     uint256 public immutable positionDuration;
 
+    /// @notice Timestamp after which no new positions can be opened and
+    ///         existing positions cannot be renewed past. 0 = pool is open.
+    uint256 public closeDate;
+
     // ── Custom errors ─────────────────────────────────────────────────────────
 
     error OnlyLpHolder();
@@ -251,6 +264,10 @@ contract EXNIHILOPool is ReentrancyGuard {
     error FeeOnTransferNotSupported();
     error InvalidPositionDuration();
     error PositionNotExpired();
+    error PoolClosing();
+    error PoolAlreadyClosed();
+    error RenewalExceedsCloseDate();
+    error OnlyLpHolderOrDeployer();
 
     // ── Events ────────────────────────────────────────────────────────────────
 
@@ -260,6 +277,7 @@ contract EXNIHILOPool is ReentrancyGuard {
     event PositionOpened(uint256 indexed nftId, address indexed holder, bool isLong);
     event PositionClosed(uint256 indexed nftId, address indexed holder, uint256 payout);
     event PositionLiquidated(uint256 indexed nftId, address indexed liquidator, uint256 payout);
+    event PoolClosed(address indexed closedBy, uint256 closeDate);
 
 
     // ── Modifiers ─────────────────────────────────────────────────────────────
@@ -286,6 +304,33 @@ contract EXNIHILOPool is ReentrancyGuard {
         maxPositionBps = newBps;
     }
 
+    /**
+     * @notice Initiate pool closure. Sets closeDate = now + positionDuration.
+     *
+     *         Once set:
+     *           - No new positions can be opened (openLong / openShort revert).
+     *           - Positions cannot be renewed past closeDate.
+     *           - After closeDate all positions are guaranteed expired and can
+     *             be liquidated, allowing the LP to call removeLiquidity().
+     *
+     *         Callable by the LP NFT holder or the factory's emergency deployer.
+     *         Irreversible — reverts if already closed.
+     */
+    function closePool() external nonReentrant {
+        if (closeDate != 0) revert PoolAlreadyClosed();
+
+        address lpHolder = lpNftContract.ownerOf(lpNftId);
+        address emergencyDeployer = factory.deployer();
+
+        if (msg.sender != lpHolder && msg.sender != emergencyDeployer) {
+            revert OnlyLpHolderOrDeployer();
+        }
+
+        closeDate = block.timestamp + positionDuration;
+
+        emit PoolClosed(msg.sender, closeDate);
+    }
+
     // ── Constructor ───────────────────────────────────────────────────────────
 
     /**
@@ -302,6 +347,7 @@ contract EXNIHILOPool is ReentrancyGuard {
      * @param swapFeeBps_       Swap fee in bps for all AMM modes (e.g. 100 = 1 %).
      * @param positionDuration_ Position lifetime in seconds (1 hour – 1 year).
      *                          Pass 0 for the default of 7 days.
+     * @param factory_          Factory that deployed this pool (for emergency deployer lookup).
      */
     constructor(
         address airToken_,
@@ -315,7 +361,8 @@ contract EXNIHILOPool is ReentrancyGuard {
         uint256 maxPositionUsd_,
         uint256 maxPositionBps_,
         uint256 swapFeeBps_,
-        uint256 positionDuration_
+        uint256 positionDuration_,
+        address factory_
     ) {
         if (airToken_     == address(0)) revert ZeroAddress();
         if (airUsdToken_      == address(0)) revert ZeroAddress();
@@ -324,6 +371,7 @@ contract EXNIHILOPool is ReentrancyGuard {
         if (positionNFT_      == address(0)) revert ZeroAddress();
         if (lpNftContract_    == address(0)) revert ZeroAddress();
         if (protocolTreasury_ == address(0)) revert ZeroAddress();
+        if (factory_          == address(0)) revert ZeroAddress();
         if (maxPositionBps_ != 0 && (maxPositionBps_ < 10 || maxPositionBps_ > 9900)) {
             revert InvalidMaxPositionBps();
         }
@@ -340,6 +388,7 @@ contract EXNIHILOPool is ReentrancyGuard {
         maxPositionUsd   = maxPositionUsd_;
         maxPositionBps   = maxPositionBps_;
         swapFeeBps       = swapFeeBps_;
+        factory          = IEXNIHILOFactory(factory_);
 
         if (positionDuration_ == 0) {
             positionDuration = 7 days;
@@ -415,6 +464,7 @@ contract EXNIHILOPool is ReentrancyGuard {
         uint256 minAirTokenOut,
         address recipient
     ) external nonReentrant {
+        if (closeDate != 0) revert PoolClosing();
         if (recipient == address(0)) revert ZeroAddress();
         if (usdcAmount == 0) revert ZeroAmount();
         if (backedAirToken == 0 || backedAirUsd == 0) revert InsufficientBackedReserves();
@@ -644,6 +694,7 @@ contract EXNIHILOPool is ReentrancyGuard {
         uint256 minAirUsdOut,
         address recipient
     ) external nonReentrant {
+        if (closeDate != 0) revert PoolClosing();
         if (recipient == address(0)) revert ZeroAddress();
         if (usdcNotional == 0) revert ZeroAmount();
         if (backedAirToken == 0 || backedAirUsd == 0) revert InsufficientBackedReserves();
@@ -954,6 +1005,9 @@ contract EXNIHILOPool is ReentrancyGuard {
         uint256 base = pos.deadline > block.timestamp ? pos.deadline : block.timestamp;
         uint256 newDeadline = base + positionDuration;
 
+        // If pool is closing, the new deadline must not exceed closeDate.
+        if (closeDate != 0 && newDeadline > closeDate) revert RenewalExceedsCloseDate();
+
         // EFFECTS
         lpFeesAccumulated += lpFee;
 
@@ -1000,12 +1054,53 @@ contract EXNIHILOPool is ReentrancyGuard {
 
     /**
      * @notice Current AMM spot price: USDC per whole token (divide by 1e6 for USD).
+     *         Uses SWAP-1 backed reserves: backedAirUsd / backedAirToken.
      */
     function spotPrice() external view returns (uint256) {
         if (backedAirToken == 0) return 0;
         return (backedAirUsd * (10 ** uint256(airToken.decimals()))) / backedAirToken;
     }
 
+    /**
+     * @notice Long entry price (SWAP-2 marginal rate): airUsd.totalSupply() / backedAirToken.
+     *         This is the effective token price when opening a long.
+     */
+    function longPrice() external view returns (uint256) {
+        if (backedAirToken == 0) return 0;
+        return (airUsdToken.totalSupply() * (10 ** uint256(airToken.decimals()))) / backedAirToken;
+    }
+
+    /**
+     * @notice Short entry price (SWAP-3 marginal rate): backedAirUsd / airToken.totalSupply().
+     *         This is the effective token price when opening a short.
+     */
+    function shortPrice() external view returns (uint256) {
+        uint256 supply = airToken.totalSupply();
+        if (supply == 0) return 0;
+        return (backedAirUsd * (10 ** uint256(airToken.decimals()))) / supply;
+    }
+
+    /**
+     * @notice Effective per-position leverage cap in USDC (6 dec).
+     *         Returns min(maxPositionUsd, maxPositionBps % of backedAirUsd).
+     *         Returns type(uint256).max if both caps are disabled.
+     */
+    function effectiveLeverageCap() external view returns (uint256) {
+        uint256 cap = type(uint256).max;
+        if (maxPositionUsd > 0) cap = maxPositionUsd;
+        if (maxPositionBps > 0) {
+            uint256 bpsCap = (backedAirUsd * maxPositionBps) / BPS_DENOM;
+            if (bpsCap < cap) cap = bpsCap;
+        }
+        return cap;
+    }
+
+    /**
+     * @notice Returns true if the pool is closing (closeDate has been set).
+     */
+    function isClosing() external view returns (bool) {
+        return closeDate != 0;
+    }
 
     // =========================================================================
     // INTERNAL — swap helpers

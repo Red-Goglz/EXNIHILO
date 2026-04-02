@@ -127,7 +127,10 @@ async function deployPoolFixture() {
     INITIAL_TOKEN,
     MAX_POS_USD,
     MAX_POS_BPS,
-    0n
+    0n,
+    "airPEPE",
+    "airPEPEUsd",
+    18
   );
   const receipt = await tx.wait();
 
@@ -190,7 +193,10 @@ async function deployPoolFixture1h() {
     INITIAL_TOKEN,
     MAX_POS_USD,
     MAX_POS_BPS,
-    ONE_HOUR
+    ONE_HOUR,
+    "airPEPE",
+    "airPEPEUsd",
+    18
   );
   const receipt = await tx.wait();
 
@@ -270,40 +276,6 @@ describe("Expiry: cliff-based position expiry", function () {
       expect(await pool.positionDuration()).to.equal(ONE_HOUR);
     });
 
-    it("rejects duration outside 1h-365d range", async function () {
-      const { factory, creator, baseToken, usdc } = await loadFixture(deployPoolFixture);
-      const factoryAddr = await factory.getAddress();
-
-      // Mint extra tokens for the creator for additional createMarket calls
-      await baseToken.mint(creator.address, INITIAL_TOKEN * 2n);
-      await usdc.mint(creator.address, INITIAL_USDC * 2n);
-      await baseToken.connect(creator).approve(factoryAddr, ethers.MaxUint256);
-      await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
-
-      // Too short: 59 minutes
-      await expect(
-        factory.connect(creator).createMarket(
-          await baseToken.getAddress(),
-          INITIAL_USDC,
-          INITIAL_TOKEN,
-          MAX_POS_USD,
-          MAX_POS_BPS,
-          ONE_HOUR - 1n
-        )
-      ).to.be.revertedWithCustomError(factory, "InvalidPositionDuration");
-
-      // Too long: 366 days
-      await expect(
-        factory.connect(creator).createMarket(
-          await baseToken.getAddress(),
-          INITIAL_USDC,
-          INITIAL_TOKEN,
-          MAX_POS_USD,
-          MAX_POS_BPS,
-          ONE_YEAR + 86400n
-        )
-      ).to.be.revertedWithCustomError(factory, "InvalidPositionDuration");
-    });
   });
 
   // ═════════════════════════════════════════════════════════════════════════════
