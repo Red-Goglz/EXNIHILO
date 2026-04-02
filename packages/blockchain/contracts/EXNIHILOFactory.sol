@@ -94,6 +94,7 @@ contract EXNIHILOFactory is ReentrancyGuard {
     error ZeroAddress();
     error ZeroAmount();
     error InvalidMaxPositionBps(uint256 bps);
+    error InvalidPositionDuration();
     error LpNftIdMismatch(uint256 expected, uint256 actual);
 
     // ── Events ────────────────────────────────────────────────────────────────
@@ -118,7 +119,8 @@ contract EXNIHILOFactory is ReentrancyGuard {
         uint256 lpNftId,
         address indexed creator,
         uint256 maxPositionUsd,
-        uint256 maxPositionBps
+        uint256 maxPositionBps,
+        uint256 positionDuration
     );
 
     // ── Constructor ───────────────────────────────────────────────────────────
@@ -188,7 +190,8 @@ contract EXNIHILOFactory is ReentrancyGuard {
         uint256 usdcAmount,
         uint256 tokenAmount,
         uint256 maxPositionUsd,
-        uint256 maxPositionBps
+        uint256 maxPositionBps,
+        uint256 positionDuration
     ) external nonReentrant returns (address pool, uint256 lpNftId) {
         // ── 1. Input validation ───────────────────────────────────────────────
 
@@ -201,8 +204,12 @@ contract EXNIHILOFactory is ReentrancyGuard {
         if (maxPositionBps != 0 && (maxPositionBps < 10 || maxPositionBps > 9900)) {
             revert InvalidMaxPositionBps(maxPositionBps);
         }
+        if (positionDuration != 0 && (positionDuration < 1 hours || positionDuration > 365 days)) {
+            revert InvalidPositionDuration();
+        }
 
         // ── 2. Pull tokens from caller ────────────────────────────────────────
+        //    Fee-on-transfer tokens are rejected by the pool's own _transferIn guard.
 
         IERC20(usdc).safeTransferFrom(msg.sender, address(this), usdcAmount);
         IERC20(tokenAddress).safeTransferFrom(msg.sender, address(this), tokenAmount);
@@ -247,7 +254,8 @@ contract EXNIHILOFactory is ReentrancyGuard {
             protocolTreasury,
             maxPositionUsd,
             maxPositionBps,
-            defaultSwapFeeBps
+            defaultSwapFeeBps,
+            positionDuration
         );
 
         pool = address(deployedPool);
@@ -310,7 +318,8 @@ contract EXNIHILOFactory is ReentrancyGuard {
             lpNftId,
             msg.sender,
             maxPositionUsd,
-            maxPositionBps
+            maxPositionBps,
+            positionDuration
         );
     }
 

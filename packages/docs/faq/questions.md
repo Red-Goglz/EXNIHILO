@@ -14,7 +14,7 @@ No. EXNIHILO has no governance token and no plans for one. The protocol is immut
 ## Trading
 
 ### Can I get liquidated?
-No. There is no liquidation engine. Your position stays open until you choose to close it, or the LP force-realizes it (only when underwater AND you get the locked tokens anyway).
+Positions have a deadline. After expiry, anyone can liquidate your position. Profitable positions pay you the profit minus 1% fee; underwater positions return collateral to the LP. Renew before the deadline to avoid this.
 
 ### What's my maximum loss?
 Your maximum loss is the USDC fees you paid. You cannot lose more than that.
@@ -33,8 +33,8 @@ Common reasons:
 ### Can I transfer my position?
 Yes. Position NFTs are standard ERC-721 tokens. Use any wallet or marketplace to transfer them.
 
-### What happens if the LP force-realizes my position?
-Your position is settled and the NFT is burned. You received the locked tokens.
+### What happens if my position expires?
+If not renewed before the deadline, anyone can call `liquidateExpired`. Profitable positions still pay you; underwater ones return collateral to the LP with no payout.
 
 ### How is P&L calculated?
 From current pool reserves at the time of closing. See [P&L Calculation](/trading/pnl) for the formulas.
@@ -48,4 +48,4 @@ Only one LP per pool — the market creator. If you want to LP, create your own 
 Three ways: 3% base fee on every position opened + dynamic impact fee (scales with position size) + passive swap fee yield. See [Fee Earnings](/lp/fees).
 
 ### Can the LP rug the pool?
-The LP can withdraw liquidity only when there is no open position. The LP can force-realize underwater positions. If you are in profit, the LP can't close or withdraw the liquidity. 
+The LP can withdraw liquidity only when there are no open positions. If positions are open, the LP must wait for them to close, be realized, or expire. The LP cannot force-close profitable positions.

@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 interface IEXNIHILOFactory {
     function isPool(address pool) external view returns (bool);
@@ -31,7 +32,7 @@ interface IEXNIHILOPool {
  *         and position exits (closeLong, closeShort, realizeLong, realizeShort)
  *         are called directly on the pool — the router does not wrap them.
  */
-contract EXNIHILORouter {
+contract EXNIHILORouter is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     IEXNIHILOFactory public immutable factory;
@@ -65,7 +66,11 @@ contract EXNIHILORouter {
             fee = MIN_POSITION_FEE;
         }
         // OI-integral impact fee — must match EXNIHILOPool.openLong / openShort.
+        // Guard: if the pool is empty the impact denominator is zero. Return the
+        // base fee and let the pool's own InsufficientBackedReserves check revert
+        // with a clean error message.
         uint256 backedUsd = IEXNIHILOPool(pool).backedAirUsd();
+        if (backedUsd == 0) return fee;
         uint256 oi = isLong
             ? IEXNIHILOPool(pool).longOpenInterest()
             : IEXNIHILOPool(pool).shortOpenInterest();
@@ -79,7 +84,7 @@ contract EXNIHILORouter {
         address pool,
         uint256 usdcAmount,
         uint256 minAirTokenOut
-    ) external onlyPool(pool) {
+    ) external nonReentrant onlyPool(pool) {
         uint256 fee = _positionFee(usdcAmount, pool, true);
         usdc.safeTransferFrom(msg.sender, address(this), fee);
         usdc.forceApprove(pool, fee);
@@ -92,7 +97,7 @@ contract EXNIHILORouter {
         address pool,
         uint256 usdcNotional,
         uint256 minAirUsdOut
-    ) external onlyPool(pool) {
+    ) external nonReentrant onlyPool(pool) {
         uint256 fee = _positionFee(usdcNotional, pool, false);
         usdc.safeTransferFrom(msg.sender, address(this), fee);
         usdc.forceApprove(pool, fee);
@@ -106,7 +111,7 @@ contract EXNIHILORouter {
         uint256 amountIn,
         uint256 minAmountOut,
         bool tokenToUsdc
-    ) external onlyPool(pool) {
+    ) external nonReentrant onlyPool(pool) {
         IERC20 tokenIn = tokenToUsdc
             ? IEXNIHILOPool(pool).underlyingToken()
             : usdc;
@@ -115,5 +120,15 @@ contract EXNIHILORouter {
         tokenIn.forceApprove(pool, amountIn);
         IEXNIHILOPool(pool).swap(amountIn, minAmountOut, tokenToUsdc, msg.sender);
         tokenIn.forceApprove(pool, 0);
+    }
+
+    /// @notice Rescue ERC-20 tokens accidentally sent to this contract.
+    ///         The Router should never hold tokens between transactions.
+    ///         Callable by anyone — sends the full balance to the caller.
+    function sweep(IERC20 token) external {
+        uint256 balance = token.balanceOf(address(this));
+        if (balance > 0) {
+            token.safeTransfer(msg.sender, balance);
+        }
     }
 }

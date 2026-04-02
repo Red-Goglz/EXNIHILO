@@ -162,6 +162,7 @@ async function deployPoolWithLiquidity(
   );
 
   const factoryAddr = await factory.getAddress();
+  await positionNFT.connect(deployer).initFactory(factoryAddr);
 
   // Fund creator and create market (no leverage caps — test the fee protection itself)
   await baseToken.mint(creator.address, initialToken);
@@ -174,7 +175,8 @@ async function deployPoolWithLiquidity(
     initialUsdc,
     initialToken,
     0n,  // no hard cap
-    0n   // no bps cap
+    0n,  // no bps cap
+    0n
   );
   const receipt = await tx.wait();
   const iface = factory.interface;
@@ -215,7 +217,7 @@ async function openLong(
   const receipt = await tx.wait();
   const log = receipt!.logs
     .map((l) => { try { return pool.interface.parseLog(l); } catch { return null; } })
-    .find((l) => l?.name === "LongOpened")!;
+    .find((l) => l?.name === "PositionOpened")!;
   return log.args.nftId as bigint;
 }
 
@@ -228,7 +230,7 @@ async function openShort(
   const receipt = await tx.wait();
   const log = receipt!.logs
     .map((l) => { try { return pool.interface.parseLog(l); } catch { return null; } })
-    .find((l) => l?.name === "ShortOpened")!;
+    .find((l) => l?.name === "PositionOpened")!;
   return log.args.nftId as bigint;
 }
 

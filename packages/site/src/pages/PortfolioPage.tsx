@@ -23,6 +23,7 @@ interface OnChainPosition {
   airTokenMinted: bigint;
   feesPaid: bigint;
   openedAt: bigint;
+  deadline: bigint;
 }
 
 function PortfolioContent() {

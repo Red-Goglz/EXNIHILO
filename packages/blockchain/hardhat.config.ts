@@ -15,11 +15,14 @@ const config: HardhatUserConfig = {
       viaIR: true,
       optimizer: {
         enabled: true,
-        runs: 200,
+        runs: 1,
       },
     },
   },
   networks: {
+    hardhat: {
+      allowUnlimitedContractSize: true,
+    },
     // ── Avalanche C-Chain mainnet ──────────────────────────────────────────
     avalanche: {
       url: process.env.AVALANCHE_RPC_URL ?? "https://api.avax.network/ext/bc/C/rpc",

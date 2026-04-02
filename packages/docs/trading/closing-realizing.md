@@ -27,11 +27,20 @@ Closing fully settles your position and returns USDC. Only possible when in prof
 
 Realize releases the locked airTokens instead of swapping to USDC. The synthetic airUsd has to be paid to clear the pool imbalance. The position is still fully settled and the NFT is burned.
 
-This is useful for:
-- LP force-realize operations (see [Force Realize Positions](/lp/force-realize))
-- Situations where the trader wants to exit and receive the tokens (for staking or governance)
+This is useful for situations where the trader wants to exit and receive the tokens (for staking or governance).
 
-## Who can close / realize?
+## Position expiry
 
-- **Close** — only the NFT owner (the trader)
-- **Realize** — the NFT owner *or* the LP (via force realize when underwater)
+Every position has a **deadline**. After the deadline, anyone can call `liquidateExpired(nftId)`:
+
+- **Profitable**: closed like normal — holder receives USDC profit minus 1% fee
+- **Underwater**: collateral returns to LP, synthetic debt burned, no payout
+
+To avoid expiry, call `renewPosition(nftId)` before the deadline. This pays 5% of notional and extends the deadline by one position duration. See [Expiry & Renewal](/positions/expiry).
+
+## Who can close / realize / liquidate?
+
+- **Close** — only the NFT owner (the trader), at any time
+- **Realize** — only the NFT owner
+- **liquidateExpired** — anyone, but only after the deadline
+- **renewPosition** — anyone, at any time (pay fee to extend deadline)

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useWriteContract, useWaitForTransactionReceipt, useReadContracts } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
 import { exnihiloPoolAbi, erc20Abi } from "@exnihilio/abis";
@@ -15,6 +15,7 @@ interface Position {
   airTokenMinted: bigint;
   feesPaid: bigint;
   openedAt: bigint;
+  deadline: bigint;
 }
 
 interface PositionCardProps {
@@ -62,6 +63,18 @@ function WithTooltip({ tip, children }: { tip: string; children: React.ReactNode
   );
 }
 
+/** Format seconds remaining as "Xd Xh Xm Xs" */
+function fmtCountdown(seconds: number): string {
+  if (seconds <= 0) return "EXPIRED";
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  return `${m}m ${s}s`;
+}
+
 export default function PositionCard({
   tokenId,
   position,
@@ -93,7 +106,7 @@ export default function PositionCard({
     query: { enabled: !!underlyingToken },
   });
 
-  const tokenSymbol = (tokenMeta?.[0]?.result as string | undefined) ?? "…";
+  const tokenSymbol = (tokenMeta?.[0]?.result as string | undefined) ?? "...";
 
   const { data: supplyData } = useReadContracts({
     contracts: airTokenAddress && airUsdAddress ? [
@@ -106,6 +119,14 @@ export default function PositionCard({
   const airTokenTotalSupply = supplyData?.[0]?.result as bigint | undefined;
   const airUsdTotalSupply  = supplyData?.[1]?.result as bigint | undefined;
 
+  // Compute renewal fee client-side (5% of notional)
+  const notional = position.isLong ? position.airUsdMinted : position.usdcIn;
+  const renewalFee = (() => {
+    const fee = (notional * 500n) / 10_000n; // 5% base
+    return fee < 50_000n ? 50_000n : fee; // min 0.05 USDC
+  })();
+
+  // ── Close / Realize tx state ────────────────────────────────────────────
   const { writeContract, data: txHash, isPending } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
 
@@ -117,24 +138,34 @@ export default function PositionCard({
     ? "success"
     : "idle";
 
+  // ── Renew tx state ──────────────────────────────────────────────────────
+  const { writeContract: writeRenew, data: renewHash, isPending: renewPending } = useWriteContract();
+  const { isLoading: renewConfirming, isSuccess: renewSuccess } = useWaitForTransactionReceipt({ hash: renewHash });
+
+  const renewStatus = renewPending
+    ? "pending"
+    : renewConfirming
+    ? "confirming"
+    : renewSuccess
+    ? "success"
+    : "idle";
+
   const handleSuccess = () => queryClient.invalidateQueries();
 
-  // ── PnL & close-eligibility ─────────────────────────────────────────────
-  // Uses the exact same formulas as the contract, not the SWAP-1 spot price.
-  // PnL displayed is the net amount after the 1% close fee on profit.
-  //
-  // Close Long  (SWAP-3):
-  //   airUsdOut  = lockedAmount * backedAirUsd / airToken.totalSupply()
-  //   canClose   = airUsdOut >= airUsdMinted
-  //   surplus    = airUsdOut - airUsdMinted
-  //   netSurplus = surplus * 99%  (after 1% close fee)
-  //
-  // Close Short (SWAP-2 inverse / cpAmountIn):
-  //   airUsdCost  = airUsd.totalSupply() * airTokenMinted / (backedAirToken - airTokenMinted)
-  //   canClose    = airUsdCost <= lockedAmount
-  //   surplus     = lockedAmount - airUsdCost
-  //   netSurplus  = surplus * 99%  (after 1% close fee)
+  // ── Countdown timer ─────────────────────────────────────────────────────
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
 
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const deadlineNum = Number(position.deadline);
+  const secondsLeft = deadlineNum - now;
+  const isExpired = secondsLeft <= 0;
+  const isUrgent = secondsLeft > 0 && secondsLeft < 3600; // <1h
+
+  // ── PnL & close-eligibility ─────────────────────────────────────────────
   const CLOSE_FEE_BPS = 100n; // 1%
 
   let pnlDisplay = "";
@@ -162,11 +193,8 @@ export default function PositionCard({
         }
       }
     } else {
-      // Denominator of cpAmountIn: backedAirToken - airTokenMinted
-      // If denominator <= 0 the pool can't satisfy the swap (extremely depleted).
       const denom = backedAirToken! - position.airTokenMinted;
       if (denom > 0n) {
-        // Ceiling division matches contract rounding (rounds cost up, conservative).
         const airUsdCost =
           (airUsdTotalSupply! * position.airTokenMinted + denom - 1n) / denom;
         canClose    = airUsdCost <= position.lockedAmount;
@@ -183,6 +211,7 @@ export default function PositionCard({
   }
 
   const openedDate = new Date(Number(position.openedAt) * 1000).toLocaleDateString();
+  const deadlineDate = new Date(deadlineNum * 1000).toLocaleDateString();
 
   return (
     <div
@@ -230,6 +259,68 @@ export default function PositionCard({
       {/* Divider */}
       <div style={{ height: 1, background: "var(--border)" }} />
 
+      {/* Deadline / Timer */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "8px 10px",
+          background: isExpired
+            ? "rgba(255,59,48,0.08)"
+            : isUrgent
+            ? "rgba(255,140,0,0.08)"
+            : "rgba(0,229,255,0.04)",
+          border: `1px solid ${
+            isExpired ? "rgba(255,59,48,0.25)" : isUrgent ? "rgba(255,140,0,0.25)" : "rgba(0,229,255,0.1)"
+          }`,
+        }}
+      >
+        <div>
+          <div
+            style={{
+              fontSize: "0.5rem",
+              letterSpacing: "0.15em",
+              color: "var(--muted)",
+              marginBottom: 2,
+            }}
+          >
+            {isExpired ? "EXPIRED" : "EXPIRES"}
+          </div>
+          <div
+            style={{
+              fontSize: "0.72rem",
+              fontWeight: 600,
+              color: isExpired ? "var(--red)" : isUrgent ? "var(--orange)" : "var(--cyan)",
+              letterSpacing: "0.06em",
+            }}
+          >
+            {isExpired ? deadlineDate : fmtCountdown(secondsLeft)}
+          </div>
+        </div>
+
+        {/* Renew button */}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+          <TxButton
+            idleLabel={`Renew ($${formatUsdc(renewalFee)})`}
+            status={renewStatus}
+            variant="default"
+            onClick={() =>
+              writeRenew(
+                {
+                  address: position.pool,
+                  abi: exnihiloPoolAbi,
+                  functionName: "renewPosition",
+                  args: [tokenId],
+                },
+                { onSuccess: handleSuccess }
+              )
+            }
+            style={{ fontSize: "0.56rem", padding: "4px 10px" }}
+          />
+        </div>
+      </div>
+
       {/* Data grid */}
       <div className="grid grid-cols-2 gap-x-4 gap-y-3">
         {position.isLong && (
@@ -272,7 +363,7 @@ export default function PositionCard({
           </>
         )}
 
-        {/* PnL — shown for both long and short once spot price is available */}
+        {/* PnL */}
         {pnlDisplay && (
           <div>
             <div className="stat-label">EST. P&L</div>
@@ -298,7 +389,7 @@ export default function PositionCard({
 
       {/* Pool address */}
       <p style={{ fontSize: "0.58rem", color: "var(--muted)", letterSpacing: "0.03em" }}>
-        Pool: {position.pool.slice(0, 10)}…{position.pool.slice(-6)}
+        Pool: {position.pool.slice(0, 10)}...{position.pool.slice(-6)}
       </p>
 
       {/* Actions */}
@@ -352,7 +443,9 @@ export default function PositionCard({
       {/* Close unavailable hint */}
       {!canClose && poolDataReady && (
         <p style={{ fontSize: "0.58rem", color: "var(--red)", letterSpacing: "0.04em", marginTop: -6 }}>
-          ✕ Position is underwater — close unavailable until PnL turns positive
+          {isExpired
+            ? "EXPIRED -- position can be liquidated by anyone"
+            : "Position is underwater -- close unavailable until PnL turns positive"}
         </p>
       )}
     </div>

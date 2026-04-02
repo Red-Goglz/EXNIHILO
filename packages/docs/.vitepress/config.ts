@@ -59,6 +59,7 @@ export default defineConfig({
             link: "/positions/transferring",
           },
           { text: "On-chain SVG Metadata", link: "/positions/metadata" },
+          { text: "Expiry & Renewal", link: "/positions/expiry" },
         ],
       },
       {
@@ -69,10 +70,6 @@ export default defineConfig({
           { text: "Adding / Withdrawing", link: "/lp/add-withdraw" },
           { text: "Fee Earnings", link: "/lp/fees" },
           { text: "Position Caps", link: "/lp/position-caps" },
-          {
-            text: "Force Realize Positions",
-            link: "/lp/force-realize",
-          },
         ],
       },
       {

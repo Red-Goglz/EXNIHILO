@@ -33,11 +33,17 @@ interface IEXNIHILOPool {
     function airToken()   external view returns (address);
     function airUsdToken()    external view returns (address);
     function underlyingToken() external view returns (address);
+    function swapFeeBps()    external view returns (uint256);
 }
 
 interface ITokenMeta {
     function totalSupply() external view returns (uint256);
     function symbol()      external view returns (string memory);
+    function decimals()    external view returns (uint8);
+}
+
+interface IEXNIHILOFactory {
+    function isPool(address pool) external view returns (bool);
 }
 
 contract PositionNFT is ERC721Enumerable {
@@ -61,6 +67,8 @@ contract PositionNFT is ERC721Enumerable {
         uint256 airTokenMinted;
         uint256 feesPaid;
         uint256 openedAt;
+        /// @dev Timestamp after which the position can be liquidated by anyone.
+        uint256 deadline;
     }
 
     /// @dev Live pool data resolved at tokenURI call time.
@@ -69,6 +77,7 @@ contract PositionNFT is ERC721Enumerable {
         bool   pnlReady;     // false if pool state unavailable
         bool   pnlPositive;
         uint256 pnlAbs;      // abs PnL in USDC 6-dec units
+        uint8  tokenDecimals; // underlying token decimals (for display formatting)
     }
 
     // ── State ──────────────────────────────────────────────────────────────────
@@ -76,15 +85,47 @@ contract PositionNFT is ERC721Enumerable {
     uint256 private _nextTokenId;
     mapping(uint256 => Position) private _positions;
 
+    /// @notice The deployer address (used to authorize initFactory).
+    address private immutable _deployer;
+
+    /// @notice Factory that registers valid pools. When set, mintLong/mintShort
+    ///         verify that msg.sender is a pool registered with this factory.
+    address public factory;
+
     // ── Errors ─────────────────────────────────────────────────────────────────
 
     error OnlyPool();
+    error OnlyDeployer();
+    error FactoryAlreadySet();
+    error ZeroAddress();
     error PositionNotFound();
     error PositionNotFromPool();
 
     // ── Constructor ────────────────────────────────────────────────────────────
 
-    constructor() ERC721("EXNIHILO Position", "EXPOS") {}
+    constructor() ERC721("EXNIHILO Position", "EXPOS") {
+        _deployer = msg.sender;
+    }
+
+    // ── Events ─────────────────────────────────────────────────────────────────
+
+    event FactoryInitialized(address indexed factory);
+
+    // ── Factory initialisation ────────────────────────────────────────────────
+
+    /**
+     * @notice Wire this NFT to a factory so that only registered pools may
+     *         mint positions. Called once by the deployer after the factory
+     *         contract is deployed.
+     * @param factory_ Address of the EXNIHILOFactory.
+     */
+    function initFactory(address factory_) external {
+        if (msg.sender != _deployer) revert OnlyDeployer();
+        if (factory != address(0)) revert FactoryAlreadySet();
+        if (factory_ == address(0)) revert ZeroAddress();
+        factory = factory_;
+        emit FactoryInitialized(factory_);
+    }
 
     // ── Views ──────────────────────────────────────────────────────────────────
 
@@ -133,9 +174,11 @@ contract PositionNFT is ERC721Enumerable {
         uint256 usdcIn,
         uint256 airUsdMinted,
         uint256 airTokenLocked,
-        uint256 feesPaid
+        uint256 feesPaid,
+        uint256 deadline
     ) external returns (uint256 tokenId) {
         if (msg.sender != pool) revert OnlyPool();
+        if (factory != address(0) && !IEXNIHILOFactory(factory).isPool(pool)) revert OnlyPool();
 
         IERC20(airToken).safeTransferFrom(pool, address(this), airTokenLocked);
 
@@ -149,7 +192,8 @@ contract PositionNFT is ERC721Enumerable {
             airUsdMinted: airUsdMinted,
             airTokenMinted: 0,
             feesPaid: feesPaid,
-            openedAt: block.timestamp
+            openedAt: block.timestamp,
+            deadline: deadline
         });
 
         _safeMint(to, tokenId);
@@ -161,9 +205,12 @@ contract PositionNFT is ERC721Enumerable {
         address airUsdToken,
         uint256 airTokenMinted,
         uint256 airUsdLocked,
-        uint256 feesPaid
+        uint256 usdcIn,
+        uint256 feesPaid,
+        uint256 deadline
     ) external returns (uint256 tokenId) {
         if (msg.sender != pool) revert OnlyPool();
+        if (factory != address(0) && !IEXNIHILOFactory(factory).isPool(pool)) revert OnlyPool();
 
         IERC20(airUsdToken).safeTransferFrom(pool, address(this), airUsdLocked);
 
@@ -173,14 +220,24 @@ contract PositionNFT is ERC721Enumerable {
             pool: pool,
             lockedToken: airUsdToken,
             lockedAmount: airUsdLocked,
-            usdcIn: 0,
+            usdcIn: usdcIn,
             airUsdMinted: 0,
             airTokenMinted: airTokenMinted,
             feesPaid: feesPaid,
-            openedAt: block.timestamp
+            openedAt: block.timestamp,
+            deadline: deadline
         });
 
         _safeMint(to, tokenId);
+    }
+
+    // ── Extend deadline ───────────────────────────────────────────────────────
+
+    function extendDeadline(uint256 tokenId, uint256 newDeadline) external {
+        Position storage pos = _positions[tokenId];
+        if (pos.pool == address(0)) revert PositionNotFound();
+        if (msg.sender != pos.pool) revert PositionNotFromPool();
+        pos.deadline = newDeadline;
     }
 
     // ── Release ────────────────────────────────────────────────────────────────
@@ -203,16 +260,22 @@ contract PositionNFT is ERC721Enumerable {
      *      All external calls are wrapped in try/catch so tokenURI never reverts
      *      due to pool state issues.
      *
-     *      Long PnL:
-     *        airUsdOut = lockedAmount * backedAirUsd / airToken.totalSupply()
-     *        pnl       = int(airUsdOut) - int(airUsdMinted)
+     *      Long PnL  (SWAP-3: reserveIn = airTokenSupply − locked, reserveOut = backedAirUsd):
+     *        airUsdOut = cpOut(locked, airTokenSup − locked, backedAirUsd, swapFee)
+     *        surplus   = airUsdOut − airUsdMinted
+     *        pnl       = surplus − 1 % closeFee    (if profitable)
+     *                  = airUsdMinted − airUsdOut   (if underwater, no fee)
      *
-     *      Short PnL (cpAmountIn ceiling approximation):
-     *        denom     = backedAirToken - airTokenMinted
-     *        cost      = ceil(airUsd.totalSupply() * airTokenMinted / denom)
-     *        pnl       = int(lockedAmount) - int(cost)
+     *      Short PnL (SWAP-2: reserveIn = airUsdSupply, reserveOut = backedAirToken):
+     *        totalBuyable = cpOut(locked, airUsdSup, backedAirToken, swapFee)
+     *        cost          = ceil(locked * airTokenMinted / totalBuyable)
+     *        surplus       = locked − cost
+     *        pnl           = surplus − 1 % closeFee  (if profitable)
+     *                      = cost − locked            (if underwater, no fee)
      */
     function _readLive(Position memory pos) internal view returns (LiveData memory ld) {
+        ld.tokenDecimals = 18; // safe default
+
         // Token symbol (best-effort)
         try IEXNIHILOPool(pos.pool).underlyingToken() returns (address token) {
             try ITokenMeta(token).symbol() returns (string memory sym) {
@@ -227,23 +290,50 @@ contract PositionNFT is ERC721Enumerable {
             address airUsdAddr  = IEXNIHILOPool(pos.pool).airUsdToken();
             uint256 airTokenSup  = ITokenMeta(airTokenAddr).totalSupply();
             uint256 airUsdSup   = ITokenMeta(airUsdAddr).totalSupply();
+            uint256 swapFee      = IEXNIHILOPool(pos.pool).swapFeeBps();
+
+            // Read airToken decimals for display formatting
+            try ITokenMeta(airTokenAddr).decimals() returns (uint8 d) {
+                ld.tokenDecimals = d;
+            } catch {}
 
             if (pos.isLong) {
-                if (airTokenSup > 0) {
-                    uint256 airUsdOut = (pos.lockedAmount * bau) / airTokenSup;
-                    int256  raw       = int256(airUsdOut) - int256(pos.airUsdMinted);
-                    ld.pnlReady    = true;
-                    ld.pnlPositive = raw >= 0;
-                    ld.pnlAbs      = raw >= 0 ? uint256(raw) : uint256(-raw);
+                // SWAP-3: mirrors closeLong
+                if (airTokenSup > pos.lockedAmount) {
+                    uint256 airUsdOut = _cpOut(
+                        pos.lockedAmount,
+                        airTokenSup - pos.lockedAmount,
+                        bau,
+                        swapFee
+                    );
+                    ld.pnlReady = true;
+                    if (airUsdOut >= pos.airUsdMinted) {
+                        uint256 surplus  = airUsdOut - pos.airUsdMinted;
+                        uint256 closeFee = (surplus * _CLOSE_FEE_BPS) / _BPS_DENOM;
+                        ld.pnlPositive = true;
+                        ld.pnlAbs      = surplus - closeFee;
+                    } else {
+                        ld.pnlPositive = false;
+                        ld.pnlAbs      = pos.airUsdMinted - airUsdOut;
+                    }
                 }
             } else {
-                uint256 denom = bam > pos.airTokenMinted ? bam - pos.airTokenMinted : 0;
-                if (denom > 0) {
-                    uint256 cost = (airUsdSup * pos.airTokenMinted + denom - 1) / denom;
-                    int256  raw  = int256(pos.lockedAmount) - int256(cost);
-                    ld.pnlReady    = true;
-                    ld.pnlPositive = raw >= 0;
-                    ld.pnlAbs      = raw >= 0 ? uint256(raw) : uint256(-raw);
+                // SWAP-2: mirrors closeShort — subtract lockedAmount from airUsd supply
+                // (locked airUsd is in PositionNFT, not in the pool's active reserve).
+                uint256 effectiveAirUsdSup = airUsdSup > pos.lockedAmount ? airUsdSup - pos.lockedAmount : 0;
+                uint256 totalBuyable = _cpOut(pos.lockedAmount, effectiveAirUsdSup, bam, swapFee);
+                if (totalBuyable > 0 && totalBuyable >= pos.airTokenMinted) {
+                    uint256 cost = (pos.lockedAmount * pos.airTokenMinted + totalBuyable - 1) / totalBuyable;
+                    ld.pnlReady = true;
+                    if (pos.lockedAmount > cost) {
+                        uint256 surplus  = pos.lockedAmount - cost;
+                        uint256 closeFee = (surplus * _CLOSE_FEE_BPS) / _BPS_DENOM;
+                        ld.pnlPositive = true;
+                        ld.pnlAbs      = surplus - closeFee;
+                    } else {
+                        ld.pnlPositive = false;
+                        ld.pnlAbs      = cost - pos.lockedAmount;
+                    }
                 }
             }
         } catch { /* pnlReady stays false */ }
@@ -345,7 +435,7 @@ contract PositionNFT is ERC721Enumerable {
             '<text x="20"  y="136" class="f lbl">POSITION SIZE</text>',
             '<text x="210" y="136" class="f lbl">', lockedLabel, "</text>",
             '<text x="20"  y="156" class="f val">', _fmt6(pos.usdcIn),        "</text>",
-            '<text x="210" y="156" class="f val">', _fmt18(pos.lockedAmount), "</text>",
+            '<text x="210" y="156" class="f val">', _fmtToken(pos.lockedAmount, ld.tokenDecimals), "</text>",
             '<text x="20"  y="196" class="f lbl">FEES PAID</text>',
             '<text x="20"  y="216" class="f val">', _fmt6(pos.feesPaid), "</text>"
         );
@@ -357,7 +447,7 @@ contract PositionNFT is ERC721Enumerable {
             '<text x="20"  y="136" class="f lbl">LOCKED USDC</text>',
             '<text x="210" y="136" class="f lbl">', debtLabel, "</text>",
             '<text x="20"  y="156" class="f val">', _fmt6(pos.lockedAmount), "</text>",
-            '<text x="210" y="156" class="f val">', _fmt18(pos.airTokenMinted), "</text>",
+            '<text x="210" y="156" class="f val">', _fmtToken(pos.airTokenMinted, ld.tokenDecimals), "</text>",
             '<text x="20"  y="196" class="f lbl">FEES PAID</text>',
             '<text x="20"  y="216" class="f val">', _fmt6(pos.feesPaid),     "</text>"
         );
@@ -370,6 +460,9 @@ contract PositionNFT is ERC721Enumerable {
         if (!ld.pnlReady) {
             pnlColor = "#555555";
             pnlText  = "N/A";
+        } else if (ld.pnlAbs == 0) {
+            pnlColor = "#aaaaaa";
+            pnlText  = "$0.00";
         } else if (ld.pnlPositive) {
             pnlColor = "#00ff88";
             pnlText  = string(abi.encodePacked("+$", _fmt6(ld.pnlAbs)));
@@ -393,6 +486,28 @@ contract PositionNFT is ERC721Enumerable {
         );
     }
 
+    // ── AMM math (mirrors EXNIHILOPool) ──────────────────────────────────────
+
+    uint256 private constant _BPS_DENOM      = 10_000;
+    uint256 private constant _CLOSE_FEE_BPS  = 100; // 1 % — must match EXNIHILOPool
+
+    /**
+     * @dev Constant-product output with spot-price fee, identical to
+     *      EXNIHILOPool._cpAmountOut.
+     */
+    function _cpOut(
+        uint256 amountIn,
+        uint256 reserveIn,
+        uint256 reserveOut,
+        uint256 feeBps
+    ) internal pure returns (uint256) {
+        if (reserveIn == 0 || reserveOut == 0) return 0;
+        uint256 rawOut = (amountIn * reserveOut) / (reserveIn + amountIn);
+        uint256 fee    = (amountIn * reserveOut * feeBps) / (reserveIn * _BPS_DENOM);
+        if (rawOut <= fee) return 0;
+        return rawOut - fee;
+    }
+
     // ── Formatters ─────────────────────────────────────────────────────────────
 
     function _fmt6(uint256 v) internal pure returns (string memory) {
@@ -402,14 +517,24 @@ contract PositionNFT is ERC721Enumerable {
         return string(abi.encodePacked(whole.toString(), ".", frac.toString()));
     }
 
-    function _fmt18(uint256 v) internal pure returns (string memory) {
-        uint256 whole = v / 1e18;
-        uint256 frac  = (v % 1e18) / 1e14;
+    /**
+     * @dev Format a token amount with up to 4 fractional digits, adapting to
+     *      the token's actual decimal count (works for 18, 8, 6, etc.).
+     */
+    function _fmtToken(uint256 v, uint8 dec) internal pure returns (string memory) {
+        if (dec == 0) return v.toString();
+        uint256 unit = 10 ** uint256(dec);
+        uint256 whole = v / unit;
+        uint8 show = dec > 4 ? 4 : dec;
+        uint256 frac = (v % unit) / (10 ** uint256(dec - show));
         bytes memory fracB = bytes(frac.toString());
-        string memory pad = fracB.length == 1 ? "000"
-                          : fracB.length == 2 ? "00"
-                          : fracB.length == 3 ? "0"
-                          : "";
+        string memory pad = "";
+        if (uint256(show) > fracB.length) {
+            uint256 padLen = uint256(show) - fracB.length;
+            if (padLen == 1) pad = "0";
+            else if (padLen == 2) pad = "00";
+            else if (padLen == 3) pad = "000";
+        }
         return string(abi.encodePacked(whole.toString(), ".", pad, frac.toString()));
     }
 

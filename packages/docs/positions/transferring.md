@@ -25,6 +25,6 @@ Everything. The new owner gains:
 
 ## Important notes
 
-- Only the current NFT owner can close the position
-- The LP can force-realize any position regardless of who owns the NFT
+- Only the current NFT owner can close or realize the position
+- After the deadline, anyone can liquidate expired positions
 - Transferring the NFT does not change the position's parameters (entry price, fees paid, etc.)

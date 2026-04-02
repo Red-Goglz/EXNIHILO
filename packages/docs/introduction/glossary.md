@@ -15,4 +15,8 @@
 | **SWAP-1 / SWAP-2 / SWAP-3** | The three AMM curves used for different operations. See [Key Concepts](./key-concepts). |
 | **Synthetic mint** | Minting AirTokens without depositing real collateral. Used to create leveraged exposure when opening positions. |
 | **totalSupply** | Full supply of an AirToken, including both backed and synthetic (unbacked) tokens. |
+| **Deadline** | Timestamp after which a position can be liquidated by anyone. Set at open, extendable via `renewPosition`. |
+| **Position duration** | Configurable per-pool time window (1 hour – 1 year, default 7 days) for each position period. |
+| **renewPosition** | Pay 5% base fee to extend a position's deadline by one period. Anyone can call. |
+| **liquidateExpired** | Settle an expired position. If profitable, holder gets USDC. If underwater, collateral returns to LP. |
 | **TVL** | Total Value Locked — the combined USDC value of real collateral in a pool. |

@@ -6,6 +6,8 @@
 
 | Function | Access | Description |
 |---|---|---|
+| `renewPosition(uint256 nftId)` | Anyone | Pay base fee (5%) to extend position deadline by one period |
+| `liquidateExpired(uint256 nftId)` | Anyone | Settle an expired position (profitable: pay holder; underwater: return to LP) |
 | `swap(uint256 amountIn, uint256 minAmountOut, bool tokenToUsdc, address recipient)` | Anyone | Swap tokens via SWAP-1, output sent to `recipient` |
 | `openLong(uint256 usdcAmount, uint256 minAirTokenOut, address recipient)` | Anyone | Open a long position, NFT minted to `recipient` |
 | `openShort(uint256 usdcNotional, uint256 minAirUsdOut, address recipient)` | Anyone | Open a short position, NFT minted to `recipient` |
@@ -13,7 +15,6 @@
 | `closeShort(uint256 nftId, uint256 minUsdcOut)` | Position owner | Close short via AMM, receive USDC profit |
 | `realizeLong(uint256 nftId)` | Position owner | Deliver USDC to cover debt, receive locked tokens at par |
 | `realizeShort(uint256 nftId)` | Position owner | Deliver tokens to cover debt, receive locked USDC at par |
-| `forceRealize(uint256 nftId)` | LP only | Force-realize an underwater position (LP pays the debt) |
 | `addLiquidity(uint256 tokenAmount, uint256 usdcAmount)` | LP only | Add liquidity (must match reserve ratio) |
 | `removeLiquidity()` | LP only | Withdraw all liquidity (requires zero open positions) |
 | `claimFees()` | LP only | Claim accumulated LP fees |
@@ -37,6 +38,7 @@
 | `effectiveLeverageCap()` | Effective position cap in USDC |
 | `isLongUnderwater(uint256 nftId)` | Whether a long position is underwater |
 | `isShortUnderwater(uint256 nftId)` | Whether a short position is underwater |
+| `positionDuration()` | Position period length in seconds |
 
 ### Events
 
@@ -53,13 +55,15 @@ event LiquidityAdded(address indexed provider, uint256 tokenAmount, uint256 usdc
 event LiquidityRemoved(address indexed provider, uint256 tokenAmount, uint256 usdcAmount);
 event FeesClaimed(address indexed lpOwner, uint256 amount);
 event PositionCapsUpdated(uint256 newMaxPositionUsd, uint256 newMaxPositionBps, address indexed by);
+event PositionRenewed(uint256 indexed nftId, address indexed payer, uint256 feePaid, uint256 newDeadline);
+event PositionLiquidated(uint256 indexed nftId, address indexed liquidator, bool profitable, uint256 payout);
 ```
 
 ## EXNIHILOFactory
 
 | Function | Description |
 |---|---|
-| `createMarket(address tokenAddress, uint256 tokenAmount, uint256 usdcAmount, uint256 swapFeeBps)` | Deploy a new market |
+| `createMarket(address tokenAddress, uint256 usdcAmount, uint256 tokenAmount, uint256 maxPositionUsd, uint256 maxPositionBps, uint256 positionDuration)` | Deploy a new market (positionDuration: 0 = 7-day default) |
 | `allPools(uint256 index)` | Get pool address by index |
 | `poolCount()` | Total number of deployed pools |
 

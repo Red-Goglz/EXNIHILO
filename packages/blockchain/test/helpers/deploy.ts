@@ -156,5 +156,8 @@ export async function deployProtocol(
     );
   }
 
+  // ── 6. Wire PositionNFT to factory so only registered pools can mint ────
+  await positionNFT.connect(deployer).initFactory(factoryAddr);
+
   return { factory, positionNFT, lpNft, baseToken, usdc };
 }

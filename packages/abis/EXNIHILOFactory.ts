@@ -42,6 +42,11 @@ export const exnihiloFactoryAbi = [
     "type": "error"
   },
   {
+    "inputs": [],
+    "name": "InvalidPositionDuration",
+    "type": "error"
+  },
+  {
     "inputs": [
       {
         "internalType": "uint256",
@@ -133,6 +138,12 @@ export const exnihiloFactoryAbi = [
         "internalType": "uint256",
         "name": "maxPositionBps",
         "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "positionDuration",
+        "type": "uint256"
       }
     ],
     "name": "MarketCreated",
@@ -195,6 +206,11 @@ export const exnihiloFactoryAbi = [
       {
         "internalType": "uint256",
         "name": "maxPositionBps",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "positionDuration",
         "type": "uint256"
       }
     ],

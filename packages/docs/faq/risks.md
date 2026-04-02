@@ -14,11 +14,13 @@ The protocol has not undergone a formal security audit. While the codebase follo
 - Positions can lose value rapidly if the price moves against you
 - There are no stop-losses or automated risk management tools
 
-## LP risk (force realize)
+## Position expiry
 
-The LP NFT holder can force-realize underwater position at any time. When this happens:
-- Locked tokens are sent to your address
-- Your Position NFT is burned
+Every position has a deadline. If the position is not renewed before the deadline, anyone can liquidate it:
+- **Profitable positions**: closed like normal — holder receives USDC profit minus 1% fee
+- **Underwater positions**: collateral returns to LP reserves, no payout to the holder
+
+Renew your position before the deadline to avoid forced liquidation.
 
 ## Price divergence
 

@@ -4,7 +4,7 @@
 
 Unlike traditional perps where you post collateral and face liquidation, EXNIHILO positions only require the fees to open. You pay USDC to open a position and receive an NFT. When you close in profit, you get back USDC — depending on price movement.
 
-There is no margin, no funding rate, and no liquidation engine.
+There is no margin and no liquidation engine. Instead of a funding rate, positions have a **deadline** — after which anyone can liquidate them. Traders pay a fee to renew and extend the deadline. See [Expiry & Renewal](/positions/expiry).
 
 ## Three-Curve AMM
 

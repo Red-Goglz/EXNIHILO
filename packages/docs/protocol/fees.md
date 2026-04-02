@@ -51,7 +51,7 @@ Only charged on profitable closes:
 - If `pnl > 0`: `closeFee = pnl * 1%` → sent to protocol treasury
 - If `pnl ≤ 0`: no fee
 
-Realize operations (including force realize) do not charge a close fee.
+Realize operations do not charge a close fee.
 
 ## Constants
 

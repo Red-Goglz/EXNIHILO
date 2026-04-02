@@ -13,6 +13,7 @@ describe("PositionNFT", function () {
 
   const AIR_TOKEN_MINTED = ethers.parseUnits("500", 18); // synthetic airToken debt
   const AIR_USD_LOCKED = ethers.parseUnits("9", 6); // airUsd locked in short
+  const SHORT_USDC_NOTIONAL = ethers.parseUnits("10", 6); // notional for OI tracking
 
   // ── Fixtures ───────────────────────────────────────────────────────────────
 
@@ -69,7 +70,8 @@ describe("PositionNFT", function () {
         USDC_IN,
         AIR_USD_MINTED,
         LOCK_AMOUNT,
-        FEES_PAID
+        FEES_PAID,
+        9999999999n
       );
     const receipt = await tx.wait();
 
@@ -91,7 +93,9 @@ describe("PositionNFT", function () {
         await airUsd.getAddress(),
         AIR_TOKEN_MINTED,
         AIR_USD_LOCKED,
-        FEES_PAID
+        SHORT_USDC_NOTIONAL,
+        FEES_PAID,
+        9999999999n
       );
 
     return { ...base, shortTokenId: 0n };
@@ -161,13 +165,13 @@ describe("PositionNFT", function () {
         .connect(pool)
         .mintLong(
           trader.address, pool.address, await airToken.getAddress(),
-          USDC_IN, AIR_USD_MINTED, LOCK_AMOUNT, FEES_PAID
+          USDC_IN, AIR_USD_MINTED, LOCK_AMOUNT, FEES_PAID, 9999999999n
         );
       await nft
         .connect(pool)
         .mintLong(
           trader.address, pool.address, await airToken.getAddress(),
-          USDC_IN, AIR_USD_MINTED, LOCK_AMOUNT, FEES_PAID
+          USDC_IN, AIR_USD_MINTED, LOCK_AMOUNT, FEES_PAID, 9999999999n
         );
 
       expect(await nft.ownerOf(0n)).to.equal(trader.address);
@@ -185,7 +189,7 @@ describe("PositionNFT", function () {
           .connect(other) // not `pool`
           .mintLong(
             trader.address, pool.address, await airToken.getAddress(),
-            USDC_IN, AIR_USD_MINTED, LOCK_AMOUNT, FEES_PAID
+            USDC_IN, AIR_USD_MINTED, LOCK_AMOUNT, FEES_PAID, 9999999999n
           )
       ).to.be.revertedWithCustomError(nft, "OnlyPool");
     });
@@ -200,7 +204,7 @@ describe("PositionNFT", function () {
           .connect(pool)
           .mintLong(
             trader.address, pool.address, await airToken.getAddress(),
-            USDC_IN, AIR_USD_MINTED, LOCK_AMOUNT, FEES_PAID
+            USDC_IN, AIR_USD_MINTED, LOCK_AMOUNT, FEES_PAID, 9999999999n
           )
       ).to.be.revertedWithCustomError(airToken, "ERC20InsufficientAllowance");
     });
@@ -222,7 +226,7 @@ describe("PositionNFT", function () {
       expect(pos.pool).to.equal(pool.address);
       expect(pos.lockedToken).to.equal(await airUsd.getAddress());
       expect(pos.lockedAmount).to.equal(AIR_USD_LOCKED);
-      expect(pos.usdcIn).to.equal(0n);
+      expect(pos.usdcIn).to.equal(SHORT_USDC_NOTIONAL);
       expect(pos.airUsdMinted).to.equal(0n);
       expect(pos.airTokenMinted).to.equal(AIR_TOKEN_MINTED);
       expect(pos.feesPaid).to.equal(FEES_PAID);
@@ -246,7 +250,7 @@ describe("PositionNFT", function () {
           .connect(other)
           .mintShort(
             trader.address, pool.address, await airUsd.getAddress(),
-            AIR_TOKEN_MINTED, AIR_USD_LOCKED, FEES_PAID
+            AIR_TOKEN_MINTED, AIR_USD_LOCKED, SHORT_USDC_NOTIONAL, FEES_PAID, 9999999999n
           )
       ).to.be.revertedWithCustomError(nft, "OnlyPool");
     });

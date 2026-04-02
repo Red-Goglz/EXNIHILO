@@ -108,6 +108,7 @@ async function deployRouterFixture() {
   );
 
   const factoryAddr = await factory.getAddress();
+  await positionNFT.connect(deployer).initFactory(factoryAddr);
 
   // Deploy router
   const router = (await (await ethers.getContractFactory("EXNIHILORouter"))
@@ -126,7 +127,8 @@ async function deployRouterFixture() {
     INITIAL_USDC,
     INITIAL_TOKEN,
     MAX_POS_USD,
-    MAX_POS_BPS
+    MAX_POS_BPS,
+    0n
   );
   const receipt = await tx.wait();
   const log = receipt!.logs
@@ -227,13 +229,13 @@ describe("EXNIHILORouter", function () {
       expect(await pool.openPositionCount()).to.equal(before + 1n);
     });
 
-    it("emits LongOpened event on the pool", async function () {
+    it("emits PositionOpened event on the pool", async function () {
       const { router, pool, trader1, poolAddress } =
         await loadFixture(deployRouterFixture);
 
       const notional = ethers.parseUnits("100", 6);
       await expect(router.connect(trader1).openLong(poolAddress, notional, 0n))
-        .to.emit(pool, "LongOpened");
+        .to.emit(pool, "PositionOpened");
     });
 
     it("respects minAirTokenOut slippage guard", async function () {
@@ -295,13 +297,13 @@ describe("EXNIHILORouter", function () {
       expect(await usdc.balanceOf(routerAddr)).to.equal(0n);
     });
 
-    it("emits ShortOpened event on the pool", async function () {
+    it("emits PositionOpened event on the pool", async function () {
       const { router, pool, trader1, poolAddress } =
         await loadFixture(deployRouterFixture);
 
       const notional = ethers.parseUnits("100", 6);
       await expect(router.connect(trader1).openShort(poolAddress, notional, 0n))
-        .to.emit(pool, "ShortOpened");
+        .to.emit(pool, "PositionOpened");
     });
 
     it("respects minAirUsdOut slippage guard", async function () {
@@ -360,13 +362,13 @@ describe("EXNIHILORouter", function () {
       expect(tokenAfter).to.be.gt(tokenBefore);
     });
 
-    it("emits Swap event on the pool", async function () {
+    it("swap succeeds on the pool", async function () {
       const { router, pool, trader1, poolAddress } =
         await loadFixture(deployRouterFixture);
 
       const amountIn = ethers.parseEther("500");
       await expect(router.connect(trader1).swap(poolAddress, amountIn, 0n, true))
-        .to.emit(pool, "Swap");
+        .to.not.be.reverted;
     });
 
     it("respects minAmountOut slippage guard", async function () {

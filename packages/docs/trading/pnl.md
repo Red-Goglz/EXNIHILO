@@ -35,3 +35,4 @@ The PositionNFT contract computes P&L in real-time using calls to the pool. This
 - P&L depends on pool reserves at the time of closing, not at the time of opening
 - Large positions relative to pool size will experience more slippage
 - The three-curve design means long and short P&L are not perfectly symmetric
+- Positions expire after the pool's position duration — renew before the deadline to keep trading. See [Expiry & Renewal](/positions/expiry)

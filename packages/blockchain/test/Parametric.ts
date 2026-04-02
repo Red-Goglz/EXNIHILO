@@ -298,6 +298,7 @@ async function runSequence(params: Params): Promise<void> {
 
   const factoryAddr = await factory.getAddress();
   await patchImmutableAddress(await lpNft.getAddress(), throwaway.address, factoryAddr);
+  await positionNFT.connect(deployer).initFactory(factoryAddr);
 
   // ── LP seeds the pool ─────────────────────────────────────────────────────
 
@@ -311,6 +312,7 @@ async function runSequence(params: Params): Promise<void> {
     params.lpUsdc,
     params.lpToken,
     0n, // no position caps
+    0n,
     0n
   );
   const receiptCreate = await txCreate.wait();
@@ -351,7 +353,7 @@ async function runSequence(params: Params): Promise<void> {
   const poolIface  = pool.interface;
   const longLog    = rcptLong!.logs
     .map((l) => { try { return poolIface.parseLog(l); } catch { return null; } })
-    .find((l) => l?.name === "LongOpened")!;
+    .find((l) => l?.name === "PositionOpened")!;
 
   const nftId: bigint = longLog.args.nftId;
 

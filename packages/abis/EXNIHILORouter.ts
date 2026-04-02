@@ -21,6 +21,11 @@ export const exnihiloRouterAbi = [
     "type": "error"
   },
   {
+    "inputs": [],
+    "name": "ReentrancyGuardReentrantCall",
+    "type": "error"
+  },
+  {
     "inputs": [
       {
         "internalType": "address",
@@ -36,7 +41,7 @@ export const exnihiloRouterAbi = [
     "name": "factory",
     "outputs": [
       {
-        "internalType": "address",
+        "internalType": "contract IEXNIHILOFactory",
         "name": "",
         "type": "address"
       }
@@ -119,11 +124,24 @@ export const exnihiloRouterAbi = [
     "type": "function"
   },
   {
+    "inputs": [
+      {
+        "internalType": "contract IERC20",
+        "name": "token",
+        "type": "address"
+      }
+    ],
+    "name": "sweep",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
     "inputs": [],
     "name": "usdc",
     "outputs": [
       {
-        "internalType": "address",
+        "internalType": "contract IERC20",
         "name": "",
         "type": "address"
       }
