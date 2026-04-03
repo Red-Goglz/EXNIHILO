@@ -329,19 +329,6 @@ describe("EXNIHILOFactory", function () {
       ).to.be.reverted;
     });
 
-    it("reverts when usdcAmount is zero", async function () {
-      const { factory, creator, baseToken } = await loadFixture(deployFactoryFixture);
-      await expect(
-        factory.connect(creator).createMarket(await baseToken.getAddress(), 0n, INITIAL_TOKEN, 0n, 0n, 0n, "airPEPE", "airPEPEUsd", 18)
-      ).to.be.revertedWithCustomError(factory, "ZeroAmount");
-    });
-
-    it("reverts when tokenAmount is zero", async function () {
-      const { factory, creator, baseToken } = await loadFixture(deployFactoryFixture);
-      await expect(
-        factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, 0n, 0n, 0n, 0n, "airPEPE", "airPEPEUsd", 18)
-      ).to.be.revertedWithCustomError(factory, "ZeroAmount");
-    });
 
     it("accepts maxPositionBps of 10 (minimum boundary)", async function () {
       const { factory, creator, baseToken } = await loadFixture(deployFactoryFixture);

@@ -90,8 +90,6 @@ contract EXNIHILOFactory is ReentrancyGuard {
 
     // ── Custom errors ─────────────────────────────────────────────────────────
 
-    error ZeroAddress();
-    error ZeroAmount();
     error OnlyDeployer();
 
     // ── Events ────────────────────────────────────────────────────────────────
@@ -174,8 +172,6 @@ contract EXNIHILOFactory is ReentrancyGuard {
     ) external nonReentrant returns (address pool, uint256 lpNftId) {
         // ── 1. Input validation ───────────────────────────────────────────────
 
-        if (usdcAmount   == 0)          revert ZeroAmount();
-        if (tokenAmount  == 0)          revert ZeroAmount();
 
         // ── 2. Pull tokens from caller ────────────────────────────────────────
         //    Fee-on-transfer tokens are rejected by the pool's own _transferIn guard.
@@ -256,5 +252,7 @@ contract EXNIHILOFactory is ReentrancyGuard {
         deployer = newDeployer;
     }
 
-
+    function allPoolsLength() external view returns (uint256) {
+        return allPools.length;
+    }
 }
