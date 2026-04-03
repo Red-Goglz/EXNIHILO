@@ -19,8 +19,12 @@
     "packages/abis",
     "packages/docs"
   ],
+  "overrides": {
+    "react": "$react",
+    "react-dom": "$react-dom"
+  },
   "dependencies": {
-    "@formo/analytics": "^1.28.5",
-    "ponder": "^1.0.0"
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
   }
 }
