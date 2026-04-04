@@ -152,15 +152,28 @@ export default function PositionCard({
     ? "success"
     : "idle";
 
-  const handleSuccess = (action: string) => {
-    queryClient.invalidateQueries();
-    analytics?.track(action, {
-      pool: position.pool,
-      tokenId: tokenId.toString(),
-      side: position.isLong ? "long" : "short",
-      tokenSymbol,
-    });
-  };
+  // Refetch position data once tx is actually mined (not just submitted)
+  useEffect(() => {
+    if (isSuccess) {
+      queryClient.invalidateQueries();
+      analytics?.track("Position Closed or Realized", {
+        pool: position.pool,
+        tokenId: tokenId.toString(),
+        side: position.isLong ? "long" : "short",
+      });
+    }
+  }, [isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (renewSuccess) {
+      queryClient.invalidateQueries();
+      analytics?.track("Position Renewed", {
+        pool: position.pool,
+        tokenId: tokenId.toString(),
+        side: position.isLong ? "long" : "short",
+      });
+    }
+  }, [renewSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Countdown timer ─────────────────────────────────────────────────────
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
@@ -316,15 +329,12 @@ export default function PositionCard({
             status={renewStatus}
             variant="default"
             onClick={() =>
-              writeRenew(
-                {
-                  address: position.pool,
-                  abi: exnihiloPoolAbi,
-                  functionName: "renewPosition",
-                  args: [tokenId],
-                },
-                { onSuccess: () => handleSuccess("Position Renewed") }
-              )
+              writeRenew({
+                address: position.pool,
+                abi: exnihiloPoolAbi,
+                functionName: "renewPosition",
+                args: [tokenId],
+              })
             }
             style={{ fontSize: "0.56rem", padding: "4px 10px" }}
           />
@@ -411,15 +421,9 @@ export default function PositionCard({
             variant={position.isLong ? "red" : "green"}
             onClick={() => {
               if (position.isLong) {
-                writeContract(
-                  { address: position.pool, abi: exnihiloPoolAbi, functionName: "closeLong", args: [tokenId, 0n] },
-                  { onSuccess: () => handleSuccess("Position Closed") }
-                );
+                writeContract({ address: position.pool, abi: exnihiloPoolAbi, functionName: "closeLong", args: [tokenId, 0n] });
               } else {
-                writeContract(
-                  { address: position.pool, abi: exnihiloPoolAbi, functionName: "closeShort", args: [tokenId, 0n] },
-                  { onSuccess: () => handleSuccess("Position Closed") }
-                );
+                writeContract({ address: position.pool, abi: exnihiloPoolAbi, functionName: "closeShort", args: [tokenId, 0n] });
               }
             }}
             disabled={!canClose}
@@ -434,15 +438,9 @@ export default function PositionCard({
             variant="default"
             onClick={() => {
               if (position.isLong) {
-                writeContract(
-                  { address: position.pool, abi: exnihiloPoolAbi, functionName: "realizeLong", args: [tokenId] },
-                  { onSuccess: () => handleSuccess("Position Realized") }
-                );
+                writeContract({ address: position.pool, abi: exnihiloPoolAbi, functionName: "realizeLong", args: [tokenId] });
               } else {
-                writeContract(
-                  { address: position.pool, abi: exnihiloPoolAbi, functionName: "realizeShort", args: [tokenId] },
-                  { onSuccess: () => handleSuccess("Position Realized") }
-                );
+                writeContract({ address: position.pool, abi: exnihiloPoolAbi, functionName: "realizeShort", args: [tokenId] });
               }
             }}
             style={{ width: "100%", justifyContent: "center", fontSize: "0.62rem" }}
