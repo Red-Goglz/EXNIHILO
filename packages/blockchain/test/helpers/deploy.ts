@@ -33,7 +33,7 @@
 
 import { ethers } from "hardhat";
 import type { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
-import type { EXNIHILOFactory, LpNFT, PositionNFT, MockERC20 } from "../../typechain-types";
+import type { EXNIHILOFactory, LpNFT, PositionNFT, MockERC20, PoolDeployer } from "../../typechain-types";
 
 export const SWAP_FEE_BPS = 100n; // 1 %
 
@@ -125,17 +125,22 @@ export async function deployProtocol(
     );
   }
 
-  // ── 3. Deploy EXNIHILOFactory from sysDeployer ────────────────────────────
+  // ── 3. Deploy PoolDeployer + EXNIHILOFactory from sysDeployer ──────────────
   // signers[8] is used as a dedicated system deployer whose nonce is always
   // 0 at the start of each fixture (reset by loadFixture snapshot).
   const sysDeployer = signers[8];
+  const poolDeployer = (await (
+    await ethers.getContractFactory("PoolDeployer")
+  ).connect(sysDeployer).deploy()) as PoolDeployer;
+
   const FactoryF = await ethers.getContractFactory("EXNIHILOFactory");
   const factory = (await FactoryF.connect(sysDeployer).deploy(
     await positionNFT.getAddress(),
     await lpNft.getAddress(),
     await usdc.getAddress(),
     treasury.address,
-    SWAP_FEE_BPS
+    SWAP_FEE_BPS,
+    await poolDeployer.getAddress()
   )) as EXNIHILOFactory;
 
   const factoryAddr = await factory.getAddress();

@@ -56,11 +56,17 @@ async function main() {
   const positionNFTAddress = await positionNFT.getAddress();
   console.log("PositionNFT: ", positionNFTAddress);
 
-  // ── 3. LpNFT + EXNIHILOFactory (nonce prediction) ──────────────────────────
+  // ── 3. PoolDeployer + LpNFT + EXNIHILOFactory (nonce prediction) ───────────
   //
-  // After the two deploys above, deployer nonce = initial + 2.
-  // LpNFT will be tx N, factory will be tx N+1.
+  // PoolDeployer is stateless — deploy first so Factory can reference it.
+  // After PoolDeployer, LpNFT will be tx N, factory will be tx N+1.
   // We pre-compute N+1 address and pass it to LpNFT constructor.
+  const PoolDeployerF = await ethers.getContractFactory("PoolDeployer");
+  const poolDeployer = await PoolDeployerF.connect(deployer).deploy();
+  await poolDeployer.waitForDeployment();
+  const poolDeployerAddress = await poolDeployer.getAddress();
+  console.log("PoolDeployer:", poolDeployerAddress);
+
   const nonceBeforeLpNFT = await deployer.getNonce();
   const predictedFactoryAddress = ethers.getCreateAddress({
     from: deployer.address,
@@ -79,7 +85,8 @@ async function main() {
     lpNFTAddress,
     usdcAddress,
     treasuryAddr,
-    defaultSwapFeeBps
+    defaultSwapFeeBps,
+    poolDeployerAddress
   );
   await factory.waitForDeployment();
   const factoryAddress = await factory.getAddress();
@@ -217,16 +224,17 @@ async function main() {
   // ── 7. Write addresses JSON ───────────────────────────────────────────────────
   const addresses = {
     chainId: 43113,
-    factory:     factoryAddress,
-    positionNFT: positionNFTAddress,
-    lpNFT:       lpNFTAddress,
-    usdc:        usdcAddress,
-    router:      routerAddress,
-    faucet:      faucetAddress,
-    testToken:   baseTokens[0].address, // ARENA as the "default" test token
-    treasury:    treasuryAddr,
-    deployer:    deployer.address,
-    pools:       poolAddresses,
+    factory:       factoryAddress,
+    poolDeployer:  poolDeployerAddress,
+    positionNFT:   positionNFTAddress,
+    lpNFT:         lpNFTAddress,
+    usdc:          usdcAddress,
+    router:        routerAddress,
+    faucet:        faucetAddress,
+    testToken:     baseTokens[0].address, // ARENA as the "default" test token
+    treasury:      treasuryAddr,
+    deployer:      deployer.address,
+    pools:         poolAddresses,
   };
 
   const outPath = path.resolve(__dirname, "../../site/src/contracts/fujiAddresses.json");
@@ -242,8 +250,9 @@ async function main() {
   console.log("\n  To verify contracts on Snowtrace:");
   console.log(`    npx hardhat verify --network avalancheFujiTestnet ${usdcAddress} "USD Coin" "USDC" 6`);
   console.log(`    npx hardhat verify --network avalancheFujiTestnet ${positionNFTAddress}`);
+  console.log(`    npx hardhat verify --network avalancheFujiTestnet ${poolDeployerAddress}`);
   console.log(`    npx hardhat verify --network avalancheFujiTestnet ${lpNFTAddress} "${factoryAddress}"`);
-  console.log(`    npx hardhat verify --network avalancheFujiTestnet ${factoryAddress} "${positionNFTAddress}" "${lpNFTAddress}" "${usdcAddress}" "${treasuryAddr}" ${defaultSwapFeeBps}`);
+  console.log(`    npx hardhat verify --network avalancheFujiTestnet ${factoryAddress} "${positionNFTAddress}" "${lpNFTAddress}" "${usdcAddress}" "${treasuryAddr}" ${defaultSwapFeeBps} "${poolDeployerAddress}"`);
   console.log(`    npx hardhat verify --network avalancheFujiTestnet ${routerAddress} "${factoryAddress}" "${usdcAddress}"`);
   console.log(`    npx hardhat verify --network avalancheFujiTestnet ${faucetAddress} "${usdcAddress}"`);
   for (const t of baseTokens) {

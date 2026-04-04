@@ -74,6 +74,8 @@ async function deploySystem(
     .connect(throwaway)
     .deploy(throwaway.address)) as unknown as LpNFT;
 
+  const poolDeployer = await (await ethers.getContractFactory("PoolDeployer")).connect(sysDeployer).deploy();
+
   // Deploy EXNIHILOFactory from sysDeployer
   const factory = (await (await ethers.getContractFactory("EXNIHILOFactory"))
     .connect(sysDeployer)
@@ -82,7 +84,8 @@ async function deploySystem(
       await lpNft.getAddress(),
       usdcAddr,
       treasuryAddr,
-      SWAP_FEE_BPS
+      SWAP_FEE_BPS,
+      await poolDeployer.getAddress()
     )) as unknown as EXNIHILOFactory;
 
   const factoryAddr = await factory.getAddress();

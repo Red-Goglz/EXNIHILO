@@ -48,9 +48,15 @@ async function main() {
   const positionNFTAddress = await positionNFT.getAddress();
   console.log("PositionNFT: ", positionNFTAddress);
 
-  // 3. Pre-compute factory address, then deploy LpNFT with it as constructor arg
-  //    sysDeployer's NEXT tx will be the factory deploy → nonce at that moment
-  const sysNonce = await sysDeployer.getNonce();
+  // 3. Deploy PoolDeployer, then pre-compute factory address, deploy LpNFT
+  //    sysDeployer nonce: N → PoolDeployer, N+1 → Factory
+  const PoolDeployerF = await ethers.getContractFactory("PoolDeployer");
+  const poolDeployer = await PoolDeployerF.connect(sysDeployer).deploy();
+  await poolDeployer.waitForDeployment();
+  const poolDeployerAddress = await poolDeployer.getAddress();
+  console.log("PoolDeployer:", poolDeployerAddress);
+
+  const sysNonce = await sysDeployer.getNonce(); // now N+1
   const predictedFactoryAddress = ethers.getCreateAddress({
     from: sysDeployer.address,
     nonce: sysNonce,
@@ -69,7 +75,8 @@ async function main() {
     lpNFTAddress,
     usdcAddress,
     treasury.address,
-    100n // defaultSwapFeeBps = 1%
+    100n, // defaultSwapFeeBps = 1%
+    poolDeployerAddress
   );
   await factory.waitForDeployment();
   const factoryAddress = await factory.getAddress();

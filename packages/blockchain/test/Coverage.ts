@@ -93,13 +93,16 @@ async function deploySystem(
   const lpNft = (await (await ethers.getContractFactory("LpNFT"))
     .connect(throwaway).deploy(throwaway.address)) as unknown as LpNFT;
 
+  const poolDeployer = await (await ethers.getContractFactory("PoolDeployer")).connect(sysDeployer).deploy();
+
   const factory = (await (await ethers.getContractFactory("EXNIHILOFactory"))
     .connect(sysDeployer).deploy(
       positionNFTAddr,
       await lpNft.getAddress(),
       usdcAddr,
       treasuryAddr,
-      SWAP_FEE_BPS
+      SWAP_FEE_BPS,
+      await poolDeployer.getAddress()
     )) as unknown as EXNIHILOFactory;
 
   await patchImmutableAddress(
@@ -1834,13 +1837,15 @@ describe("Coverage — ReentrancyGuard nonReentrant revert paths", function () {
 
     const lpNft = (await (await ethers.getContractFactory("LpNFT"))
       .connect(throwaway).deploy(throwaway.address)) as unknown as LpNFT;
+    const poolDeployer = await (await ethers.getContractFactory("PoolDeployer")).connect(sysDeployer).deploy();
     const factory = (await (await ethers.getContractFactory("EXNIHILOFactory"))
       .connect(sysDeployer).deploy(
         await posNFT.getAddress(),
         await lpNft.getAddress(),
         await reenUsdc.getAddress(),  // <-- reentrant "USDC"
         treasury.address,
-        SWAP_FEE_BPS
+        SWAP_FEE_BPS,
+        await poolDeployer.getAddress()
       )) as unknown as EXNIHILOFactory;
     await patchImmutableAddress(
       await lpNft.getAddress(), throwaway.address, await factory.getAddress()

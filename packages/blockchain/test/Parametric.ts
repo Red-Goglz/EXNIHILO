@@ -287,13 +287,17 @@ async function runSequence(params: Params): Promise<void> {
   const lpNft = (await (await ethers.getContractFactory("LpNFT"))
     .connect(throwaway).deploy(throwaway.address)) as unknown as LpNFT;
 
+  const poolDeployer = await (await ethers.getContractFactory("PoolDeployer"))
+    .connect(sysDeployer).deploy();
+
   const factory = (await (await ethers.getContractFactory("EXNIHILOFactory"))
     .connect(sysDeployer).deploy(
       await positionNFT.getAddress(),
       await lpNft.getAddress(),
       await usdc.getAddress(),
       treasury.address,
-      SWAP_FEE_BPS
+      SWAP_FEE_BPS,
+      await poolDeployer.getAddress()
     )) as unknown as EXNIHILOFactory;
 
   const factoryAddr = await factory.getAddress();

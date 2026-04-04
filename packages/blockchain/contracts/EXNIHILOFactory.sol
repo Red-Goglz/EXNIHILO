@@ -5,8 +5,21 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "./AirToken.sol";
-import "./EXNIHILOPool.sol";
 import "./LpNFT.sol";
+
+interface IPoolDeployer {
+    function deploy(
+        address airToken, address airUsdToken, address tokenAddress,
+        address usdc, address positionNFT, address lpNftContract,
+        uint256 lpNftId, address protocolTreasury,
+        uint256 maxPositionUsd, uint256 maxPositionBps,
+        uint256 defaultSwapFeeBps, uint256 positionDuration, address factory
+    ) external returns (address);
+}
+
+interface IPoolAddLiquidity {
+    function addLiquidity(uint256 tokenAmount, uint256 usdcAmount) external;
+}
 
 /**
  * @title  EXNIHILOFactory
@@ -73,6 +86,9 @@ contract EXNIHILOFactory is ReentrancyGuard {
     /// @notice Default swap fee in bps applied to all newly created pools (e.g. 200 = 2 %).
     uint256 public immutable defaultSwapFeeBps;
 
+    /// @notice Stateless deployer contract that creates EXNIHILOPool instances.
+    IPoolDeployer public immutable poolDeployer;
+
     // ── Emergency admin ──────────────────────────────────────────────────────
 
     /// @notice Emergency deployer address. Can close any pool.
@@ -109,19 +125,22 @@ contract EXNIHILOFactory is ReentrancyGuard {
      * @param usdc_              USDC token address (6 decimals).
      * @param protocolTreasury_  Receives the 2 % protocol fee from all pools.
      * @param defaultSwapFeeBps_ Default swap fee for pools (e.g. 200 = 2 %).
+     * @param poolDeployer_     PoolDeployer contract that creates EXNIHILOPool instances.
      */
     constructor(
         address positionNFT_,
         address lpNftContract_,
         address usdc_,
         address protocolTreasury_,
-        uint256 defaultSwapFeeBps_
+        uint256 defaultSwapFeeBps_,
+        address poolDeployer_
     ) {
         positionNFT       = positionNFT_;
         lpNftContract     = LpNFT(lpNftContract_);
         usdc              = usdc_;
         protocolTreasury  = protocolTreasury_;
         defaultSwapFeeBps = defaultSwapFeeBps_;
+        poolDeployer      = IPoolDeployer(poolDeployer_);
         deployer          = msg.sender;
     }
 
@@ -187,9 +206,9 @@ contract EXNIHILOFactory is ReentrancyGuard {
 
         AirToken airUsdToken = new AirToken(airUsdName, airUsdName, 6);
 
-        // ── 5. Deploy EXNIHILOPool ───────────────────────────────────────────
+        // ── 5. Deploy EXNIHILOPool via PoolDeployer ──────────────────────────
 
-        EXNIHILOPool deployedPool = new EXNIHILOPool(
+        pool = poolDeployer.deploy(
             address(airToken),
             address(airUsdToken),
             tokenAddress,
@@ -204,8 +223,6 @@ contract EXNIHILOFactory is ReentrancyGuard {
             positionDuration,
             address(this)       // factory address for emergency deployer lookup
         );
-
-        pool = address(deployedPool);
 
         // ── 7. Wire AirTokens to the pool ────────────────────────────────────
 
@@ -226,7 +243,7 @@ contract EXNIHILOFactory is ReentrancyGuard {
         IERC20(tokenAddress).forceApprove(pool, tokenAmount);
         IERC20(usdc).forceApprove(pool, usdcAmount);
 
-        deployedPool.addLiquidity(tokenAmount, usdcAmount);
+        IPoolAddLiquidity(pool).addLiquidity(tokenAmount, usdcAmount);
 
         // ── 10. Transfer LP NFT to market creator ─────────────────────────────
 

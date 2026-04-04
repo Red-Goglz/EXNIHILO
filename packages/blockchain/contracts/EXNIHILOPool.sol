@@ -277,6 +277,7 @@ contract EXNIHILOPool is ReentrancyGuard {
     event PositionOpened(uint256 indexed nftId, address indexed holder, bool isLong);
     event PositionClosed(uint256 indexed nftId, address indexed holder, uint256 payout);
     event PositionClosedAfterDeadline(uint256 indexed nftId, address indexed caller, uint256 payout);
+    event PayoutFailed(address indexed recipient, uint256 amount);
     event PoolClosed(address indexed closedBy, uint256 closeDate);
 
 
@@ -1182,8 +1183,8 @@ contract EXNIHILOPool is ReentrancyGuard {
             positionNFT.release(nftId);
             airUsdToken.burn(address(this), pos.airUsdMinted);
             airUsdToken.burn(address(this), surplus);
-            underlyingUsdc.safeTransfer(holder, netSurplus);
-            underlyingUsdc.safeTransfer(protocolTreasury, closeFee);
+            _trySendUsdc(holder, netSurplus);
+            _trySendUsdc(protocolTreasury, closeFee);
 
             emit PositionClosedAfterDeadline(nftId, msg.sender, netSurplus);
         } else {
@@ -1225,8 +1226,8 @@ contract EXNIHILOPool is ReentrancyGuard {
             positionNFT.release(nftId);
             airToken.burn(address(this), pos.airTokenMinted);
             airUsdToken.burn(address(this), surplus);
-            underlyingUsdc.safeTransfer(holder, netSurplus);
-            underlyingUsdc.safeTransfer(protocolTreasury, closeFee);
+            _trySendUsdc(holder, netSurplus);
+            _trySendUsdc(protocolTreasury, closeFee);
 
             emit PositionClosedAfterDeadline(nftId, msg.sender, netSurplus);
         } else {
@@ -1334,6 +1335,28 @@ contract EXNIHILOPool is ReentrancyGuard {
         token.safeTransferFrom(from, address(this), amount);
         if (token.balanceOf(address(this)) - balanceBefore != amount) {
             revert FeeOnTransferNotSupported();
+        }
+    }
+
+    // =========================================================================
+    // INTERNAL — best-effort USDC send (expired position cleanup)
+    // =========================================================================
+
+    /**
+     * @dev Attempt to send USDC to `to`. If the transfer fails (e.g. the
+     *      recipient is USDC-blacklisted), the USDC stays in the pool and a
+     *      PayoutFailed event is emitted. This prevents a single unreachable
+     *      address from permanently blocking position cleanup and LP exit.
+     *      Used ONLY by _closeExpired* paths — voluntary closes still use
+     *      safeTransfer (holder is msg.sender and can handle their own issues).
+     */
+    function _trySendUsdc(address to, uint256 amount) internal {
+        if (amount == 0) return;
+        // solhint-disable-next-line no-empty-blocks
+        try IERC20(underlyingUsdc).transfer(to, amount) returns (bool success) {
+            if (!success) emit PayoutFailed(to, amount);
+        } catch {
+            emit PayoutFailed(to, amount);
         }
     }
 
