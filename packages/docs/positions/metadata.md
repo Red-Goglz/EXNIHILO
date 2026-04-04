@@ -22,18 +22,9 @@ The `tokenURI()` function reads pool state at call time:
 - Computes the current value of locked tokens vs the synthetic debt
 - Renders the P&L as green (+$X.XX) or red (-$X.XX)
 
-All pool reads are wrapped in `try/catch` — if the pool is in an unexpected state, P&L shows "N/A" instead of reverting.
-
-## Design
-
-The SVG matches the EXNIHILO cyberpunk aesthetic:
-- Black background with border decorations (cyan corner accents)
-- Monospace font (Courier New)
-- Glitch animation on the title (CSS keyframes — works in browsers and some NFT viewers)
-
 ## Viewing
 
 The NFT artwork is visible on:
-- Any NFT marketplace that supports on-chain SVG (e.g., OpenSea)
+- Any NFT marketplace that supports on-chain SVG (e.g., Snowtrace)
 - Block explorers that render `tokenURI`
 - Directly calling `tokenURI(tokenId)` and decoding the base64 JSON

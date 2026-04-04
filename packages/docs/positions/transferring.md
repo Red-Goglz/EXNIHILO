@@ -19,12 +19,12 @@ Everything. The new owner gains:
 
 ## Use cases
 
-- **Selling a position** — If your position is in profit but you want to exit early at a discount, you can sell the NFT
+- **Lending a position** — If your position is in profit you could lend it in a protocol that allows this.
 - **Portfolio management** — Move positions between your own wallets
 - **OTC trading** — Trade positions peer-to-peer without going through the AMM
 
 ## Important notes
 
 - Only the current NFT owner can close or realize the position
-- After the deadline, anyone can liquidate expired positions
+- After the deadline, anyone can close expired positions
 - Transferring the NFT does not change the position's parameters (entry price, fees paid, etc.)

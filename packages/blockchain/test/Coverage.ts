@@ -2406,11 +2406,44 @@ describe("Coverage — PositionNFT.tokenURI", function () {
     expect(uri).to.match(/^data:application\/json;base64,/);
   });
 
+  /** Decode data URI → JSON object */
+  function decodeJson(uri: string): any {
+    return JSON.parse(Buffer.from(uri.replace("data:application/json;base64,", ""), "base64").toString());
+  }
+
   /** Decode data URI → JSON → SVG text */
   function decodeSvg(uri: string): string {
-    const json = JSON.parse(Buffer.from(uri.replace("data:application/json;base64,", ""), "base64").toString());
+    const json = decodeJson(uri);
     return Buffer.from((json.image as string).replace("data:image/svg+xml;base64,", ""), "base64").toString();
   }
+
+  it("includes attributes metadata for a long position", async function () {
+    const fix = await loadFixture(deployPoolFixture);
+    const nftId = await openLong(fix.pool, fix.trader1, ethers.parseUnits("100", 6));
+    const json = decodeJson(await fix.positionNFT.tokenURI(nftId));
+    expect(json.attributes).to.be.an("array");
+    const traits = json.attributes.map((a: any) => a.trait_type);
+    expect(traits).to.include("Side");
+    expect(traits).to.include("Market");
+    expect(traits).to.include("Position Size (USDC)");
+    expect(traits).to.include("Opened");
+    expect(traits).to.include("Deadline");
+    expect(traits).to.include("Est. P&L (USDC)");
+    const side = json.attributes.find((a: any) => a.trait_type === "Side");
+    expect(side.value).to.equal("Long");
+  });
+
+  it("includes attributes metadata for a short position", async function () {
+    const fix = await loadFixture(deployPoolFixture);
+    const nftId = await openShort(fix.pool, fix.trader1, ethers.parseUnits("100", 6));
+    const json = decodeJson(await fix.positionNFT.tokenURI(nftId));
+    expect(json.attributes).to.be.an("array");
+    const side = json.attributes.find((a: any) => a.trait_type === "Side");
+    expect(side.value).to.equal("Short");
+    const traits = json.attributes.map((a: any) => a.trait_type);
+    expect(traits).to.include("Locked USDC");
+    expect(traits).to.include("Debt (airToken)");
+  });
 
   it("shows positive PnL for a profitable long", async function () {
     const fix = await loadFixture(deployPoolFixture);

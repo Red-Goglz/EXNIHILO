@@ -1,6 +1,6 @@
 # Position Expiry & Renewal
 
-Every position in EXNIHILO has a **deadline**. After the deadline, anyone can liquidate the position. Before the deadline, only the holder can close or realize it. Positions can be renewed by paying a fee.
+Every position in EXNIHILO has a **deadline**. After the deadline, anyone can close the position. Before the deadline, only the holder can close or realize it. Positions can be renewed by paying a fee.
 
 ## How it works
 
@@ -18,7 +18,7 @@ Until the deadline:
 - Anyone can renew it by paying the renewal fee
 
 After the deadline:
-- Anyone can call `liquidateExpired()` to settle your position
+- Anyone can call `closePositionAfterDeadline()` to settle your position
 - If in profit: you receive the USDC profit (minus 1% close fee), same as a normal close
 - If underwater: collateral returns to LP, synthetic debt is burned, you receive nothing
 
@@ -32,9 +32,9 @@ Call `renewPosition(nftId)` to extend the deadline by one `positionDuration`. An
 
 If the position has already expired, the new deadline extends from `now` (not from the old deadline).
 
-## Liquidation
+## Closing
 
-After the deadline, `liquidateExpired(nftId)` can be called by anyone:
+After the deadline, `closePositionAfterDeadline(nftId)` can be called by anyone:
 
 **Profitable position:**
 1. Position is closed via the normal AMM swap (SWAP-3 for longs, SWAP-2 for shorts)

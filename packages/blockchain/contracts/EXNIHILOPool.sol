@@ -276,7 +276,7 @@ contract EXNIHILOPool is ReentrancyGuard {
 
     event PositionOpened(uint256 indexed nftId, address indexed holder, bool isLong);
     event PositionClosed(uint256 indexed nftId, address indexed holder, uint256 payout);
-    event PositionLiquidated(uint256 indexed nftId, address indexed liquidator, uint256 payout);
+    event PositionClosedAfterDeadline(uint256 indexed nftId, address indexed caller, uint256 payout);
     event PoolClosed(address indexed closedBy, uint256 closeDate);
 
 
@@ -311,7 +311,7 @@ contract EXNIHILOPool is ReentrancyGuard {
      *           - No new positions can be opened (openLong / openShort revert).
      *           - Positions cannot be renewed past closeDate.
      *           - After closeDate all positions are guaranteed expired and can
-     *             be liquidated, allowing the LP to call removeLiquidity().
+     *             be closed via closePositionAfterDeadline(), allowing the LP to call removeLiquidity().
      *
      *         Callable by the LP NFT holder or the factory's emergency deployer.
      *         Irreversible — reverts if already closed.
@@ -1020,21 +1020,21 @@ contract EXNIHILOPool is ReentrancyGuard {
     }
 
     /**
-     * @notice Liquidate an expired position. Callable by anyone after the deadline.
+     * @notice Close an expired position. Callable by anyone after the deadline.
      *
-     *         If the position is in profit (closeable), the profit goes to the
+     *         If the position is in profit, the profit goes to the
      *         holder (minus the 1 % close fee). Behaves exactly like closeLong/closeShort.
      *
      *         If the position is underwater, the locked collateral returns to the
      *         LP's backed reserves and the synthetic debt is burned. No payment
      *         to anyone — the position is simply cleaned up.
      *
-     * @param nftId      Position NFT to liquidate.
+     * @param nftId      Position NFT to close.
      * @param minPayout  Slippage guard on the holder's USDC payout (profitable
      *                   branch). Pass 0 to accept any outcome (including underwater
      *                   liquidation with zero payout).
      */
-    function liquidateExpired(uint256 nftId, uint256 minPayout) external nonReentrant {
+    function closePositionAfterDeadline(uint256 nftId, uint256 minPayout) external nonReentrant {
         Position memory pos = positionNFT.getPosition(nftId);
         if (pos.pool != address(this)) revert PositionNotFromThisPool();
         if (block.timestamp < pos.deadline) revert PositionNotExpired();
@@ -1042,9 +1042,9 @@ contract EXNIHILOPool is ReentrancyGuard {
         address holder = positionNFT.ownerOf(nftId);
 
         if (pos.isLong) {
-            _liquidateExpiredLong(nftId, pos, holder, minPayout);
+            _closeExpiredLong(nftId, pos, holder, minPayout);
         } else {
-            _liquidateExpiredShort(nftId, pos, holder, minPayout);
+            _closeExpiredShort(nftId, pos, holder, minPayout);
         }
     }
 
@@ -1157,7 +1157,7 @@ contract EXNIHILOPool is ReentrancyGuard {
     // INTERNAL — expired position liquidation
     // =========================================================================
 
-    function _liquidateExpiredLong(uint256 nftId, Position memory pos, address holder, uint256 minPayout) internal {
+    function _closeExpiredLong(uint256 nftId, Position memory pos, address holder, uint256 minPayout) internal {
         bool underwater = _longIsUnderwater(pos);
 
         openPositionCount--;
@@ -1185,7 +1185,7 @@ contract EXNIHILOPool is ReentrancyGuard {
             underlyingUsdc.safeTransfer(holder, netSurplus);
             underlyingUsdc.safeTransfer(protocolTreasury, closeFee);
 
-            emit PositionLiquidated(nftId, msg.sender, netSurplus);
+            emit PositionClosedAfterDeadline(nftId, msg.sender, netSurplus);
         } else {
             // Underwater: return collateral to LP, burn synthetic debt.
             backedAirToken += pos.lockedAmount;
@@ -1193,13 +1193,13 @@ contract EXNIHILOPool is ReentrancyGuard {
             positionNFT.release(nftId);
             airUsdToken.burn(address(this), pos.airUsdMinted);
 
-            emit PositionLiquidated(nftId, msg.sender, 0);
+            emit PositionClosedAfterDeadline(nftId, msg.sender, 0);
         }
 
         _assertReserveInvariant();
     }
 
-    function _liquidateExpiredShort(uint256 nftId, Position memory pos, address holder, uint256 minPayout) internal {
+    function _closeExpiredShort(uint256 nftId, Position memory pos, address holder, uint256 minPayout) internal {
         bool underwater = _shortIsUnderwater(pos);
 
         openPositionCount--;
@@ -1228,7 +1228,7 @@ contract EXNIHILOPool is ReentrancyGuard {
             underlyingUsdc.safeTransfer(holder, netSurplus);
             underlyingUsdc.safeTransfer(protocolTreasury, closeFee);
 
-            emit PositionLiquidated(nftId, msg.sender, netSurplus);
+            emit PositionClosedAfterDeadline(nftId, msg.sender, netSurplus);
         } else {
             // Underwater: return collateral to LP, burn synthetic debt.
             backedAirUsd += pos.lockedAmount;
@@ -1236,7 +1236,7 @@ contract EXNIHILOPool is ReentrancyGuard {
             positionNFT.release(nftId);
             airToken.burn(address(this), pos.airTokenMinted);
 
-            emit PositionLiquidated(nftId, msg.sender, 0);
+            emit PositionClosedAfterDeadline(nftId, msg.sender, 0);
         }
 
         _assertReserveInvariant();

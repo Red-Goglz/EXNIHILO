@@ -2,9 +2,9 @@
 
 ## Buy Now, Pay Later Trading
 
-Unlike traditional perps where you post collateral and face liquidation, EXNIHILO positions only require the fees to open. You pay USDC to open a position and receive an NFT. When you close in profit, you get back USDC — depending on price movement.
+Unlike traditional perps where you post collateral and face liquidation, EXNIHILO positions only require the fees. You pay USDC to open a position and receive an NFT. Those fees have to be paid again to extend the duration of a position. When you close in profit, you get back USDC — depending on price movement.
 
-There is no margin and no liquidation engine. Instead of a funding rate, positions have a **deadline** — after which anyone can liquidate them. Traders pay a fee to renew and extend the deadline. See [Expiry & Renewal](/positions/expiry).
+There is no margin and no liquidation engine. Instead of a funding rate, positions have a **deadline** — after which anyone can close the position. Traders pay a fee to renew and extend the deadline. See [Expiry & Renewal](/positions/expiry).
 
 ## Three-Curve AMM
 

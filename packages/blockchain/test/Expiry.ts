@@ -442,10 +442,10 @@ describe("Expiry: cliff-based position expiry", function () {
   });
 
   // ═════════════════════════════════════════════════════════════════════════════
-  // 4. liquidateExpired — profitable
+  // 4. closePositionAfterDeadline — profitable
   // ═════════════════════════════════════════════════════════════════════════════
 
-  describe("4. liquidateExpired — profitable", function () {
+  describe("4. closePositionAfterDeadline — profitable", function () {
 
     /** Open a long, pump the price, then advance time past expiry. */
     async function withProfitableExpiredLong() {
@@ -485,50 +485,50 @@ describe("Expiry: cliff-based position expiry", function () {
 
       // Should revert — deadline not reached
       await expect(
-        pool.connect(trader1).liquidateExpired(nftId, 0n)
+        pool.connect(trader1).closePositionAfterDeadline(nftId, 0n)
       ).to.be.revertedWithCustomError(pool, "PositionNotExpired");
     });
 
-    it("after deadline, anyone can liquidate a profitable long (holder receives USDC minus 1% fee)", async function () {
+    it("after deadline, anyone can close a profitable long (holder receives USDC minus 1% fee)", async function () {
       const { pool, usdc, trader1, other, nftId } =
         await loadFixture(withProfitableExpiredLong);
 
       const holderUsdcBefore = await usdc.balanceOf(trader1.address);
 
-      // Other (not the holder) liquidates
-      await pool.connect(other).liquidateExpired(nftId, 0n);
+      // Other (not the holder) closes the expired position
+      await pool.connect(other).closePositionAfterDeadline(nftId, 0n);
 
       const holderUsdcAfter = await usdc.balanceOf(trader1.address);
       // Holder should have received USDC profit
       expect(holderUsdcAfter).to.be.gt(holderUsdcBefore);
     });
 
-    it("after deadline, anyone can liquidate a profitable short", async function () {
+    it("after deadline, anyone can close a profitable short", async function () {
       const { pool, usdc, trader1, other, nftId } =
         await loadFixture(withProfitableExpiredShort);
 
       const holderUsdcBefore = await usdc.balanceOf(trader1.address);
 
-      await pool.connect(other).liquidateExpired(nftId, 0n);
+      await pool.connect(other).closePositionAfterDeadline(nftId, 0n);
 
       const holderUsdcAfter = await usdc.balanceOf(trader1.address);
       expect(holderUsdcAfter).to.be.gt(holderUsdcBefore);
     });
 
-    it("emits PositionLiquidated with payout > 0", async function () {
+    it("emits PositionClosedAfterDeadline with payout > 0", async function () {
       const { pool, other, nftId } = await loadFixture(withProfitableExpiredLong);
 
-      await expect(pool.connect(other).liquidateExpired(nftId, 0n))
-        .to.emit(pool, "PositionLiquidated")
+      await expect(pool.connect(other).closePositionAfterDeadline(nftId, 0n))
+        .to.emit(pool, "PositionClosedAfterDeadline")
         .withArgs(nftId, other.address, (v: bigint) => v > 0n);
     });
   });
 
   // ═════════════════════════════════════════════════════════════════════════════
-  // 5. liquidateExpired — underwater
+  // 5. closePositionAfterDeadline — underwater
   // ═════════════════════════════════════════════════════════════════════════════
 
-  describe("5. liquidateExpired — underwater", function () {
+  describe("5. closePositionAfterDeadline — underwater", function () {
 
     /** Open a long, crash the price, advance past expiry. */
     async function withUnderwaterExpiredLong() {
@@ -565,7 +565,7 @@ describe("Expiry: cliff-based position expiry", function () {
       const holderUsdcBefore  = await usdc.balanceOf(trader1.address);
       const backedTokenBefore = await pool.backedAirToken();
 
-      await pool.connect(other).liquidateExpired(nftId, 0n);
+      await pool.connect(other).closePositionAfterDeadline(nftId, 0n);
 
       // Holder did NOT receive USDC
       expect(await usdc.balanceOf(trader1.address)).to.equal(holderUsdcBefore);
@@ -580,7 +580,7 @@ describe("Expiry: cliff-based position expiry", function () {
       const holderUsdcBefore = await usdc.balanceOf(trader1.address);
       const backedUsdBefore  = await pool.backedAirUsd();
 
-      await pool.connect(other).liquidateExpired(nftId, 0n);
+      await pool.connect(other).closePositionAfterDeadline(nftId, 0n);
 
       // Holder did NOT receive USDC
       expect(await usdc.balanceOf(trader1.address)).to.equal(holderUsdcBefore);
@@ -588,11 +588,11 @@ describe("Expiry: cliff-based position expiry", function () {
       expect(await pool.backedAirUsd()).to.be.gt(backedUsdBefore);
     });
 
-    it("emits PositionLiquidated with payout = 0", async function () {
+    it("emits PositionClosedAfterDeadline with payout = 0", async function () {
       const { pool, other, nftId } = await loadFixture(withUnderwaterExpiredLong);
 
-      await expect(pool.connect(other).liquidateExpired(nftId, 0n))
-        .to.emit(pool, "PositionLiquidated")
+      await expect(pool.connect(other).closePositionAfterDeadline(nftId, 0n))
+        .to.emit(pool, "PositionClosedAfterDeadline")
         .withArgs(nftId, other.address, 0n);
     });
 
@@ -600,7 +600,7 @@ describe("Expiry: cliff-based position expiry", function () {
       const { pool, other, nftId } = await loadFixture(withUnderwaterExpiredLong);
 
       const countBefore = await pool.openPositionCount();
-      await pool.connect(other).liquidateExpired(nftId, 0n);
+      await pool.connect(other).closePositionAfterDeadline(nftId, 0n);
       expect(await pool.openPositionCount()).to.equal(countBefore - 1n);
     });
   });

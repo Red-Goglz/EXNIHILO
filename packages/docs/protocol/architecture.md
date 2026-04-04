@@ -30,7 +30,7 @@ The core contract. Handles:
 - Token swaps (SWAP-1)
 - Long/short position opens (SWAP-2, SWAP-3)
 - Position closes and realizes
-- Position renewal and expiry liquidation
+- Position renewal and expiry closure
 - Liquidity management (add/withdraw)
 - Fee accounting and claims
 - Position cap enforcement

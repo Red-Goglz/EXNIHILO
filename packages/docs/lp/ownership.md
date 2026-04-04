@@ -18,7 +18,7 @@ Whoever holds the LP NFT can:
 - **Withdraw liquidity** — remove tokens + USDC when there is no open position (long or short)
 - **Claim fees** — withdraw accumulated LP fees (3% of position opens)
 - **Set position caps** — limit individual position sizes
-- **Force realize positions** — settle any underwater open position
+- **Close a market** — no new positions or renewals. But trading remains open. 
 
 ## Transferring LP ownership
 

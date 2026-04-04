@@ -7,7 +7,6 @@ Anyone can create a new market for any ERC-20 token. No approvals, no governance
 1. **A token address** — any ERC-20 token you want to trade against USDC
 2. **Initial token liquidity** — tokens to seed the pool
 3. **Initial USDC liquidity** — USDC to seed the other side
-4. **Swap fee** — the fee percentage for swaps (in basis points, e.g., 100 = 1%)
 5. **Position duration** (optional) — how long each position period lasts, in seconds. Pass 0 for the 7-day default. Range: 1 hour to 1 year.
 
 ## What happens

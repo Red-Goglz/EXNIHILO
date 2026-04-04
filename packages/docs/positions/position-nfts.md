@@ -22,13 +22,6 @@ The PositionNFT contract custodies the locked wrapper tokens for the lifetime of
 
 All pools share a single PositionNFT contract. Token IDs are sequential across all markets. The `pool` field in each position identifies which pool it belongs to.
 
-## ERC-721 Enumerable
-
-PositionNFT inherits `ERC721Enumerable`, which means:
-- `balanceOf(address)` — how many positions a user holds
-- `tokenOfOwnerByIndex(address, index)` — iterate through a user's positions
-
-The frontend uses this to populate the Portfolio page.
 
 ## Collateral custody
 

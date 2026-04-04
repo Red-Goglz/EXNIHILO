@@ -67,7 +67,7 @@ contract PositionNFT is ERC721Enumerable {
         uint256 airTokenMinted;
         uint256 feesPaid;
         uint256 openedAt;
-        /// @dev Timestamp after which the position can be liquidated by anyone.
+        /// @dev Timestamp after which the position can be closed by anyone.
         uint256 deadline;
     }
 
@@ -156,13 +156,59 @@ contract PositionNFT is ERC721Enumerable {
             ld.tokenSymbol, '/USDC ',
             pos.isLong ? "long" : "short",
             ' position. Fully on-chain.",',
-            '"image":"data:image/svg+xml;base64,', Base64.encode(svg), '"}'
+            '"image":"data:image/svg+xml;base64,', Base64.encode(svg), '",'
         );
+
+        json = abi.encodePacked(json, _buildAttributes(tokenId, pos, ld), '}');
 
         return string(abi.encodePacked(
             "data:application/json;base64,",
             Base64.encode(json)
         ));
+    }
+
+    function _buildAttributes(
+        uint256 tokenId,
+        Position memory pos,
+        LiveData memory ld
+    ) internal pure returns (bytes memory) {
+        // Build in chunks to stay within abi.encodePacked 16-arg limit
+        bytes memory a1 = abi.encodePacked(
+            '"attributes":[',
+            '{"trait_type":"Side","value":"', pos.isLong ? "Long" : "Short", '"},',
+            '{"trait_type":"Market","value":"', ld.tokenSymbol, '/USDC"},',
+            '{"trait_type":"Token ID","display_type":"number","value":', tokenId.toString(), '},',
+            '{"trait_type":"Position Size (USDC)","display_type":"number","value":', _fmt6(pos.usdcIn), '},'
+        );
+
+        bytes memory a2 = pos.isLong
+            ? abi.encodePacked(
+                '{"trait_type":"Locked ', ld.tokenSymbol, '","display_type":"number","value":', _fmtToken(pos.lockedAmount, ld.tokenDecimals), '},',
+                '{"trait_type":"Debt (airUSD)","display_type":"number","value":', _fmt6(pos.airUsdMinted), '},'
+            )
+            : abi.encodePacked(
+                '{"trait_type":"Locked USDC","display_type":"number","value":', _fmt6(pos.lockedAmount), '},',
+                '{"trait_type":"Debt (airToken)","display_type":"number","value":', _fmtToken(pos.airTokenMinted, ld.tokenDecimals), '},'
+            );
+
+        bytes memory a3 = abi.encodePacked(
+            '{"trait_type":"Fees Paid (USDC)","display_type":"number","value":', _fmt6(pos.feesPaid), '},',
+            '{"trait_type":"Opened","display_type":"date","value":', pos.openedAt.toString(), '},',
+            '{"trait_type":"Deadline","display_type":"date","value":', pos.deadline.toString(), '},'
+        );
+
+        bytes memory pnlAttr;
+        if (ld.pnlReady) {
+            pnlAttr = abi.encodePacked(
+                '{"trait_type":"Est. P&L (USDC)","display_type":"number","value":',
+                ld.pnlPositive ? "" : "-",
+                _fmt6(ld.pnlAbs), '}'
+            );
+        } else {
+            pnlAttr = bytes('{"trait_type":"Est. P&L","value":"N/A"}');
+        }
+
+        return abi.encodePacked(a1, a2, a3, pnlAttr, ']');
     }
 
     // ── Mint ───────────────────────────────────────────────────────────────────
@@ -482,7 +528,9 @@ contract PositionNFT is ERC721Enumerable {
     function _svgFooter(Position memory pos) internal pure returns (bytes memory) {
         return abi.encodePacked(
             '<text x="20" y="356" class="f lbl">OPENED</text>',
-            '<text x="20" y="374" class="f" font-size="11" fill="#444">', _fmtDate(pos.openedAt), "</text>"
+            '<text x="20" y="374" class="f" font-size="11" fill="#444">', _fmtDate(pos.openedAt), "</text>",
+            '<text x="210" y="356" class="f lbl">EXPIRES</text>',
+            '<text x="210" y="374" class="f" font-size="11" fill="#444">', _fmtDate(pos.deadline), "</text>"
         );
     }
 

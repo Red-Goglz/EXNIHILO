@@ -19,13 +19,12 @@ Adding liquidity increases the pool's TVL and reduces price impact for traders. 
 
 Call `withdrawLiquidity(tokenAmount, usdcAmount)` on the pool.
 
-- You can withdraw up to the current backed reserves
+- You can only withdraw 100%
+- You can only withdaw if there no open positions.
+- Close a market to stop the creation of new positions or renew payments. Use this carefully and make sure to announce it to your community. 
 - Wrapper tokens are burned, real tokens returned to the LP
 - `backedAirToken` and `backedAirUsd` decrease
 
-::: warning
-Withdrawing too much liquidity while positions are open can increase price impact and may affect position settlement. The reserve invariant (`backed ≤ totalSupply`) is always enforced.
-:::
 
 ## Access control
 

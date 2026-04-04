@@ -7,7 +7,7 @@
 | Function | Access | Description |
 |---|---|---|
 | `renewPosition(uint256 nftId)` | Anyone | Pay base fee (5%) to extend position deadline by one period |
-| `liquidateExpired(uint256 nftId)` | Anyone | Settle an expired position (profitable: pay holder; underwater: return to LP) |
+| `closePositionAfterDeadline(uint256 nftId)` | Anyone | Settle an expired position (profitable: pay holder; underwater: return to LP) |
 | `swap(uint256 amountIn, uint256 minAmountOut, bool tokenToUsdc, address recipient)` | Anyone | Swap tokens via SWAP-1, output sent to `recipient` |
 | `openLong(uint256 usdcAmount, uint256 minAirTokenOut, address recipient)` | Anyone | Open a long position, NFT minted to `recipient` |
 | `openShort(uint256 usdcNotional, uint256 minAirUsdOut, address recipient)` | Anyone | Open a short position, NFT minted to `recipient` |
@@ -56,7 +56,7 @@ event LiquidityRemoved(address indexed provider, uint256 tokenAmount, uint256 us
 event FeesClaimed(address indexed lpOwner, uint256 amount);
 event PositionCapsUpdated(uint256 newMaxPositionUsd, uint256 newMaxPositionBps, address indexed by);
 event PositionRenewed(uint256 indexed nftId, address indexed payer, uint256 feePaid, uint256 newDeadline);
-event PositionLiquidated(uint256 indexed nftId, address indexed liquidator, bool profitable, uint256 payout);
+event PositionClosedAfterDeadline(uint256 indexed nftId, address indexed caller, bool profitable, uint256 payout);
 ```
 
 ## EXNIHILOFactory

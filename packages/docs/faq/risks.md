@@ -16,11 +16,11 @@ The protocol has not undergone a formal security audit. While the codebase follo
 
 ## Position expiry
 
-Every position has a deadline. If the position is not renewed before the deadline, anyone can liquidate it:
+Every position has a deadline. If the position is not renewed before the deadline, anyone can close it:
 - **Profitable positions**: closed like normal — holder receives USDC profit minus 1% fee
 - **Underwater positions**: collateral returns to LP reserves, no payout to the holder
 
-Renew your position before the deadline to avoid forced liquidation.
+Renew your position before the deadline to avoid forced closure.
 
 ## Price divergence
 

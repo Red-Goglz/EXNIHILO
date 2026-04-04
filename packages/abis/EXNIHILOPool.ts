@@ -303,7 +303,7 @@ export const exnihiloPoolAbi = [
       {
         "indexed": true,
         "internalType": "address",
-        "name": "liquidator",
+        "name": "caller",
         "type": "address"
       },
       {
@@ -313,7 +313,7 @@ export const exnihiloPoolAbi = [
         "type": "uint256"
       }
     ],
-    "name": "PositionLiquidated",
+    "name": "PositionClosedAfterDeadline",
     "type": "event"
   },
   {
@@ -467,7 +467,7 @@ export const exnihiloPoolAbi = [
         "type": "uint256"
       }
     ],
-    "name": "liquidateExpired",
+    "name": "closePositionAfterDeadline",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

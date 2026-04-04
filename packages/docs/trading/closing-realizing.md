@@ -31,16 +31,16 @@ This is useful for situations where the trader wants to exit and receive the tok
 
 ## Position expiry
 
-Every position has a **deadline**. After the deadline, anyone can call `liquidateExpired(nftId)`:
+Every position has a **deadline**. After the deadline, anyone can call `closePositionAfterDeadline(nftId)`:
 
 - **Profitable**: closed like normal — holder receives USDC profit minus 1% fee
 - **Underwater**: collateral returns to LP, synthetic debt burned, no payout
 
 To avoid expiry, call `renewPosition(nftId)` before the deadline. This pays 5% of notional and extends the deadline by one position duration. See [Expiry & Renewal](/positions/expiry).
 
-## Who can close / realize / liquidate?
+## Who can close / realize / close after deadline?
 
 - **Close** — only the NFT owner (the trader), at any time
 - **Realize** — only the NFT owner
-- **liquidateExpired** — anyone, but only after the deadline
+- **closePositionAfterDeadline** — anyone, but only after the deadline
 - **renewPosition** — anyone, at any time (pay fee to extend deadline)
