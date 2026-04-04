@@ -7,6 +7,7 @@ import {
   useWaitForTransactionReceipt,
 } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
+import { useFormo } from "@formo/analytics";
 import { erc20Abi } from "@exnihilio/abis";
 import { getAddresses } from "../../contracts/addresses.ts";
 import { formatUsdc } from "../../lib/format.ts";
@@ -17,6 +18,7 @@ export default function RouterApprovalModal() {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
   const queryClient = useQueryClient();
+  const analytics = useFormo();
 
   // Dismissed only for this page visit — resets on every mount (navigating away and back)
   const [dismissed, setDismissed] = useState(false);
@@ -65,9 +67,10 @@ export default function RouterApprovalModal() {
   useEffect(() => {
     if (isSuccess) {
       queryClient.invalidateQueries();
+      analytics?.track("Router Approved", { router: routerAddress });
       setDismissed(true);
     }
-  }, [isSuccess, queryClient]);
+  }, [isSuccess, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Show when: connected, router deployed, no allowance yet, has USDC, not dismissed
   const shouldShow =
