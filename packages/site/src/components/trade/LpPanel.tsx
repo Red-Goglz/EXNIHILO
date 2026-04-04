@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAccount, useReadContracts, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
 import { useFormo } from "@formo/analytics";
@@ -44,6 +44,8 @@ export default function LpPanel({
       { ...poolContract, functionName: "openPositionCount" },
       { ...poolContract, functionName: "maxPositionUsd" },
       { ...poolContract, functionName: "maxPositionBps" },
+      { ...poolContract, functionName: "closeDate" },
+      { ...poolContract, functionName: "positionDuration" },
     ],
   });
 
@@ -54,6 +56,8 @@ export default function LpPanel({
   const openPositionCount = data?.[4]?.result as bigint | undefined;
   const currentMaxUsd = data?.[5]?.result as bigint | undefined;
   const currentMaxBps = data?.[6]?.result as bigint | undefined;
+  const closeDate = data?.[7]?.result as bigint | undefined;
+  const positionDuration = data?.[8]?.result as bigint | undefined;
 
   const { data: lpOwner } = useReadContracts({
     contracts:
@@ -111,6 +115,18 @@ export default function LpPanel({
     : "idle";
 
   const capsStatus = capsPending ? "pending" : capsConfirming ? "confirming" : capsSuccess ? "success" : "idle";
+
+  const { writeContract: writeClose, data: closeHash, isPending: closePending } = useWriteContract();
+  const { isLoading: closeConfirming, isSuccess: closeSuccess } = useWaitForTransactionReceipt({ hash: closeHash });
+  const closeStatus = closePending ? "pending" : closeConfirming ? "confirming" : closeSuccess ? "success" : "idle";
+
+  useEffect(() => {
+    if (closeSuccess) queryClient.invalidateQueries();
+  }, [closeSuccess, queryClient]);
+
+  const isPoolClosing = closeDate !== undefined && closeDate > 0n;
+  const positionDurationHours = positionDuration !== undefined ? Number(positionDuration) / 3600 : 168;
+  const positionDurationDays = Math.round(positionDurationHours / 24);
 
   // Parse cap inputs: usd is raw USDC (6 dec), bps is integer
   const newCapsUsd = (() => {
@@ -185,20 +201,54 @@ export default function LpPanel({
         </div>
       </div>
 
-      {/* Open positions warning */}
+      {/* Open positions / close market info */}
       {hasOpenPositions && (
         <div
           style={{
-            background: "rgba(255,59,48,0.06)",
-            border: "1px solid rgba(255,59,48,0.25)",
-            padding: "10px 14px",
+            background: isPoolClosing ? "rgba(255,140,0,0.06)" : "rgba(255,59,48,0.06)",
+            border: `1px solid ${isPoolClosing ? "rgba(255,140,0,0.25)" : "rgba(255,59,48,0.25)"}`,
+            padding: "12px 14px",
             fontFamily: "var(--font-mono)",
-            fontSize: "0.65rem",
-            color: "var(--red)",
-            letterSpacing: "0.06em",
+            fontSize: "0.62rem",
+            color: isPoolClosing ? "var(--orange)" : "var(--red)",
+            letterSpacing: "0.04em",
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
           }}
         >
-          ◉ {openPositionCount?.toString()} open position(s) — cannot remove liquidity
+          <div>
+            {isPoolClosing
+              ? `◉ MARKET CLOSING — ${openPositionCount?.toString()} position(s) must expire before withdrawal`
+              : `◉ ${openPositionCount?.toString()} open position(s) — cannot remove liquidity`}
+          </div>
+          {!isPoolClosing && (
+            <div style={{ color: "var(--muted)", fontSize: "0.58rem", lineHeight: 1.5 }}>
+              Close the market to block new positions and prevent renewals.
+              All existing positions will expire within {positionDurationDays} day{positionDurationDays !== 1 ? "s" : ""} ({positionDurationHours}h).
+              After that you can withdraw all liquidity.
+            </div>
+          )}
+          {isPoolClosing && (
+            <div style={{ color: "var(--muted)", fontSize: "0.58rem" }}>
+              Closes {new Date(Number(closeDate!) * 1000).toLocaleString()} — positions cannot be renewed past this date.
+            </div>
+          )}
+          {!isPoolClosing && (
+            <TxButton
+              idleLabel="Close Market"
+              status={closeStatus}
+              variant="red"
+              onClick={() =>
+                writeClose({
+                  address: poolAddress,
+                  abi: exnihiloPoolAbi,
+                  functionName: "closePool",
+                })
+              }
+              style={{ width: "100%", justifyContent: "center", fontSize: "0.6rem" }}
+            />
+          )}
         </div>
       )}
 
@@ -290,7 +340,7 @@ export default function LpPanel({
         )}
       </div>
 
-      {/* Remove Liquidity section */}
+      {/* Remove All Liquidity */}
       <div
         style={{
           border: "1px solid var(--border)",
@@ -308,24 +358,26 @@ export default function LpPanel({
             color: "var(--muted)",
           }}
         >
-          REMOVE LIQUIDITY
+          REMOVE ALL LIQUIDITY
         </div>
-        <TokenInput
-          label={tokenSymbol}
-          value={tokenInput}
-          onChange={setTokenInput}
-          decimals={tokenDecimals}
-          symbol={tokenSymbol}
-        />
-        <TokenInput
-          label="USDC"
-          value={usdcInput}
-          onChange={setUsdcInput}
-          decimals={6}
-          symbol="USDC"
-        />
+        {backedAirToken !== undefined && backedAirUsd !== undefined && (backedAirToken > 0n || backedAirUsd > 0n) && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", padding: "8px 10px" }}>
+              <div className="stat-label">YOU RECEIVE</div>
+              <div style={{ fontSize: "0.75rem", color: "var(--body)" }}>
+                {formatToken(backedAirToken, tokenDecimals)} <span style={{ color: "var(--muted)", fontSize: "0.65rem" }}>{tokenSymbol}</span>
+              </div>
+            </div>
+            <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", padding: "8px 10px" }}>
+              <div className="stat-label">YOU RECEIVE</div>
+              <div style={{ fontSize: "0.75rem", color: "var(--body)" }}>
+                ${formatUsdc(backedAirUsd)} <span style={{ color: "var(--muted)", fontSize: "0.65rem" }}>USDC</span>
+              </div>
+            </div>
+          </div>
+        )}
         <TxButton
-          idleLabel="Remove Liquidity"
+          idleLabel="Remove All Liquidity"
           status={txStatus}
           variant="red"
           onClick={() =>
@@ -341,7 +393,7 @@ export default function LpPanel({
               }}
             )
           }
-          disabled={hasOpenPositions}
+          disabled={hasOpenPositions || (backedAirToken === 0n && backedAirUsd === 0n)}
           style={{ width: "100%", justifyContent: "center" }}
         />
       </div>
