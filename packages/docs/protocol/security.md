@@ -64,16 +64,39 @@ All token operations use OpenZeppelin's `SafeERC20` library, which handles non-s
 
 ## Audit status
 
+An automated security audit was performed using **Claude Opus 4.6** (Anthropic) across 11 independent analysis passes on 2026-04-04.
+
+**Scope:** EXNIHILOPool, PositionNFT, EXNIHILOFactory, EXNIHILORouter, LpNFT, AirToken
+
+**Result: 0 Critical | 0 High | 0 Medium (fixed) | 7 Low | 6 Info**
+
+| Pass | Focus | Findings |
+|------|-------|----------|
+| Nemesis (Feynman + State Inconsistency) | Iterative dual-engine deep audit | 4L, 1I |
+| Behavioral State Analysis | Economic, access control, state integrity | 4L, 1I |
+| DoS & Griefing | Unbounded loops, external call failure, storage bloat | 1M (fixed), 2L |
+| External Call Safety | Unchecked returns, fee-on-transfer, rebasing, ERC-777 | 1L |
+| Input & Arithmetic | Zero checks, rounding, overflow, dust amounts | 2L, 4I |
+| Oracle & Flash Loan | Price manipulation, flash loan vectors | 2L |
+| Proxy & Upgrade | Storage collisions, initialization, selector clashing | Clean |
+| Reentrancy | Classic, cross-function, cross-contract, read-only | 1L |
+| Semantic Guard | Guard consistency across all state variables | 1I |
+| Signature & Replay | Signature verification, replay vectors | Clean |
+| State Invariant | Mathematical invariant detection and verification | Clean |
+
+The single Medium finding (a USDC-blacklisted position holder could block LP exit via expired position cleanup) was fixed with a try/catch wrapper on the affected transfer paths. Nine dedicated tests confirm the fix.
+
 ::: warning
-EXNIHILO has not yet undergone a formal security audit. Use at your own risk.
+This audit was performed by an AI model, not a human auditor. While it covers a wide range of vulnerability classes, it does not replace a formal professional audit. Use at your own risk.
 :::
 
 ## Test coverage
 
-The protocol has ~395 tests covering:
+The protocol has 404 tests covering:
 - Core logic (swaps, positions, liquidity)
 - Edge cases and boundary conditions
 - Reentrancy attack vectors
 - Fee-on-transfer rejection
 - Zero-output guards
 - Factory fallback behavior
+- Blacklist resilience (DoS-2 fix)
