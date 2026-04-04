@@ -19,6 +19,7 @@ interface IEXNIHILOPool {
     function openLong(uint256 usdcAmount, uint256 minAirTokenOut, address recipient) external;
     function openShort(uint256 usdcNotional, uint256 minAirUsdOut, address recipient) external;
     function swap(uint256 amountIn, uint256 minAmountOut, bool tokenToUsdc, address recipient) external;
+    function renewPosition(uint256 nftId) external;
 }
 
 /**
@@ -120,6 +121,19 @@ contract EXNIHILORouter is ReentrancyGuard {
         tokenIn.forceApprove(pool, amountIn);
         IEXNIHILOPool(pool).swap(amountIn, minAmountOut, tokenToUsdc, msg.sender);
         tokenIn.forceApprove(pool, 0);
+    }
+
+    /// @notice Renew a position via `pool`. Caller must have approved USDC to this router.
+    ///         `fee` must match the pool's expected renewal fee (5% of notional, min 0.05 USDC).
+    function renewPosition(
+        address pool,
+        uint256 nftId,
+        uint256 fee
+    ) external nonReentrant onlyPool(pool) {
+        usdc.safeTransferFrom(msg.sender, address(this), fee);
+        usdc.forceApprove(pool, fee);
+        IEXNIHILOPool(pool).renewPosition(nftId);
+        usdc.forceApprove(pool, 0);
     }
 
     /// @notice Rescue ERC-20 tokens accidentally sent to this contract.

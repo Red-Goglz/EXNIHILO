@@ -9,7 +9,7 @@ export const ADDRESSES = {
     lpNFT:       "0xD0A8Fd0188abaA91eCDaeefaabdD9c64c684E9fC" as `0x${string}`,
     usdc:        "0xfFE6304982d0592E19108eA2c789DAa7eEBA4e60" as `0x${string}`,
     faucet:      "0x6B6E706bc796027C9f43BF52d5A6d2f22c97F2B0" as `0x${string}`,
-    router:      "0xfacc707663b05c3001c2B84C1D0204e6275705Bb" as `0x${string}`,
+    router:      "0x3BFA0E1C244be6607525F0AcC845712356A21521" as `0x${string}`,
   },
 
   // ── Local Hardhat node (npx hardhat node) ───────────────────────────────────

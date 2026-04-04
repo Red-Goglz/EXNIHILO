@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
-import { useWriteContract, useWaitForTransactionReceipt, useReadContracts } from "wagmi";
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContracts } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
 import { useFormo } from "@formo/analytics";
-import { exnihiloPoolAbi, erc20Abi } from "@exnihilio/abis";
+import { exnihiloPoolAbi, exnihiloRouterAbi, erc20Abi } from "@exnihilio/abis";
 import { formatUsdc, formatToken } from "../../lib/format.ts";
+import { useRouterApproval } from "../../hooks/useRouterApproval.ts";
 import TxButton from "../shared/TxButton.tsx";
 
 interface Position {
@@ -79,7 +80,9 @@ function fmtCountdown(seconds: number): string {
 export default function PositionCard({
   tokenId,
   position,
+  underlyingUsdc,
 }: PositionCardProps) {
+  const { address } = useAccount();
   const queryClient = useQueryClient();
   const analytics = useFormo();
 
@@ -127,6 +130,32 @@ export default function PositionCard({
     const fee = (notional * 500n) / 10_000n; // 5% base
     return fee < 50_000n ? 50_000n : fee; // min 0.05 USDC
   })();
+
+  // ── Router approval for renew (reuse existing USDC→router approval) ─────
+  const { routerAddress, routerAllowance } = useRouterApproval(underlyingUsdc);
+  const useRouter = !!routerAddress && routerAllowance !== undefined && routerAllowance >= renewalFee;
+
+  // ── Direct pool USDC allowance (fallback if no router approval) ────────
+  const { data: allowanceData } = useReadContracts({
+    contracts: address ? [{
+      address: underlyingUsdc,
+      abi: erc20Abi,
+      functionName: "allowance" as const,
+      args: [address, position.pool] as const,
+    }] : [],
+    query: { enabled: !!address && !useRouter },
+  });
+  const usdcAllowance = allowanceData?.[0]?.result as bigint | undefined;
+  const needsRenewApproval = !useRouter && usdcAllowance !== undefined && renewalFee > usdcAllowance;
+
+  const { writeContract: writeApprove, data: approveHash, isPending: approvePending } = useWriteContract();
+  const { isLoading: approveConfirming, isSuccess: approveSuccess } = useWaitForTransactionReceipt({ hash: approveHash });
+
+  const approveStatus = approvePending ? "pending" : approveConfirming ? "confirming" : approveSuccess ? "success" : "idle";
+
+  useEffect(() => {
+    if (approveSuccess) queryClient.invalidateQueries();
+  }, [approveSuccess, queryClient]);
 
   // ── Close / Realize tx state ────────────────────────────────────────────
   const { writeContract, data: txHash, isPending } = useWriteContract();
@@ -322,22 +351,48 @@ export default function PositionCard({
           </div>
         </div>
 
-        {/* Renew button */}
+        {/* Renew button (with approval if needed) */}
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
-          <TxButton
-            idleLabel={`Renew ($${formatUsdc(renewalFee)})`}
-            status={renewStatus}
-            variant="default"
-            onClick={() =>
-              writeRenew({
-                address: position.pool,
-                abi: exnihiloPoolAbi,
-                functionName: "renewPosition",
-                args: [tokenId],
-              })
-            }
-            style={{ fontSize: "0.56rem", padding: "4px 10px" }}
-          />
+          {needsRenewApproval && !approveSuccess ? (
+            <TxButton
+              idleLabel={`Approve USDC`}
+              status={approveStatus}
+              variant="default"
+              onClick={() =>
+                writeApprove({
+                  address: underlyingUsdc,
+                  abi: erc20Abi,
+                  functionName: "approve",
+                  args: [position.pool, renewalFee],
+                })
+              }
+              style={{ fontSize: "0.56rem", padding: "4px 10px" }}
+            />
+          ) : (
+            <TxButton
+              idleLabel={`Renew ($${formatUsdc(renewalFee)})`}
+              status={renewStatus}
+              variant="default"
+              onClick={() => {
+                if (useRouter) {
+                  writeRenew({
+                    address: routerAddress!,
+                    abi: exnihiloRouterAbi,
+                    functionName: "renewPosition",
+                    args: [position.pool, tokenId, renewalFee],
+                  });
+                } else {
+                  writeRenew({
+                    address: position.pool,
+                    abi: exnihiloPoolAbi,
+                    functionName: "renewPosition",
+                    args: [tokenId],
+                  });
+                }
+              }}
+              style={{ fontSize: "0.56rem", padding: "4px 10px" }}
+            />
+          )}
         </div>
       </div>
 
