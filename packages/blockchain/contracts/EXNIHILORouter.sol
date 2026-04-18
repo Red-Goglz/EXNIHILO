@@ -27,7 +27,9 @@ interface IEXNIHILOPool {
  * @notice Thin router for trading operations. Users approve USDC (and any
  *         underlying tokens) to this contract once; the router pulls only
  *         the position fee from the caller, approves the target pool, and
- *         forwards the call.
+ *         forwards the call. Any unconsumed input is refunded to the caller
+ *         atomically in the same transaction — the router holds zero token
+ *         state between transactions.
  *
  *         LP operations (addLiquidity, removeLiquidity, claimFees, setPositionCaps)
  *         and position exits (closeLong, closeShort, realizeLong, realizeShort)
@@ -59,7 +61,10 @@ contract EXNIHILORouter is ReentrancyGuard {
     }
 
     /// @dev Replicates the pool's fee calculation (base + OI-integral impact)
-    ///      so the router pulls exactly what the pool will consume.
+    ///      so the router pulls enough to cover the pool's consumption. The
+    ///      snapshot may drift between the router's view read and the pool's
+    ///      execution read; unconsumed surplus is refunded atomically via the
+    ///      _refundResidual pattern in each entry point.
     function _positionFee(uint256 notional, address pool, bool isLong) internal view returns (uint256) {
         uint256 fee = (notional * PROTOCOL_FEE_BPS) / BPS_DENOM
                     + (notional * LP_FEE_BPS)       / BPS_DENOM;
@@ -80,6 +85,18 @@ contract EXNIHILORouter is ReentrancyGuard {
         return fee + impactFee;
     }
 
+    /// @dev Refund any portion of `token` that this call added to the router's
+    ///      balance but the pool did not consume, back to `recipient`.
+    ///      Uses a balance-delta against `balBefore` so pre-existing residuals
+    ///      (from prior donations or accidents) are never attributable to the
+    ///      current caller.
+    function _refundResidual(IERC20 token, uint256 balBefore, address recipient) internal {
+        uint256 balAfter = token.balanceOf(address(this));
+        if (balAfter > balBefore) {
+            token.safeTransfer(recipient, balAfter - balBefore);
+        }
+    }
+
     /// @notice Open a long position on `pool`. Caller must have approved USDC to this router.
     function openLong(
         address pool,
@@ -87,10 +104,12 @@ contract EXNIHILORouter is ReentrancyGuard {
         uint256 minAirTokenOut
     ) external nonReentrant onlyPool(pool) {
         uint256 fee = _positionFee(usdcAmount, pool, true);
+        uint256 balBefore = usdc.balanceOf(address(this));
         usdc.safeTransferFrom(msg.sender, address(this), fee);
         usdc.forceApprove(pool, fee);
         IEXNIHILOPool(pool).openLong(usdcAmount, minAirTokenOut, msg.sender);
         usdc.forceApprove(pool, 0);
+        _refundResidual(usdc, balBefore, msg.sender);
     }
 
     /// @notice Open a short position on `pool`. Caller must have approved USDC to this router.
@@ -100,10 +119,12 @@ contract EXNIHILORouter is ReentrancyGuard {
         uint256 minAirUsdOut
     ) external nonReentrant onlyPool(pool) {
         uint256 fee = _positionFee(usdcNotional, pool, false);
+        uint256 balBefore = usdc.balanceOf(address(this));
         usdc.safeTransferFrom(msg.sender, address(this), fee);
         usdc.forceApprove(pool, fee);
         IEXNIHILOPool(pool).openShort(usdcNotional, minAirUsdOut, msg.sender);
         usdc.forceApprove(pool, 0);
+        _refundResidual(usdc, balBefore, msg.sender);
     }
 
     /// @notice Swap tokens via `pool`. Caller must have approved the input token to this router.
@@ -117,32 +138,27 @@ contract EXNIHILORouter is ReentrancyGuard {
             ? IEXNIHILOPool(pool).underlyingToken()
             : usdc;
 
+        uint256 balBefore = tokenIn.balanceOf(address(this));
         tokenIn.safeTransferFrom(msg.sender, address(this), amountIn);
         tokenIn.forceApprove(pool, amountIn);
         IEXNIHILOPool(pool).swap(amountIn, minAmountOut, tokenToUsdc, msg.sender);
         tokenIn.forceApprove(pool, 0);
+        _refundResidual(tokenIn, balBefore, msg.sender);
     }
 
     /// @notice Renew a position via `pool`. Caller must have approved USDC to this router.
-    ///         `fee` must match the pool's expected renewal fee (5% of notional, min 0.05 USDC).
+    ///         `fee` may safely be an over-estimate — any surplus not consumed
+    ///         by the pool is refunded to the caller atomically.
     function renewPosition(
         address pool,
         uint256 nftId,
         uint256 fee
     ) external nonReentrant onlyPool(pool) {
+        uint256 balBefore = usdc.balanceOf(address(this));
         usdc.safeTransferFrom(msg.sender, address(this), fee);
         usdc.forceApprove(pool, fee);
         IEXNIHILOPool(pool).renewPosition(nftId);
         usdc.forceApprove(pool, 0);
-    }
-
-    /// @notice Rescue ERC-20 tokens accidentally sent to this contract.
-    ///         The Router should never hold tokens between transactions.
-    ///         Callable by anyone — sends the full balance to the caller.
-    function sweep(IERC20 token) external {
-        uint256 balance = token.balanceOf(address(this));
-        if (balance > 0) {
-            token.safeTransfer(msg.sender, balance);
-        }
+        _refundResidual(usdc, balBefore, msg.sender);
     }
 }

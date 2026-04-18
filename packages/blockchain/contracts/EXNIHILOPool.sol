@@ -172,6 +172,12 @@ contract EXNIHILOPool is ReentrancyGuard {
     ///      as one position or many smaller ones.
     ///      All impact fee revenue goes to the LP to compensate for price distortion.
     uint256 private constant IMPACT_FEE_BPS   = 1500;  // 15 % impact scaling rate
+    /// @dev Minimum swap fee in basis points. A permissionless factory would
+    ///      otherwise allow `swapFeeBps = 0`, which removes the economic
+    ///      friction that makes atomic flash-loan manipulation (open →
+    ///      manipulate price → close) unprofitable. 100 bps (1 %) puts the
+    ///      default and the floor at the same value.
+    uint256 private constant MIN_SWAP_FEE_BPS = 100;   // 1 %
 
     // ── Immutables ────────────────────────────────────────────────────────────
 
@@ -376,7 +382,7 @@ contract EXNIHILOPool is ReentrancyGuard {
         if (maxPositionBps_ != 0 && (maxPositionBps_ < 10 || maxPositionBps_ > 9900)) {
             revert InvalidMaxPositionBps();
         }
-        if (swapFeeBps_ >= BPS_DENOM) revert InvalidSwapFeeBps();
+        if (swapFeeBps_ < MIN_SWAP_FEE_BPS || swapFeeBps_ >= BPS_DENOM) revert InvalidSwapFeeBps();
 
         airToken     = IAirToken(airToken_);
         airUsdToken      = IAirToken(airUsdToken_);
@@ -811,6 +817,7 @@ contract EXNIHILOPool is ReentrancyGuard {
         // PositionNFT, not in the pool), mirroring closeLong's subtraction of
         // lockedAmount from airToken totalSupply in its SWAP-3 calculation.
         uint256 airUsdSupply = airUsdToken.totalSupply();
+        if (airUsdSupply < pos.lockedAmount) revert PositionUnderwater();
         uint256 totalBuyable = _cpAmountOut(
             pos.lockedAmount,
             airUsdSupply - pos.lockedAmount,
@@ -1344,18 +1351,28 @@ contract EXNIHILOPool is ReentrancyGuard {
 
     /**
      * @dev Attempt to send USDC to `to`. If the transfer fails (e.g. the
-     *      recipient is USDC-blacklisted), the USDC stays in the pool and a
-     *      PayoutFailed event is emitted. This prevents a single unreachable
-     *      address from permanently blocking position cleanup and LP exit.
+     *      recipient is USDC-blacklisted, or the token reverts), the failed
+     *      amount is credited to lpFeesAccumulated so it remains claimable
+     *      by LPs via claimFees() rather than being permanently stranded.
+     *      A PayoutFailed event is emitted for observability.
+     *
+     *      Uses a low-level call with explicit returndata handling to tolerate
+     *      tokens that return no data (USDT-style). Without this, the typed
+     *      `try IERC20(...).transfer(...) returns (bool)` pattern would
+     *      spuriously fall into catch for zero-returndata tokens even when
+     *      the transfer succeeded.
+     *
      *      Used ONLY by _closeExpired* paths — voluntary closes still use
      *      safeTransfer (holder is msg.sender and can handle their own issues).
      */
     function _trySendUsdc(address to, uint256 amount) internal {
         if (amount == 0) return;
-        // solhint-disable-next-line no-empty-blocks
-        try IERC20(underlyingUsdc).transfer(to, amount) returns (bool success) {
-            if (!success) emit PayoutFailed(to, amount);
-        } catch {
+        (bool ok, bytes memory ret) = address(underlyingUsdc).call(
+            abi.encodeWithSelector(IERC20.transfer.selector, to, amount)
+        );
+        bool success = ok && (ret.length == 0 || abi.decode(ret, (bool)));
+        if (!success) {
+            lpFeesAccumulated += amount;
             emit PayoutFailed(to, amount);
         }
     }

@@ -537,6 +537,111 @@ describe("EXNIHILORouter", function () {
 
   // ── Router produces same position as direct pool call ────────────────────
 
+  // ═════════════════════════════════════════════════════════════════════════════
+  // Residual refund + no sweep (ECS-4 / NM-006 / DoS-4 / DoS-6 fix)
+  // ═════════════════════════════════════════════════════════════════════════════
+
+  describe("Residual refund (pulled-but-unconsumed USDC goes back to caller)", function () {
+
+    it("renewPosition over-estimate refunds surplus to caller", async function () {
+      const { router, usdc, trader1, poolAddress } = await loadFixture(deployRouterFixture);
+
+      // Open a position so we have something to renew
+      const notional = ethers.parseUnits("100", 6);
+      await router.connect(trader1).openLong(poolAddress, notional, 0n);
+
+      // Over-estimate: pool's actual renewal fee is 5% of 100 USDC = 5 USDC (or MIN_POSITION_FEE).
+      // Caller supplies 10 USDC — surplus must refund.
+      const overEstimate = ethers.parseUnits("10", 6);
+
+      const balBefore = await usdc.balanceOf(trader1.address);
+      const routerBefore = await usdc.balanceOf(await router.getAddress());
+
+      await router.connect(trader1).renewPosition(poolAddress, 0n, overEstimate);
+
+      const balAfter = await usdc.balanceOf(trader1.address);
+      const routerAfter = await usdc.balanceOf(await router.getAddress());
+
+      // Router holds no more USDC than it did before (residual refunded)
+      expect(routerAfter).to.equal(routerBefore);
+
+      // Caller's net loss == actual renewal fee (much less than over-estimate)
+      const actualCost = balBefore - balAfter;
+      expect(actualCost).to.be.lt(overEstimate);
+      expect(actualCost).to.be.gt(0n);
+    });
+
+    it("openLong: router balance is zero after call (happy path)", async function () {
+      const { router, usdc, trader1, poolAddress } = await loadFixture(deployRouterFixture);
+
+      await router.connect(trader1).openLong(poolAddress, ethers.parseUnits("500", 6), 0n);
+
+      expect(await usdc.balanceOf(await router.getAddress())).to.equal(0n);
+    });
+
+    it("openShort: router balance is zero after call (happy path)", async function () {
+      const { router, usdc, trader1, poolAddress } = await loadFixture(deployRouterFixture);
+
+      await router.connect(trader1).openShort(poolAddress, ethers.parseUnits("500", 6), 0n);
+
+      expect(await usdc.balanceOf(await router.getAddress())).to.equal(0n);
+    });
+
+    it("swap: router balance of input token is zero after call", async function () {
+      const { router, usdc, baseToken, trader1, poolAddress } =
+        await loadFixture(deployRouterFixture);
+
+      await router.connect(trader1).swap(
+        poolAddress,
+        ethers.parseUnits("200", 6),
+        0n,
+        false, // USDC → token
+      );
+
+      expect(await usdc.balanceOf(await router.getAddress())).to.equal(0n);
+      expect(await baseToken.balanceOf(await router.getAddress())).to.equal(0n);
+    });
+  });
+
+  describe("sweep() removed — direct ERC20 sends are not stealable", function () {
+
+    it("sweep function no longer exists on the router ABI", async function () {
+      const { router } = await loadFixture(deployRouterFixture);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect((router as any).sweep).to.equal(undefined);
+    });
+
+    it("directly donated USDC stays in the router and is not refunded to callers", async function () {
+      const { router, usdc, trader1, other, poolAddress } =
+        await loadFixture(deployRouterFixture);
+
+      const routerAddr = await router.getAddress();
+      const donation = ethers.parseUnits("50", 6);
+
+      // Someone accidentally sends USDC directly to the router
+      await usdc.mint(other.address, donation);
+      await usdc.connect(other).transfer(routerAddr, donation);
+
+      expect(await usdc.balanceOf(routerAddr)).to.equal(donation);
+
+      const callerBefore = await usdc.balanceOf(trader1.address);
+
+      // Another caller uses the router normally — donation must NOT be routed to them
+      await router.connect(trader1).openLong(poolAddress, ethers.parseUnits("100", 6), 0n);
+
+      const callerAfter  = await usdc.balanceOf(trader1.address);
+      const routerAfter  = await usdc.balanceOf(routerAddr);
+
+      // Donation remains in router (no refund to the unrelated caller)
+      expect(routerAfter).to.equal(donation);
+
+      // Caller spent the actual fee only — did NOT receive any of the donation
+      const callerSpent = callerBefore - callerAfter;
+      expect(callerSpent).to.be.gt(0n);
+      expect(callerSpent).to.be.lt(donation); // their own fee is far less than donation
+    });
+  });
+
   describe("Equivalence with direct pool call", function () {
     it("router openLong produces the same NFT position as a direct pool call", async function () {
       const { router, pool, positionNFT, trader1, trader2, poolAddress } =

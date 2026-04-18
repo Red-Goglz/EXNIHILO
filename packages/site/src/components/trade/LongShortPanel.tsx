@@ -10,6 +10,7 @@ import TokenInput from "../shared/TokenInput.tsx";
 import TxButton from "../shared/TxButton.tsx";
 
 const POSITION_FEE_BPS = 500n;
+const PROTOCOL_FEE_BPS = 200n;
 const IMPACT_FEE_BPS = 1500n;
 const MIN_POSITION_FEE = 50_000n; // 0.05 USDC (6 dec)
 
@@ -212,11 +213,15 @@ export default function LongShortPanel({
   useEffect(() => {
     if (openSuccess) {
       queryClient.invalidateQueries();
+      const protocolFeeRaw = (usdcRaw * PROTOCOL_FEE_BPS) / 10_000n;
       analytics?.track(isLong ? "Position Opened Long" : "Position Opened Short", {
         pool: poolAddress,
         tokenSymbol,
         usdcNotional: usdcRaw.toString(),
         fee: feePulled.toString(),
+        volume: Number(usdcRaw) / 1_000_000,
+        revenue: Number(protocolFeeRaw) / 1_000_000,
+        points: Number(feePulled) / 1_000_000,
       });
       setUsdcInput("");
     }

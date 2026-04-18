@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContracts } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
 import { useFormo } from "@formo/analytics";
@@ -19,6 +19,8 @@ interface Position {
   openedAt: bigint;
   deadline: bigint;
 }
+
+const CLOSE_FEE_BPS = 100n; // 1% of surplus on profitable close — must match pool
 
 interface PositionCardProps {
   tokenId: bigint;
@@ -160,6 +162,7 @@ export default function PositionCard({
   // ── Close / Realize tx state ────────────────────────────────────────────
   const { writeContract, data: txHash, isPending } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
+  const lastActionRef = useRef<"close" | "realize" | null>(null);
 
   const txStatus = isPending
     ? "pending"
@@ -185,10 +188,35 @@ export default function PositionCard({
   useEffect(() => {
     if (isSuccess) {
       queryClient.invalidateQueries();
+      // Volume = notional minted at open, in USD (both airUsdMinted and lockedAmount for shorts are 6-dec USDC-scale)
+      const notionalRaw = position.isLong ? position.airUsdMinted : position.lockedAmount;
+      // Revenue = 1% of surplus on profitable close; 0 on realize or losing close
+      let protocolFeeRaw = 0n;
+      if (lastActionRef.current === "close" && poolDataReady) {
+        if (position.isLong && airTokenTotalSupply! > 0n) {
+          const airUsdOut = (position.lockedAmount * backedAirUsd!) / airTokenTotalSupply!;
+          if (airUsdOut > position.airUsdMinted) {
+            const surplus = airUsdOut - position.airUsdMinted;
+            protocolFeeRaw = (surplus * CLOSE_FEE_BPS) / 10_000n;
+          }
+        } else if (!position.isLong) {
+          const denom = backedAirToken! - position.airTokenMinted;
+          if (denom > 0n) {
+            const airUsdCost = (airUsdTotalSupply! * position.airTokenMinted + denom - 1n) / denom;
+            if (position.lockedAmount > airUsdCost) {
+              const surplus = position.lockedAmount - airUsdCost;
+              protocolFeeRaw = (surplus * CLOSE_FEE_BPS) / 10_000n;
+            }
+          }
+        }
+      }
       analytics?.track("Position Closed or Realized", {
         pool: position.pool,
         tokenId: tokenId.toString(),
         side: position.isLong ? "long" : "short",
+        action: lastActionRef.current ?? "unknown",
+        volume: Number(notionalRaw) / 1_000_000,
+        revenue: Number(protocolFeeRaw) / 1_000_000,
       });
     }
   }, [isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -218,8 +246,6 @@ export default function PositionCard({
   const isUrgent = secondsLeft > 0 && secondsLeft < 3600; // <1h
 
   // ── PnL & close-eligibility ─────────────────────────────────────────────
-  const CLOSE_FEE_BPS = 100n; // 1%
-
   let pnlDisplay = "";
   let pnlPositive = false;
   let canClose = false;
@@ -475,6 +501,7 @@ export default function PositionCard({
             status={txStatus}
             variant={position.isLong ? "red" : "green"}
             onClick={() => {
+              lastActionRef.current = "close";
               if (position.isLong) {
                 writeContract({ address: position.pool, abi: exnihiloPoolAbi, functionName: "closeLong", args: [tokenId, 0n] });
               } else {
@@ -492,6 +519,7 @@ export default function PositionCard({
             status={txStatus}
             variant="default"
             onClick={() => {
+              lastActionRef.current = "realize";
               if (position.isLong) {
                 writeContract({ address: position.pool, abi: exnihiloPoolAbi, functionName: "realizeLong", args: [tokenId] });
               } else {

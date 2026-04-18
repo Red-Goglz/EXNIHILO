@@ -262,7 +262,13 @@ contract EXNIHILOFactory is ReentrancyGuard {
     /**
      * @notice Transfer the deployer (emergency admin) role to a new address.
      *         Only callable by the current deployer.
-     * @param newDeployer  New deployer address. Must not be zero.
+     * @dev    Intentionally allows `address(0)` as `newDeployer`: setting the
+     *         deployer to zero relinquishes the emergency `closePool` role
+     *         permanently, which is the intended handoff path for a fully
+     *         permissionless protocol. The call is irreversible — once set
+     *         to zero, no address can re-assume the role. See 4.7 audit
+     *         findings NM-007 / IA-7 / SGA-4 for the tradeoff discussion.
+     * @param newDeployer  New deployer address, or `address(0)` to renounce.
      */
     function setDeployer(address newDeployer) external {
         if (msg.sender != deployer) revert OnlyDeployer();

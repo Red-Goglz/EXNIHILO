@@ -439,10 +439,16 @@ function FeedCard({
   useEffect(() => {
     if (!openSuccess) return;
     queryClient.invalidateQueries();
+    const protocolFeeRaw = (usdcRaw * 200n) / 10_000n;
     analytics?.track(direction === "long" ? "Position Opened Long" : "Position Opened Short", {
       pool: poolAddress,
       tokenSymbol: symbol,
       source: "feed",
+      usdcNotional: usdcRaw.toString(),
+      fee: feePulled.toString(),
+      volume: Number(usdcRaw) / 1_000_000,
+      revenue: Number(protocolFeeRaw) / 1_000_000,
+      points: Number(feePulled) / 1_000_000,
     });
     if (submittedReady.current) {
       setTxPhase("mined");

@@ -456,7 +456,7 @@ describe("Coverage — EXNIHILOPool constructor guards", function () {
     ).to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "InvalidMaxPositionBps");
   });
 
-  it("reverts with InvalidSwapFeeBps when swapFeeBps >= 10000", async function () {
+  it("reverts with InvalidSwapFeeBps when swapFeeBps is out of range", async function () {
     const PoolF = await ethers.getContractFactory("EXNIHILOPool");
     const [deployer] = await ethers.getSigners();
     const MockF = await ethers.getContractFactory("MockERC20");
@@ -468,22 +468,25 @@ describe("Coverage — EXNIHILOPool constructor guards", function () {
     const am = await AirF.deploy("am", "am", 18);
     const au = await AirF.deploy("au", "au", 6);
 
-    // swapFeeBps_ >= BPS_DENOM (10000) should revert
-    await expect(
-      PoolF.deploy(
-        await am.getAddress(),
-        await au.getAddress(),
-        await m.getAddress(),
-        await u.getAddress(),
-        await pn.getAddress(),
-        await ln.getAddress(),
-        0, deployer.address,
-        0, 0,
-        10000n,  // exactly BPS_DENOM — invalid
-        0n,
-        deployer.address
-      )
-    ).to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "InvalidSwapFeeBps");
+    const [amA, auA, mA, uA, pnA, lnA] = await Promise.all([
+      am.getAddress(), au.getAddress(), m.getAddress(),
+      u.getAddress(),  pn.getAddress(), ln.getAddress(),
+    ]);
+    const deployWithFee = (fee: bigint) =>
+      PoolF.deploy(amA, auA, mA, uA, pnA, lnA, 0, deployer.address, 0, 0, fee, 0n, deployer.address);
+
+    // Upper bound: swapFeeBps_ >= BPS_DENOM (10000) should revert
+    await expect(deployWithFee(10000n))
+      .to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "InvalidSwapFeeBps");
+
+    // Lower bound: swapFeeBps_ < MIN_SWAP_FEE_BPS (100) — blocks flash-loan arbitrage (OFL-3)
+    await expect(deployWithFee(0n))
+      .to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "InvalidSwapFeeBps");
+    await expect(deployWithFee(99n))
+      .to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "InvalidSwapFeeBps");
+
+    // Boundary (100 bps = 1 %) must be accepted
+    await expect(deployWithFee(100n)).to.not.be.reverted;
   });
 });
 
@@ -2760,14 +2763,13 @@ describe("Regression — N-2: renewPosition fee uses notional for shorts", funct
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Regression — N2-M1: Router sweep function
+// Regression — N2-M1: Router sweep removed (accidentally sent tokens not stealable)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe("Regression — N2-M1: Router sweep", function () {
-  it("anyone can sweep accidentally sent tokens from the Router", async function () {
+describe("Regression — N2-M1: Router sweep removed", function () {
+  it("sweep function no longer exists; accidentally sent tokens stay in the router", async function () {
     const fix = await loadFixture(deployPoolFixture);
 
-    // Deploy router
     const router = (await (await ethers.getContractFactory("EXNIHILORouter"))
       .connect(fix.deployer)
       .deploy(await fix.factory.getAddress(), await fix.usdc.getAddress())) as unknown as EXNIHILORouter;
@@ -2779,11 +2781,12 @@ describe("Regression — N2-M1: Router sweep", function () {
     await fix.usdc.connect(fix.deployer).transfer(routerAddr, stuckAmount);
     expect(await fix.usdc.balanceOf(routerAddr)).to.equal(stuckAmount);
 
-    // Anyone (other) can sweep
-    const otherBefore = await fix.usdc.balanceOf(fix.other.address);
-    await router.connect(fix.other).sweep(await fix.usdc.getAddress());
-    expect(await fix.usdc.balanceOf(routerAddr)).to.equal(0n);
-    expect(await fix.usdc.balanceOf(fix.other.address)).to.equal(otherBefore + stuckAmount);
+    // sweep() is gone from the ABI
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((router as any).sweep).to.equal(undefined);
+
+    // Donated tokens are NOT recoverable by any caller
+    expect(await fix.usdc.balanceOf(routerAddr)).to.equal(stuckAmount);
   });
 });
 

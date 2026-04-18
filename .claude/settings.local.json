@@ -5,6 +5,9 @@
   "permissions": {
     "allow": [
       "Bash(*)",
+      "Write(.audit/findings-4.7/**)",
+      "Write(//.audit/findings-4.7/**)",
+      "Edit(.audit/findings-4.7/**)",
       "mcp__ide__getDiagnostics",
       "WebFetch(domain:raw.githubusercontent.com)",
       "mcp__plugin_aiup-vaadin-jooq_playwright__browser_navigate",
