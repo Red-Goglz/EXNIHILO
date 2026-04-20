@@ -76,7 +76,7 @@ contract PositionNFT is ERC721Enumerable {
         string tokenSymbol;   // underlying token symbol, e.g. "PEPE"
         bool   pnlReady;     // false if pool state unavailable
         bool   pnlPositive;
-        uint256 pnlAbs;      // abs PnL in USDC 6-dec units
+        uint256 pnlAbs;      // abs PnL in USDC 6-dec units (net of 1% close fee on profit)
         uint8  tokenDecimals; // underlying token decimals (for display formatting)
     }
 
@@ -199,13 +199,18 @@ contract PositionNFT is ERC721Enumerable {
 
         bytes memory pnlAttr;
         if (ld.pnlReady) {
+            // Net PnL (close fee deducted from profit) / fees paid, as an integer percent.
+            uint256 pct = pos.feesPaid > 0 ? (ld.pnlAbs * 100) / pos.feesPaid : 0;
             pnlAttr = abi.encodePacked(
-                '{"trait_type":"Est. P&L (USDC)","display_type":"number","value":',
+                '{"trait_type":"Est. PnL (USDC)","display_type":"number","value":',
                 ld.pnlPositive ? "" : "-",
-                _fmt6(ld.pnlAbs), '}'
+                _fmt6(ld.pnlAbs), '},',
+                '{"trait_type":"Est. PnL %","display_type":"number","value":',
+                ld.pnlPositive ? "" : "-",
+                pct.toString(), '}'
             );
         } else {
-            pnlAttr = bytes('{"trait_type":"Est. P&L","value":"N/A"}');
+            pnlAttr = bytes('{"trait_type":"Est. PnL","value":"N/A"}');
         }
 
         return abi.encodePacked(a1, a2, a3, pnlAttr, ']');
@@ -356,8 +361,8 @@ contract PositionNFT is ERC721Enumerable {
                     if (airUsdOut >= pos.airUsdMinted) {
                         uint256 surplus  = airUsdOut - pos.airUsdMinted;
                         uint256 closeFee = (surplus * _CLOSE_FEE_BPS) / _BPS_DENOM;
-                        ld.pnlPositive = true;
-                        ld.pnlAbs      = surplus - closeFee;
+                        ld.pnlPositive   = true;
+                        ld.pnlAbs        = surplus - closeFee;
                     } else {
                         ld.pnlPositive = false;
                         ld.pnlAbs      = pos.airUsdMinted - airUsdOut;
@@ -374,8 +379,8 @@ contract PositionNFT is ERC721Enumerable {
                     if (pos.lockedAmount > cost) {
                         uint256 surplus  = pos.lockedAmount - cost;
                         uint256 closeFee = (surplus * _CLOSE_FEE_BPS) / _BPS_DENOM;
-                        ld.pnlPositive = true;
-                        ld.pnlAbs      = surplus - closeFee;
+                        ld.pnlPositive   = true;
+                        ld.pnlAbs        = surplus - closeFee;
                     } else {
                         ld.pnlPositive = false;
                         ld.pnlAbs      = cost - pos.lockedAmount;
@@ -399,7 +404,7 @@ contract PositionNFT is ERC721Enumerable {
             _svgOpen(),
             _svgChrome(tokenId, sc, sl, ld.tokenSymbol),
             pos.isLong ? _svgLongData(pos, ld) : _svgShortData(pos, ld),
-            _svgPnl(ld),
+            _svgPnl(pos, ld),
             _svgFooter(pos),
             "</svg>"
         );
@@ -499,7 +504,7 @@ contract PositionNFT is ERC721Enumerable {
         );
     }
 
-    function _svgPnl(LiveData memory ld) internal pure returns (bytes memory) {
+    function _svgPnl(Position memory pos, LiveData memory ld) internal pure returns (bytes memory) {
         string memory pnlColor;
         string memory pnlText;
 
@@ -509,18 +514,22 @@ contract PositionNFT is ERC721Enumerable {
         } else if (ld.pnlAbs == 0) {
             pnlColor = "#aaaaaa";
             pnlText  = "$0.00";
-        } else if (ld.pnlPositive) {
-            pnlColor = "#00ff88";
-            pnlText  = string(abi.encodePacked("+$", _fmt6(ld.pnlAbs)));
         } else {
-            pnlColor = "#ff3b30";
-            pnlText  = string(abi.encodePacked("-$", _fmt6(ld.pnlAbs)));
+            pnlColor = ld.pnlPositive ? "#00ff88" : "#ff3b30";
+            string memory sign = ld.pnlPositive ? "+$" : "-$";
+            string memory pctPart = "";
+            if (pos.feesPaid > 0) {
+                // Percent uses net PnL (close fee already deducted from profit) vs fees paid.
+                uint256 pct = (ld.pnlAbs * 100) / pos.feesPaid;
+                pctPart = string(abi.encodePacked(" (", pct.toString(), "%)"));
+            }
+            pnlText = string(abi.encodePacked(sign, _fmt6(ld.pnlAbs), pctPart));
         }
 
         return abi.encodePacked(
             '<line x1="20" y1="244" x2="380" y2="244" stroke="#1a1a1a"/>',
-            '<text x="200" y="268" class="f lbl" text-anchor="middle" letter-spacing="4">EST. P&amp;L</text>',
-            '<text x="200" y="310" class="f" font-size="32" font-weight="bold" fill="', pnlColor, '" text-anchor="middle" letter-spacing="2">', pnlText, "</text>",
+            '<text x="200" y="268" class="f lbl" text-anchor="middle" letter-spacing="4">EST. PnL</text>',
+            '<text x="200" y="310" class="f" font-size="24" font-weight="bold" fill="', pnlColor, '" text-anchor="middle" letter-spacing="2">', pnlText, "</text>",
             '<line x1="20" y1="334" x2="380" y2="334" stroke="#1a1a1a"/>'
         );
     }

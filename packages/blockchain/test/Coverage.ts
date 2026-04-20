@@ -2436,7 +2436,8 @@ describe("Coverage — PositionNFT.tokenURI", function () {
     expect(traits).to.include("Position Size (USDC)");
     expect(traits).to.include("Opened");
     expect(traits).to.include("Deadline");
-    expect(traits).to.include("Est. P&L (USDC)");
+    expect(traits).to.include("Est. PnL (USDC)");
+    expect(traits).to.include("Est. PnL %");
     const side = json.attributes.find((a: any) => a.trait_type === "Side");
     expect(side.value).to.equal("Long");
   });

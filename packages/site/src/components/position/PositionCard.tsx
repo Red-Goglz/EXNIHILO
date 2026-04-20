@@ -246,8 +246,11 @@ export default function PositionCard({
   const isUrgent = secondsLeft > 0 && secondsLeft < 3600; // <1h
 
   // ── PnL & close-eligibility ─────────────────────────────────────────────
+  // PnL and percent are both net of the 1% close fee on profit.
+  // Percent is that net PnL over the fees paid at open.
   let pnlDisplay = "";
   let pnlPositive = false;
+  let pnlNetAbs = 0n;
   let canClose = false;
 
   const poolDataReady =
@@ -263,11 +266,12 @@ export default function PositionCard({
         canClose    = airUsdOut >= position.airUsdMinted;
         pnlPositive = airUsdOut > position.airUsdMinted;
         if (pnlPositive) {
-          const surplus    = airUsdOut - position.airUsdMinted;
-          const netSurplus = (surplus * (10_000n - CLOSE_FEE_BPS)) / 10_000n;
-          pnlDisplay = `+$${formatUsdc(netSurplus)}`;
+          const surplus = airUsdOut - position.airUsdMinted;
+          pnlNetAbs  = (surplus * (10_000n - CLOSE_FEE_BPS)) / 10_000n;
+          pnlDisplay = `+$${formatUsdc(pnlNetAbs)}`;
         } else {
-          pnlDisplay = `-$${formatUsdc(position.airUsdMinted - airUsdOut)}`;
+          pnlNetAbs  = position.airUsdMinted - airUsdOut;
+          pnlDisplay = `-$${formatUsdc(pnlNetAbs)}`;
         }
       }
     } else {
@@ -278,14 +282,20 @@ export default function PositionCard({
         canClose    = airUsdCost <= position.lockedAmount;
         pnlPositive = position.lockedAmount > airUsdCost;
         if (pnlPositive) {
-          const surplus    = position.lockedAmount - airUsdCost;
-          const netSurplus = (surplus * (10_000n - CLOSE_FEE_BPS)) / 10_000n;
-          pnlDisplay = `+$${formatUsdc(netSurplus)}`;
+          const surplus = position.lockedAmount - airUsdCost;
+          pnlNetAbs  = (surplus * (10_000n - CLOSE_FEE_BPS)) / 10_000n;
+          pnlDisplay = `+$${formatUsdc(pnlNetAbs)}`;
         } else {
-          pnlDisplay = `-$${formatUsdc(airUsdCost - position.lockedAmount)}`;
+          pnlNetAbs  = airUsdCost - position.lockedAmount;
+          pnlDisplay = `-$${formatUsdc(pnlNetAbs)}`;
         }
       }
     }
+  }
+
+  if (pnlDisplay && position.feesPaid > 0n) {
+    const pct = Number((pnlNetAbs * 100n) / position.feesPaid);
+    pnlDisplay = `${pnlDisplay} (${pct}%)`;
   }
 
   const openedDate = new Date(Number(position.openedAt) * 1000).toLocaleDateString();
@@ -467,7 +477,7 @@ export default function PositionCard({
         {/* PnL */}
         {pnlDisplay && (
           <div>
-            <div className="stat-label">EST. P&L</div>
+            <div className="stat-label">EST. PnL</div>
             <div
               style={{
                 fontSize: "0.82rem",

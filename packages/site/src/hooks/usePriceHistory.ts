@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
-// Indexer URL — set VITE_INDEXER_URL to your Ponder Replit URL
-// e.g. https://exnihilo-indexer.your-username.repl.co
+// Indexer URL — set VITE_INDEXER_URL to your Ponder deployment URL
+// e.g. https://indexer.exnihilo.finance
 const INDEXER_URL = import.meta.env.VITE_INDEXER_URL || "";
 
 export interface PricePoint {
