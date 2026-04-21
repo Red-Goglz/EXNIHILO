@@ -6,13 +6,11 @@ const INDEXER = import.meta.env.VITE_INDEXER_URL || "";
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface ProtocolMetrics {
-  totalSwapVolume: string;
   totalPositionVolume: string;
-  totalVolume: string;
+  totalPayout: string;
   totalFees: string;
   totalLpFees: string;
   totalProtocolFees: string;
-  totalSwaps: number;
   totalPositions: number;
   totalCloses: number;
   poolCount: number;
@@ -20,13 +18,11 @@ interface ProtocolMetrics {
 
 interface PoolMetric {
   pool: string;
-  swapVolume: string;
   positionVolume: string;
   totalVolume: string;
   totalFees: string;
   lpFees: string;
   protocolFees: string;
-  swapCount: number;
   longCount: number;
   shortCount: number;
   closeCount: number;
@@ -189,10 +185,6 @@ export default function AnalyticsPage() {
     });
   }, [address]);
 
-  const totalTrades = protocol
-    ? protocol.totalSwaps + protocol.totalPositions + protocol.totalCloses
-    : 0;
-
   const dailyChartData = useMemo(() =>
     daily.map((d) => ({
       label: fmtDate(d.date),
@@ -258,20 +250,17 @@ export default function AnalyticsPage() {
       {/* ── Protocol overview ───────────────────────────────────────────── */}
       {protocol && (
         <>
-          <div className="grid grid-cols-4 gap-3 mb-3">
-            <StatBox label="TOTAL VOLUME" value={fmtUsd(protocol.totalVolume)} color="var(--cyan)" />
-            <StatBox label="SWAP VOLUME" value={fmtUsd(protocol.totalSwapVolume)} />
-            <StatBox label="POSITION VOLUME" value={fmtUsd(protocol.totalPositionVolume)} />
+          <div className="grid grid-cols-3 gap-3 mb-3">
+            <StatBox label="POSITION VOLUME" value={fmtUsd(protocol.totalPositionVolume)} color="var(--cyan)" />
+            <StatBox label="TOTAL PAYOUT" value={fmtUsd(protocol.totalPayout)} />
             <StatBox label="POOLS" value={String(protocol.poolCount)} color="var(--cyan)" />
           </div>
-          <div className="grid grid-cols-4 gap-3 mb-3">
+          <div className="grid grid-cols-3 gap-3 mb-3">
             <StatBox label="TOTAL FEES" value={fmtUsd(protocol.totalFees)} color="var(--green)" />
             <StatBox label="LP FEES" value={fmtUsd(protocol.totalLpFees)} />
             <StatBox label="PROTOCOL FEES" value={fmtUsd(protocol.totalProtocolFees)} />
-            <StatBox label="TOTAL TRADES" value={String(totalTrades)} />
           </div>
-          <div className="grid grid-cols-3 gap-3 mb-3">
-            <StatBox label="SWAPS" value={String(protocol.totalSwaps)} />
+          <div className="grid grid-cols-2 gap-3 mb-3">
             <StatBox label="POSITIONS OPENED" value={String(protocol.totalPositions)} />
             <StatBox label="POSITIONS CLOSED" value={String(protocol.totalCloses)} />
           </div>
@@ -356,7 +345,7 @@ export default function AnalyticsPage() {
             }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                  {["POOL", "VOLUME", "FEES", "SWAPS", "LONGS", "SHORTS", "CLOSES"].map((h) => (
+                  {["POOL", "VOLUME", "FEES", "LONGS", "SHORTS", "CLOSES"].map((h) => (
                     <th key={h} style={{
                       padding: "10px 12px",
                       textAlign: "left",
@@ -376,7 +365,6 @@ export default function AnalyticsPage() {
                     <td style={{ padding: "10px 12px", color: "var(--cyan)" }}>{shortAddr(p.pool)}</td>
                     <td style={{ padding: "10px 12px" }}>{fmtUsd(p.totalVolume)}</td>
                     <td style={{ padding: "10px 12px", color: "var(--green)" }}>{fmtUsd(p.totalFees)}</td>
-                    <td style={{ padding: "10px 12px" }}>{p.swapCount}</td>
                     <td style={{ padding: "10px 12px" }}>{p.longCount}</td>
                     <td style={{ padding: "10px 12px" }}>{p.shortCount}</td>
                     <td style={{ padding: "10px 12px" }}>{p.closeCount}</td>
