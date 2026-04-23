@@ -99,6 +99,7 @@ export default function PositionCard({
       { ...poolContract, functionName: "airUsdToken" },
       { ...poolContract, functionName: "underlyingToken" },
       { ...poolContract, functionName: "swapFeeBps" },
+      { ...poolContract, functionName: "closeDate" },
     ],
   });
 
@@ -108,6 +109,8 @@ export default function PositionCard({
   const airUsdAddress     = data?.[3]?.result as `0x${string}` | undefined;
   const underlyingToken    = data?.[4]?.result as `0x${string}` | undefined;
   const swapFeeBps         = data?.[5]?.result as bigint | undefined;
+  const poolCloseDate      = data?.[6]?.result as bigint | undefined;
+  const isMarketClosed     = poolCloseDate !== undefined && poolCloseDate > 0n;
 
   const { data: tokenMeta } = useReadContracts({
     contracts: underlyingToken
@@ -428,9 +431,21 @@ export default function PositionCard({
           </div>
         </div>
 
-        {/* Renew button (with approval if needed) */}
+        {/* Renew button — hidden when market is closed (contract rejects renewals past closeDate) */}
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
-          {needsRenewApproval && !approveSuccess ? (
+          {isMarketClosed ? (
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: "0.5rem", letterSpacing: "0.15em", color: "var(--muted)" }}>
+                MARKET CLOSES
+              </div>
+              <div style={{ fontSize: "0.62rem", color: "var(--red)", letterSpacing: "0.04em", fontWeight: 600 }}>
+                {new Date(Number(poolCloseDate!) * 1000).toLocaleDateString()}
+              </div>
+              <div style={{ fontSize: "0.52rem", color: "var(--dim)", letterSpacing: "0.04em", marginTop: 1 }}>
+                renew unavailable
+              </div>
+            </div>
+          ) : needsRenewApproval && !approveSuccess ? (
             <TxButton
               idleLabel={`Approve USDC`}
               status={approveStatus}

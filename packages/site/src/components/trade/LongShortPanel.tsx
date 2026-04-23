@@ -59,6 +59,7 @@ export default function LongShortPanel({
       },
       { ...poolContract, functionName: "maxPositionUsd" },
       { ...poolContract, functionName: "maxPositionBps" },
+      { ...poolContract, functionName: "closeDate" },
     ],
   });
 
@@ -73,6 +74,8 @@ export default function LongShortPanel({
   const allowance = data?.[9]?.result as bigint | undefined;
   const maxPositionUsd = data?.[10]?.result as bigint | undefined;
   const maxPositionBps = data?.[11]?.result as bigint | undefined;
+  const closeDate = data?.[12]?.result as bigint | undefined;
+  const isMarketClosed = closeDate !== undefined && closeDate > 0n;
 
   const { data: supplyData } = useReadContracts({
     contracts:
@@ -416,6 +419,23 @@ export default function LongShortPanel({
         </div>
       </div>
 
+      {/* Market closed notice */}
+      {isMarketClosed && (
+        <div
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "0.62rem",
+            letterSpacing: "0.05em",
+            color: "var(--red)",
+            background: "rgba(239,68,68,0.08)",
+            border: "1px solid var(--red)",
+            padding: "8px 10px",
+          }}
+        >
+          MARKET CLOSED — no new positions can be opened. Closes {new Date(Number(closeDate!) * 1000).toLocaleString()}.
+        </div>
+      )}
+
       {/* Over-cap warning */}
       {overCap && (
         <div
@@ -516,7 +536,7 @@ export default function LongShortPanel({
               });
             }
           }}
-          disabled={usdcRaw === 0n || minOut === 0n || overCap}
+          disabled={usdcRaw === 0n || minOut === 0n || overCap || isMarketClosed}
           style={{ width: "100%", justifyContent: "center" }}
         />
       )}

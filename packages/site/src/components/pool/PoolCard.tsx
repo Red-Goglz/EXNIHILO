@@ -138,6 +138,7 @@ export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
       { ...poolContract, functionName: "shortOpenInterest" },  // 5
       { ...poolContract, functionName: "longPrice" },          // 6
       { ...poolContract, functionName: "shortPrice" },         // 7
+      { ...poolContract, functionName: "closeDate" },          // 8
     ],
   });
 
@@ -149,6 +150,8 @@ export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
   const shortOpenInterest  = data?.[5]?.result as bigint | undefined;
   const longPriceRaw       = data?.[6]?.result as bigint | undefined;
   const shortPriceRaw      = data?.[7]?.result as bigint | undefined;
+  const closeDate          = data?.[8]?.result as bigint | undefined;
+  const isClosed           = closeDate !== undefined && closeDate > 0n;
 
   const { data: metaData } = useReadContracts({
     contracts: underlyingToken
@@ -224,10 +227,30 @@ export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
   }, [symbol, rating, priceRaw, longPriceRaw, shortPriceRaw, totalTvlRaw, openPositionCount, pctLong, pctShort, apr7d, onData]);
 
   return (
-    <tr onClick={() => navigate(`/app/markets/${poolAddress}`)}>
+    <tr
+      onClick={() => navigate(`/app/markets/${poolAddress}`)}
+      style={isClosed ? { opacity: 0.55 } : undefined}
+    >
       <td>
         <span style={{ fontWeight: 500 }}>{symbol}</span>
         <span style={{ color: "var(--muted)" }}> / USDC</span>
+        {isClosed && (
+          <span
+            style={{
+              marginLeft: 8,
+              padding: "1px 6px",
+              fontFamily: "var(--font-mono)",
+              fontSize: "0.52rem",
+              letterSpacing: "0.1em",
+              color: "var(--red)",
+              border: "1px solid rgba(255,59,48,0.4)",
+              background: "rgba(255,59,48,0.08)",
+              verticalAlign: "middle",
+            }}
+          >
+            CLOSED
+          </span>
+        )}
       </td>
       <td style={{ color: "var(--cyan)", fontWeight: 500 }}>{price}</td>
       <td style={{ color: "var(--green)" }}>{longPrice}</td>
