@@ -597,12 +597,10 @@ export default function PositionCard({
         </WithTooltip>
       </div>
 
-      {/* Close unavailable hint */}
-      {!canClose && poolDataReady && (
+      {/* Expired hint */}
+      {isExpired && (
         <p style={{ fontSize: "0.58rem", color: "var(--red)", letterSpacing: "0.04em", marginTop: -6 }}>
-          {isExpired
-            ? "EXPIRED -- position can be liquidated by anyone"
-            : "Position is underwater -- close unavailable until PnL turns positive"}
+          EXPIRED -- position can be liquidated by anyone
         </p>
       )}
     </div>
