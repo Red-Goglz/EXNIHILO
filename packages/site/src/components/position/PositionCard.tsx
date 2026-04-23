@@ -260,8 +260,8 @@ export default function PositionCard({
   const isUrgent = secondsLeft > 0 && secondsLeft < 3600; // <1h
 
   // ── PnL & close-eligibility ─────────────────────────────────────────────
-  // PnL and percent are both net of the 1% close fee on profit.
-  // Percent is that net PnL over the fees paid at open.
+  // PnL is net of the 1% close fee on profit. Percent is PnL over usdcIn
+  // (principal), so a total loss shows as -100% rather than a runaway ratio.
   let pnlDisplay = "";
   let pnlPositive = false;
   let pnlNetAbs = 0n;
@@ -297,7 +297,9 @@ export default function PositionCard({
       }
     } else {
       // Mirrors EXNIHILOPool.closeShort: SWAP-2 with (airUsdSupply - lockedAmount, backedAirToken),
-      // then proportional ceil-division to get airUsdCost for the debt.
+      // then proportional ceil-division to get airUsdCost for the debt. We also
+      // display PnL when underwater (totalBuyable < airTokenMinted) so the user
+      // still sees their unrealized loss — only canClose is gated on solvency.
       if (airUsdTotalSupply! > position.lockedAmount) {
         const totalBuyable = cpAmountOut(
           position.lockedAmount,
@@ -305,10 +307,10 @@ export default function PositionCard({
           backedAirToken!,
           swapFeeBps!,
         );
-        if (totalBuyable > 0n && totalBuyable >= position.airTokenMinted) {
+        if (totalBuyable > 0n) {
           const airUsdCost =
             (position.lockedAmount * position.airTokenMinted + totalBuyable - 1n) / totalBuyable;
-          canClose    = airUsdCost <= position.lockedAmount;
+          canClose    = totalBuyable >= position.airTokenMinted && airUsdCost <= position.lockedAmount;
           pnlPositive = position.lockedAmount > airUsdCost;
           if (pnlPositive) {
             const surplus = position.lockedAmount - airUsdCost;
@@ -318,14 +320,23 @@ export default function PositionCard({
             pnlNetAbs  = airUsdCost - position.lockedAmount;
             pnlDisplay = `-$${formatUsdc(pnlNetAbs)}`;
           }
+        } else {
+          // Pool cannot quote any buyback — treat as max loss (full collateral).
+          pnlPositive = false;
+          pnlNetAbs   = position.lockedAmount;
+          pnlDisplay  = `-$${formatUsdc(pnlNetAbs)}`;
         }
       }
     }
   }
 
-  if (pnlDisplay && position.feesPaid > 0n) {
-    const pct = Number((pnlNetAbs * 100n) / position.feesPaid);
-    pnlDisplay = `${pnlDisplay} (${pct}%)`;
+  if (pnlDisplay && position.usdcIn > 0n) {
+    // Percent over principal (usdcIn). Clamp loss at -100% since the true
+    // max loss is the collateral — the proportional formula can overshoot
+    // when the short is deeply underwater.
+    let pct = Number((pnlNetAbs * 100n) / position.usdcIn);
+    if (!pnlPositive && pct > 100) pct = 100;
+    pnlDisplay = `${pnlDisplay} (${pnlPositive ? "+" : "-"}${pct}%)`;
   }
 
   const openedDate = new Date(Number(position.openedAt) * 1000).toLocaleDateString();
