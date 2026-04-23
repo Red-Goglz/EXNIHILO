@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useFormo } from "@formo/analytics";
 import { exnihiloPoolAbi, exnihiloRouterAbi, erc20Abi } from "@exnihilio/abis";
 import { formatUsdc, formatToken } from "../../lib/format.ts";
+import { cpAmountOut } from "../../lib/amm.ts";
 import { useRouterApproval } from "../../hooks/useRouterApproval.ts";
 import TxButton from "../shared/TxButton.tsx";
 
@@ -97,6 +98,7 @@ export default function PositionCard({
       { ...poolContract, functionName: "airToken" },
       { ...poolContract, functionName: "airUsdToken" },
       { ...poolContract, functionName: "underlyingToken" },
+      { ...poolContract, functionName: "swapFeeBps" },
     ],
   });
 
@@ -105,6 +107,7 @@ export default function PositionCard({
   const airTokenAddress    = data?.[2]?.result as `0x${string}` | undefined;
   const airUsdAddress     = data?.[3]?.result as `0x${string}` | undefined;
   const underlyingToken    = data?.[4]?.result as `0x${string}` | undefined;
+  const swapFeeBps         = data?.[5]?.result as bigint | undefined;
 
   const { data: tokenMeta } = useReadContracts({
     contracts: underlyingToken
@@ -193,16 +196,27 @@ export default function PositionCard({
       // Revenue = 1% of surplus on profitable close; 0 on realize or losing close
       let protocolFeeRaw = 0n;
       if (lastActionRef.current === "close" && poolDataReady) {
-        if (position.isLong && airTokenTotalSupply! > 0n) {
-          const airUsdOut = (position.lockedAmount * backedAirUsd!) / airTokenTotalSupply!;
+        if (position.isLong && airTokenTotalSupply! > position.lockedAmount) {
+          const airUsdOut = cpAmountOut(
+            position.lockedAmount,
+            airTokenTotalSupply! - position.lockedAmount,
+            backedAirUsd!,
+            swapFeeBps!,
+          );
           if (airUsdOut > position.airUsdMinted) {
             const surplus = airUsdOut - position.airUsdMinted;
             protocolFeeRaw = (surplus * CLOSE_FEE_BPS) / 10_000n;
           }
-        } else if (!position.isLong) {
-          const denom = backedAirToken! - position.airTokenMinted;
-          if (denom > 0n) {
-            const airUsdCost = (airUsdTotalSupply! * position.airTokenMinted + denom - 1n) / denom;
+        } else if (!position.isLong && airUsdTotalSupply! > position.lockedAmount) {
+          const totalBuyable = cpAmountOut(
+            position.lockedAmount,
+            airUsdTotalSupply! - position.lockedAmount,
+            backedAirToken!,
+            swapFeeBps!,
+          );
+          if (totalBuyable > 0n && totalBuyable >= position.airTokenMinted) {
+            const airUsdCost =
+              (position.lockedAmount * position.airTokenMinted + totalBuyable - 1n) / totalBuyable;
             if (position.lockedAmount > airUsdCost) {
               const surplus = position.lockedAmount - airUsdCost;
               protocolFeeRaw = (surplus * CLOSE_FEE_BPS) / 10_000n;
@@ -257,12 +271,19 @@ export default function PositionCard({
     backedAirToken !== undefined &&
     backedAirUsd  !== undefined &&
     airTokenTotalSupply !== undefined &&
-    airUsdTotalSupply  !== undefined;
+    airUsdTotalSupply  !== undefined &&
+    swapFeeBps !== undefined;
 
   if (poolDataReady) {
     if (position.isLong) {
-      if (airTokenTotalSupply > 0n) {
-        const airUsdOut = (position.lockedAmount * backedAirUsd!) / airTokenTotalSupply!;
+      // Mirrors EXNIHILOPool.closeLong: SWAP-3 with (airTokenSupply - lockedAmount, backedAirUsd).
+      if (airTokenTotalSupply! > position.lockedAmount) {
+        const airUsdOut = cpAmountOut(
+          position.lockedAmount,
+          airTokenTotalSupply! - position.lockedAmount,
+          backedAirUsd!,
+          swapFeeBps!,
+        );
         canClose    = airUsdOut >= position.airUsdMinted;
         pnlPositive = airUsdOut > position.airUsdMinted;
         if (pnlPositive) {
@@ -275,19 +296,28 @@ export default function PositionCard({
         }
       }
     } else {
-      const denom = backedAirToken! - position.airTokenMinted;
-      if (denom > 0n) {
-        const airUsdCost =
-          (airUsdTotalSupply! * position.airTokenMinted + denom - 1n) / denom;
-        canClose    = airUsdCost <= position.lockedAmount;
-        pnlPositive = position.lockedAmount > airUsdCost;
-        if (pnlPositive) {
-          const surplus = position.lockedAmount - airUsdCost;
-          pnlNetAbs  = (surplus * (10_000n - CLOSE_FEE_BPS)) / 10_000n;
-          pnlDisplay = `+$${formatUsdc(pnlNetAbs)}`;
-        } else {
-          pnlNetAbs  = airUsdCost - position.lockedAmount;
-          pnlDisplay = `-$${formatUsdc(pnlNetAbs)}`;
+      // Mirrors EXNIHILOPool.closeShort: SWAP-2 with (airUsdSupply - lockedAmount, backedAirToken),
+      // then proportional ceil-division to get airUsdCost for the debt.
+      if (airUsdTotalSupply! > position.lockedAmount) {
+        const totalBuyable = cpAmountOut(
+          position.lockedAmount,
+          airUsdTotalSupply! - position.lockedAmount,
+          backedAirToken!,
+          swapFeeBps!,
+        );
+        if (totalBuyable > 0n && totalBuyable >= position.airTokenMinted) {
+          const airUsdCost =
+            (position.lockedAmount * position.airTokenMinted + totalBuyable - 1n) / totalBuyable;
+          canClose    = airUsdCost <= position.lockedAmount;
+          pnlPositive = position.lockedAmount > airUsdCost;
+          if (pnlPositive) {
+            const surplus = position.lockedAmount - airUsdCost;
+            pnlNetAbs  = (surplus * (10_000n - CLOSE_FEE_BPS)) / 10_000n;
+            pnlDisplay = `+$${formatUsdc(pnlNetAbs)}`;
+          } else {
+            pnlNetAbs  = airUsdCost - position.lockedAmount;
+            pnlDisplay = `-$${formatUsdc(pnlNetAbs)}`;
+          }
         }
       }
     }
