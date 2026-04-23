@@ -967,6 +967,7 @@ export default function FeedPage() {
       { address: addr, abi: exnihiloPoolAbi, functionName: "backedAirToken" as const },
       { address: addr, abi: exnihiloPoolAbi, functionName: "backedAirUsd"  as const },
       { address: addr, abi: exnihiloPoolAbi, functionName: "underlyingToken" as const },
+      { address: addr, abi: exnihiloPoolAbi, functionName: "closeDate"      as const },
     ]),
     query: { enabled: allPoolAddresses.length > 0 },
   });
@@ -974,14 +975,15 @@ export default function FeedPage() {
   const poolMeta = useMemo(() => {
     if (!poolMetaResults) return [];
     return allPoolAddresses.map((addr, i) => {
-      const base = i * 3;
+      const base = i * 4;
       return {
         addr,
         backedAirToken:  poolMetaResults[base]?.result     as bigint | undefined,
         backedAirUsd:   poolMetaResults[base + 1]?.result as bigint | undefined,
         underlyingToken: poolMetaResults[base + 2]?.result as `0x${string}` | undefined,
+        closeDate:       poolMetaResults[base + 3]?.result as bigint | undefined,
       };
-    });
+    }).filter((p) => p.closeDate === undefined || p.closeDate === 0n);
   }, [poolMetaResults, allPoolAddresses]);
 
   const uniqueTokenAddrs = useMemo(() => {
