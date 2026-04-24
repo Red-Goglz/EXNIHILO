@@ -983,7 +983,15 @@ export default function FeedPage() {
         underlyingToken: poolMetaResults[base + 2]?.result as `0x${string}` | undefined,
         closeDate:       poolMetaResults[base + 3]?.result as bigint | undefined,
       };
-    }).filter((p) => p.closeDate === undefined || p.closeDate === 0n);
+    }).filter((p) => {
+      // Hide closed pools
+      if (p.closeDate !== undefined && p.closeDate > 0n) return false;
+      // Hide inactive pools (all liquidity withdrawn). Keep while still loading.
+      if (p.backedAirToken !== undefined && p.backedAirUsd !== undefined) {
+        if (p.backedAirToken === 0n || p.backedAirUsd === 0n) return false;
+      }
+      return true;
+    });
   }, [poolMetaResults, allPoolAddresses]);
 
   const uniqueTokenAddrs = useMemo(() => {

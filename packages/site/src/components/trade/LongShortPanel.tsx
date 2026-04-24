@@ -60,6 +60,7 @@ export default function LongShortPanel({
       { ...poolContract, functionName: "maxPositionUsd" },
       { ...poolContract, functionName: "maxPositionBps" },
       { ...poolContract, functionName: "closeDate" },
+      { ...poolContract, functionName: "positionDuration" },
     ],
   });
 
@@ -75,7 +76,20 @@ export default function LongShortPanel({
   const maxPositionUsd = data?.[10]?.result as bigint | undefined;
   const maxPositionBps = data?.[11]?.result as bigint | undefined;
   const closeDate = data?.[12]?.result as bigint | undefined;
-  const isMarketClosed = closeDate !== undefined && closeDate > 0n;
+  const positionDuration = data?.[13]?.result as bigint | undefined;
+  const isClosed = closeDate !== undefined && closeDate > 0n;
+  const isInactive =
+    !isClosed &&
+    backedAirToken !== undefined &&
+    backedAirUsd !== undefined &&
+    (backedAirToken === 0n || backedAirUsd === 0n);
+  const isMarketClosed = isClosed || isInactive;
+  // closeDate in the contract is (close trigger time + positionDuration) —
+  // the "full wind-down" moment. Show the trigger time (when the LP closed it).
+  const closedAt =
+    isClosed && closeDate !== undefined && positionDuration !== undefined
+      ? closeDate - positionDuration
+      : undefined;
 
   const { data: supplyData } = useReadContracts({
     contracts:
@@ -419,7 +433,7 @@ export default function LongShortPanel({
         </div>
       </div>
 
-      {/* Market closed notice */}
+      {/* Market closed / inactive notice */}
       {isMarketClosed && (
         <div
           style={{
@@ -432,7 +446,13 @@ export default function LongShortPanel({
             padding: "8px 10px",
           }}
         >
-          MARKET CLOSED — no new positions can be opened. Closes {new Date(Number(closeDate!) * 1000).toLocaleString()}.
+          {isClosed
+            ? `MARKET CLOSED — no new positions can be opened.${
+                closedAt !== undefined
+                  ? ` Closed ${new Date(Number(closedAt) * 1000).toLocaleString()}.`
+                  : ""
+              }`
+            : "MARKET INACTIVE — all liquidity has been withdrawn. No new positions can be opened."}
         </div>
       )}
 

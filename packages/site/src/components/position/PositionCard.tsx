@@ -100,6 +100,7 @@ export default function PositionCard({
       { ...poolContract, functionName: "underlyingToken" },
       { ...poolContract, functionName: "swapFeeBps" },
       { ...poolContract, functionName: "closeDate" },
+      { ...poolContract, functionName: "positionDuration" },
     ],
   });
 
@@ -110,7 +111,13 @@ export default function PositionCard({
   const underlyingToken    = data?.[4]?.result as `0x${string}` | undefined;
   const swapFeeBps         = data?.[5]?.result as bigint | undefined;
   const poolCloseDate      = data?.[6]?.result as bigint | undefined;
+  const poolPositionDuration = data?.[7]?.result as bigint | undefined;
   const isMarketClosed     = poolCloseDate !== undefined && poolCloseDate > 0n;
+  // Show the moment closePool was called, not the future wind-down date.
+  const marketClosedAt =
+    isMarketClosed && poolPositionDuration !== undefined
+      ? poolCloseDate! - poolPositionDuration
+      : undefined;
 
   const { data: tokenMeta } = useReadContracts({
     contracts: underlyingToken
@@ -436,11 +443,13 @@ export default function PositionCard({
           {isMarketClosed ? (
             <div style={{ textAlign: "right" }}>
               <div style={{ fontSize: "0.5rem", letterSpacing: "0.15em", color: "var(--muted)" }}>
-                MARKET CLOSES
+                MARKET CLOSED
               </div>
-              <div style={{ fontSize: "0.62rem", color: "var(--red)", letterSpacing: "0.04em", fontWeight: 600 }}>
-                {new Date(Number(poolCloseDate!) * 1000).toLocaleDateString()}
-              </div>
+              {marketClosedAt !== undefined && (
+                <div style={{ fontSize: "0.62rem", color: "var(--red)", letterSpacing: "0.04em", fontWeight: 600 }}>
+                  {new Date(Number(marketClosedAt) * 1000).toLocaleDateString()}
+                </div>
+              )}
               <div style={{ fontSize: "0.52rem", color: "var(--dim)", letterSpacing: "0.04em", marginTop: 1 }}>
                 renew unavailable
               </div>

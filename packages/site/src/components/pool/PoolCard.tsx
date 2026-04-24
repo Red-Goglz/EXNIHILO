@@ -152,6 +152,11 @@ export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
   const shortPriceRaw      = data?.[7]?.result as bigint | undefined;
   const closeDate          = data?.[8]?.result as bigint | undefined;
   const isClosed           = closeDate !== undefined && closeDate > 0n;
+  const isInactive =
+    !isClosed &&
+    backedAirToken !== undefined &&
+    backedAirUsd !== undefined &&
+    (backedAirToken === 0n || backedAirUsd === 0n);
 
   const { data: metaData } = useReadContracts({
     contracts: underlyingToken
@@ -229,12 +234,12 @@ export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
   return (
     <tr
       onClick={() => navigate(`/app/markets/${poolAddress}`)}
-      style={isClosed ? { opacity: 0.55 } : undefined}
+      style={isClosed || isInactive ? { opacity: 0.55 } : undefined}
     >
       <td>
         <span style={{ fontWeight: 500 }}>{symbol}</span>
         <span style={{ color: "var(--muted)" }}> / USDC</span>
-        {isClosed && (
+        {(isClosed || isInactive) && (
           <span
             style={{
               marginLeft: 8,
@@ -248,7 +253,7 @@ export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
               verticalAlign: "middle",
             }}
           >
-            CLOSED
+            {isClosed ? "CLOSED" : "INACTIVE"}
           </span>
         )}
       </td>
