@@ -3,6 +3,8 @@ import { avalancheFuji, hardhat } from "wagmi/chains";
 import { injected, walletConnect } from "wagmi/connectors";
 
 const wcProjectId = import.meta.env.VITE_WC_PROJECT_ID ?? "";
+const fujiRpcUrl =
+  import.meta.env.VITE_RPC_FUJI ?? "https://api.avax-test.network/ext/bc/C/rpc";
 
 export const config = createConfig({
   chains: [avalancheFuji, hardhat],
@@ -14,6 +16,6 @@ export const config = createConfig({
   // will appear automatically as additional connectors alongside the above.
   transports: {
     [hardhat.id]:       http("http://127.0.0.1:8545"),
-    [avalancheFuji.id]: http(),
+    [avalancheFuji.id]: http(fujiRpcUrl),
   },
 });
