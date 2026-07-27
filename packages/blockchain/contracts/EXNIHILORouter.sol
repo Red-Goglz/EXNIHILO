@@ -12,14 +12,11 @@ interface IEXNIHILOFactory {
 interface IEXNIHILOPool {
     function underlyingToken() external view returns (IERC20);
     function underlyingUsdc() external view returns (IERC20);
-    function backedAirUsd() external view returns (uint256);
-    function longOpenInterest() external view returns (uint256);
-    function shortOpenInterest() external view returns (uint256);
+    function quoteOpenFee(uint256 notional, bool isLong) external view returns (uint256);
 
     function openLong(uint256 usdcAmount, uint256 minAirTokenOut, address recipient) external;
     function openShort(uint256 usdcNotional, uint256 minAirUsdOut, address recipient) external;
     function swap(uint256 amountIn, uint256 minAmountOut, bool tokenToUsdc, address recipient) external;
-    function renewPosition(uint256 nftId) external;
 }
 
 /**
@@ -32,21 +29,15 @@ interface IEXNIHILOPool {
  *         state between transactions.
  *
  *         LP operations (addLiquidity, removeLiquidity, claimFees, setPositionCaps)
- *         and position exits (closeLong, closeShort, realizeLong, realizeShort)
- *         are called directly on the pool — the router does not wrap them.
+ *         and holder-only position operations (closeLong, closeShort,
+ *         renewPosition, claimPayout) are called directly on the pool — the
+ *         router does not wrap them.
  */
 contract EXNIHILORouter is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     IEXNIHILOFactory public immutable factory;
     IERC20           public immutable usdc;
-
-    // Must match EXNIHILOPool constants exactly
-    uint256 private constant BPS_DENOM        = 10_000;
-    uint256 private constant LP_FEE_BPS       = 300;   // 3 %
-    uint256 private constant PROTOCOL_FEE_BPS = 200;   // 2 %
-    uint256 private constant MIN_POSITION_FEE = 50_000; // 0.05 USDC (6 dec)
-    uint256 private constant IMPACT_FEE_BPS   = 1500;  // 15 % impact scaling rate
 
     error PoolNotRegistered();
 
@@ -60,29 +51,12 @@ contract EXNIHILORouter is ReentrancyGuard {
         usdc    = IERC20(usdc_);
     }
 
-    /// @dev Replicates the pool's fee calculation (base + OI-integral impact)
-    ///      so the router pulls enough to cover the pool's consumption. The
-    ///      snapshot may drift between the router's view read and the pool's
-    ///      execution read; unconsumed surplus is refunded atomically via the
+    /// @dev Quote the open fee from the pool itself — the pool is the single
+    ///      source of truth for fee math; the router replicates nothing.
+    ///      Unconsumed surplus (if any) is refunded atomically via the
     ///      _refundResidual pattern in each entry point.
     function _positionFee(uint256 notional, address pool, bool isLong) internal view returns (uint256) {
-        uint256 fee = (notional * PROTOCOL_FEE_BPS) / BPS_DENOM
-                    + (notional * LP_FEE_BPS)       / BPS_DENOM;
-        if (fee < MIN_POSITION_FEE) {
-            fee = MIN_POSITION_FEE;
-        }
-        // OI-integral impact fee — must match EXNIHILOPool.openLong / openShort.
-        // Guard: if the pool is empty the impact denominator is zero. Return the
-        // base fee and let the pool's own InsufficientBackedReserves check revert
-        // with a clean error message.
-        uint256 backedUsd = IEXNIHILOPool(pool).backedAirUsd();
-        if (backedUsd == 0) return fee;
-        uint256 oi = isLong
-            ? IEXNIHILOPool(pool).longOpenInterest()
-            : IEXNIHILOPool(pool).shortOpenInterest();
-        uint256 impactFee = (IMPACT_FEE_BPS * notional * (2 * oi + notional))
-                          / (2 * backedUsd * BPS_DENOM);
-        return fee + impactFee;
+        return IEXNIHILOPool(pool).quoteOpenFee(notional, isLong);
     }
 
     /// @dev Refund any portion of `token` that this call added to the router's
@@ -146,19 +120,4 @@ contract EXNIHILORouter is ReentrancyGuard {
         _refundResidual(tokenIn, balBefore, msg.sender);
     }
 
-    /// @notice Renew a position via `pool`. Caller must have approved USDC to this router.
-    ///         `fee` may safely be an over-estimate — any surplus not consumed
-    ///         by the pool is refunded to the caller atomically.
-    function renewPosition(
-        address pool,
-        uint256 nftId,
-        uint256 fee
-    ) external nonReentrant onlyPool(pool) {
-        uint256 balBefore = usdc.balanceOf(address(this));
-        usdc.safeTransferFrom(msg.sender, address(this), fee);
-        usdc.forceApprove(pool, fee);
-        IEXNIHILOPool(pool).renewPosition(nftId);
-        usdc.forceApprove(pool, 0);
-        _refundResidual(usdc, balBefore, msg.sender);
-    }
 }

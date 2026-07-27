@@ -33,7 +33,7 @@ export default function ConnectButton() {
         <button
           onClick={() => disconnect()}
           className="btn-terminal"
-          style={{ fontSize: "0.6rem", padding: "5px 12px" }}
+          style={{ fontSize: "var(--fs-label)", padding: "5px 12px" }}
         >
           DISCONNECT
         </button>
@@ -46,7 +46,7 @@ export default function ConnectButton() {
       <button
         onClick={() => setOpen((v) => !v)}
         className="btn-terminal btn-cyan"
-        style={{ fontSize: "0.65rem", padding: "6px 16px" }}
+        style={{ fontSize: "var(--fs-body-s)", padding: "6px 16px" }}
         disabled={isPending}
       >
         {isPending ? "CONNECTING…" : "CONNECT WALLET"}
@@ -74,7 +74,7 @@ export default function ConnectButton() {
             style={{
               padding: "9px 14px 7px",
               fontFamily: "var(--font-mono)",
-              fontSize: "0.58rem",
+              fontSize: "var(--fs-micro)",
               letterSpacing: "0.14em",
               color: "var(--dim)",
               borderBottom: "1px solid var(--border)",
@@ -126,7 +126,7 @@ export default function ConnectButton() {
               <span
                 style={{
                   fontFamily: "var(--font-mono)",
-                  fontSize: "0.65rem",
+                  fontSize: "var(--fs-body-s)",
                   letterSpacing: "0.06em",
                   color: "var(--body)",
                 }}

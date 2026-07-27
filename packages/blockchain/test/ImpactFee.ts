@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
+import { loadFixture, time } from "@nomicfoundation/hardhat-network-helpers";
 import {
   EXNIHILOPool,
   EXNIHILOFactory,
@@ -179,11 +179,7 @@ async function deployPoolWithLiquidity(
     initialToken,
     0n,  // no hard cap
     0n,  // no bps cap
-    0n,
-    "airTKN",
-    "airTKNUsd",
-    18
-  );
+    0n);
   const receipt = await tx.wait();
   const iface = factory.interface;
   const log = receipt!.logs
@@ -355,7 +351,7 @@ describe("Impact Fee — LP Drain Protection", function () {
       expect(impactFee).to.be.gt(baseFee);
     });
 
-    it("impact fee goes entirely to LP (lpFeesAccumulated)", async function () {
+    it("impact fee goes entirely to LP (accrued for claim)", async function () {
       const f = await loadFixture(deployMediumPool);
 
       const notional = ethers.parseUnits("500", 6);
@@ -516,10 +512,9 @@ describe("Impact Fee — LP Drain Protection", function () {
           await f.pool.connect(f.trader1).closeLong(nftId, 0n);
           closedOk = true;
         } catch {
-          // Position may be underwater if the pump wasn't enough; realize instead
-          const pos = await f.positionNFT.getPosition(nftId);
-          await f.usdc.mint(f.trader1.address, pos.airUsdMinted);
-          await f.pool.connect(f.trader1).realizeLong(nftId);
+          // Position underwater — liquidate after expiry (attacker gets nothing).
+          await time.increase(7 * 24 * 60 * 60 + 1);
+          await f.pool.connect(f.trader1).closePositionAfterDeadline(nftId, 0n);
         }
 
         // Step 4: dump — sell all token back for USDC
@@ -534,7 +529,7 @@ describe("Impact Fee — LP Drain Protection", function () {
 
         console.log(
           `      [${ac.label}] net: $${ethers.formatUnits(netGain, 6)} ` +
-          `(closed=${closedOk ? "profit" : "realize"})`
+          `(closed=${closedOk ? "profit" : "expired"})`
         );
       });
     }
@@ -567,9 +562,9 @@ describe("Impact Fee — LP Drain Protection", function () {
         try {
           await f.pool.connect(f.trader1).closeLong(nftId, 0n);
         } catch {
-          const pos = await f.positionNFT.getPosition(nftId);
-          await f.usdc.mint(f.trader1.address, pos.airUsdMinted);
-          await f.pool.connect(f.trader1).realizeLong(nftId);
+          // Underwater — liquidate after expiry (attacker gets nothing).
+          await time.increase(7 * 24 * 60 * 60 + 1);
+          await f.pool.connect(f.trader1).closePositionAfterDeadline(nftId, 0n);
         }
       }
 
@@ -603,9 +598,9 @@ describe("Impact Fee — LP Drain Protection", function () {
         try {
           await f.pool.connect(f.trader1).closeLong(nftId, 0n);
         } catch {
-          const pos = await f.positionNFT.getPosition(nftId);
-          await f.usdc.mint(f.trader1.address, pos.airUsdMinted);
-          await f.pool.connect(f.trader1).realizeLong(nftId);
+          // Underwater — liquidate after expiry (attacker gets nothing).
+          await time.increase(7 * 24 * 60 * 60 + 1);
+          await f.pool.connect(f.trader1).closePositionAfterDeadline(nftId, 0n);
         }
       }
 
@@ -638,9 +633,9 @@ describe("Impact Fee — LP Drain Protection", function () {
         try {
           await f.pool.connect(f.trader1).closeLong(nftId, 0n);
         } catch {
-          const pos = await f.positionNFT.getPosition(nftId);
-          await f.usdc.mint(f.trader1.address, pos.airUsdMinted);
-          await f.pool.connect(f.trader1).realizeLong(nftId);
+          // Underwater — liquidate after expiry (attacker gets nothing).
+          await time.increase(7 * 24 * 60 * 60 + 1);
+          await f.pool.connect(f.trader1).closePositionAfterDeadline(nftId, 0n);
         }
       }
 
@@ -726,27 +721,21 @@ describe("Impact Fee — LP Drain Protection", function () {
 
   describe("7. LP fee claiming includes impact fee", function () {
 
-    it("LP can claim all accumulated fees (base + impact) after positions settle", async function () {
+    it("LP can claim all accumulated fees (base + impact)", async function () {
       const f = await loadFixture(deployMediumPool);
 
-      // Open and realize a position
+      // Open a position — fees accrue at open time.
       const notional = ethers.parseUnits("500", 6);
-      const nftId = await openLong(f.pool, f.trader1, notional);
+      await openLong(f.pool, f.trader1, notional);
 
-      // Realize so we can remove liquidity
-      const pos = await f.positionNFT.getPosition(nftId);
-      await f.usdc.mint(f.trader1.address, pos.airUsdMinted);
-      await f.pool.connect(f.trader1).realizeLong(nftId);
+      const accrued = await f.pool.lpFeesAccumulated();
+      expect(accrued).to.be.gt(0n);
 
-      // LP claims fees
-      const lpFees = await f.pool.lpFeesAccumulated();
-      expect(lpFees).to.be.gt(0n);
-
-      const lpUsdcBefore = await f.usdc.balanceOf(f.creator.address);
-      await f.pool.connect(f.creator).claimFees();
-      const lpUsdcAfter = await f.usdc.balanceOf(f.creator.address);
-
-      expect(lpUsdcAfter - lpUsdcBefore).to.equal(lpFees);
+      const lpBefore = await f.usdc.balanceOf(f.creator.address);
+      await f.pool.connect(f.creator).claimFees(f.creator.address);
+      expect(await f.usdc.balanceOf(f.creator.address)).to.equal(lpBefore + accrued);
+      expect(await f.pool.lpFeesAccumulated()).to.equal(0n);
+      expect(await f.pool.lpFeesPaidTotal()).to.equal(accrued);
     });
   });
 

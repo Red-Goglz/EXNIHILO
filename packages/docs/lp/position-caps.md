@@ -34,7 +34,11 @@ Only the LP NFT holder can call this. Caps can be raised, lowered, or cleared at
 
 | Goal | Recommended caps |
 |---|---|
+| Sensible default | `maxPositionBps = 100` (1% of reserves — the market-creation UI default) |
 | Maximum volume | Both set to 0 (no caps) |
 | Conservative LP | Low bps cap (e.g., 200 = 2% of TVL) |
 | Fixed risk per trade | Dollar cap (e.g., 500 USDC) |
 | Balanced | Both active — dollar cap + TVL percentage |
+
+The bps cap is generally the better primary lever: it scales automatically as
+your pool grows or shrinks, while a dollar cap needs manual updating.

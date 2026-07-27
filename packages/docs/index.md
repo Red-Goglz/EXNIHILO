@@ -10,7 +10,7 @@ hero:
       link: /introduction/what-is-exnihilo
     - theme: alt
       text: Launch App
-      link: https://exnihilo.finance/app
+      link: https://exnihilo.markets/app
 features:
   - title: No Liquidations
     details: Positions never get force-closed. You decide when to exit — the protocol doesn't.

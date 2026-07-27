@@ -12,10 +12,14 @@ Or use any NFT marketplace, wallet, or tool that supports ERC-721 transfers.
 
 ## What transfers with the NFT
 
-Everything. The new owner gains:
-- Full right to **close** the position and receive the USDC settlement
+The new owner gains:
+- Full right to **close**, **renew**, and configure the position
 - The locked collateral (custodied in the NFT contract)
 - The on-chain SVG metadata showing live P&L
+
+One thing deliberately does **not** transfer: the **auto-renewal opt-in** is
+cleared on every ownership change. A buyer must call `setAutoRenew` themselves
+— nobody inherits a keeper authorization they never gave.
 
 ## Use cases
 
@@ -25,6 +29,6 @@ Everything. The new owner gains:
 
 ## Important notes
 
-- Only the current NFT owner can close or realize the position
-- After the deadline, anyone can close expired positions
-- Transferring the NFT does not change the position's parameters (entry price, fees paid, etc.)
+- Only the current NFT owner can close or renew the position before its deadline
+- After the deadline, anyone can settle expired positions (via `settleExpired`, earning a 0.05 USDC bounty)
+- Transferring the NFT does not change the position's parameters (entry price, debt, fees paid, deadline) — only the auto-renew flag resets

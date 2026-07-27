@@ -43,7 +43,7 @@ async function main() {
   await baseToken.connect(deployer).approve(await factory.getAddress(), ethers.MaxUint256);
   await usdc.connect(deployer).approve(await factory.getAddress(), ethers.MaxUint256);
 
-  const tx = await factory.connect(deployer).createMarket(await baseToken.getAddress(), USDC, TOKEN, 0n, 0n, 0n, "airPEPE", "airPEPEUsd", 18);
+  const tx = await factory.connect(deployer).createMarket(await baseToken.getAddress(), USDC, TOKEN, 0n, 0n, 0n);
   const receipt = await tx.wait();
   const log = receipt!.logs.map(l => { try { return factory.interface.parseLog(l); } catch { return null; } }).find(l => l?.name === "MarketCreated")!;
   const poolAddr = log.args.pool;
@@ -64,13 +64,8 @@ async function main() {
   console.log("Position airTokenMinted:", pos.airTokenMinted.toString());
   console.log("Position lockedAmount (airUsd):", pos.lockedAmount.toString());
 
-  const airUsdAddr = await pool.airUsdToken();
-  const airUsd = await ethers.getContractAt("AirToken", airUsdAddr);
-  const airTokenAddr = await pool.airToken();
-  const airToken = await ethers.getContractAt("AirToken", airTokenAddr);
-
-  console.log("airUsd.totalSupply():", (await airUsd.totalSupply()).toString());
-  console.log("airToken.totalSupply():", (await airToken.totalSupply()).toString());
+  console.log("airUsdSupply:", (await pool.airUsdSupply()).toString());
+  console.log("airTokenSupply:", (await pool.airTokenSupply()).toString());
   console.log("backedAirToken:", (await pool.backedAirToken()).toString());
   console.log("backedAirUsd:", (await pool.backedAirUsd()).toString());
 
@@ -89,8 +84,8 @@ async function main() {
   await baseToken.connect(trader2).approve(poolAddr, ethers.MaxUint256);
   await pool.connect(trader2).swap(bigDump, 0n, true, trader2.address);
   console.log("\nAfter massive dump:");
-  console.log("airUsd.totalSupply():", (await airUsd.totalSupply()).toString());
-  console.log("airToken.totalSupply():", (await airToken.totalSupply()).toString());
+  console.log("airUsdSupply:", (await pool.airUsdSupply()).toString());
+  console.log("airTokenSupply:", (await pool.airTokenSupply()).toString());
   console.log("backedAirToken:", (await pool.backedAirToken()).toString());
   console.log("backedAirUsd:", (await pool.backedAirUsd()).toString());
 

@@ -30,6 +30,11 @@ packages/docs/.vitepress/cache
 .DS_Store
 Thumbs.db
 
+# Indexer (Ponder) — build/runtime state only; the package itself is tracked
+packages/indexer/.ponder
+packages/indexer/generated
+
 # Misc
 *.log
-/packages/indexer/
+# MCP / tooling scratch
+.playwright-mcp/

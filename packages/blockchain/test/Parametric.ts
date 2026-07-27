@@ -2,12 +2,12 @@
  * Parametric.ts — Parametric test suite for the "LP + openLong + Swap + Close" sequence.
  *
  * One wallet (trader) performs: openLong → USDC→token pump swap → closeLong (or
- * realizeLong if underwater) → sell token back.
+ * expiry liquidation if underwater) → sell token back.
  *
  * LP is a separate wallet.  Assertions after each run:
  *   - All positions settled (openPositionCount == 0)
- *   - LP earned fees (lpFeesAccumulated > 0)
- *   - LP can claimFees + removeLiquidity without reverting
+ *   - LP earned fees (accrued, then claimed via claimFees)
+ *   - LP can removeLiquidity without reverting
  *   - Trader P&L is logged (informational; may be negative — fees are real cost)
  *
  * Uses mulberry32 deterministic PRNG so random cases are reproducible.
@@ -15,13 +15,13 @@
 
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { time } from "@nomicfoundation/hardhat-network-helpers";
 import {
   EXNIHILOPool,
   EXNIHILOFactory,
   LpNFT,
   PositionNFT,
   MockERC20,
-  AirToken,
 } from "../typechain-types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -127,7 +127,7 @@ const FIXED_CASES: Params[] = [
     swapUsdc: 15n * E6,
   },
   {
-    label:    "deep pool, micro long, no pump → realizeLong",
+    label:    "deep pool, micro long, no pump → expired",
     lpToken:   10_000_000n * E18,
     lpUsdc:   100_000n * E6,
     longUsdc: 1n * E6,
@@ -155,7 +155,7 @@ const FIXED_CASES: Params[] = [
     swapUsdc: 2n * E6,
   },
   {
-    label:    "large long, tiny pump (borderline: closeLong or realizeLong)",
+    label:    "large long, tiny pump (borderline: closeLong or expired)",
     lpToken:   500_000n * E18,
     lpUsdc:   5_000n * E6,
     longUsdc: 1_000n * E6,
@@ -175,7 +175,7 @@ const FIXED_CASES: Params[] = [
     swapUsdc: 100_000n * E6,  // 100× — dumps USDC, barely gets token back
   },
   {
-    label:    "small LP, 40× leverage, no pump → realizeLong",
+    label:    "small LP, 40× leverage, no pump → expired",
     lpToken:   50_000n * E18,
     lpUsdc:   500n * E6,
     longUsdc: 20_000n * E6,   // 40×
@@ -241,7 +241,7 @@ function generateRandomCases(count: number, seed: number): Params[] {
     // Long: 1–8% of lpUsdc (keeps it well within reserves)
     const longUsdcUnits = BigInt(Math.max(1, Math.floor(Number(lpUsdcUnits) * (0.01 + rng() * 0.07))));
 
-    // Pump: 15% chance of no pump (→ realizeLong path); otherwise 1–25% of lpUsdc
+    // Pump: 15% chance of no pump (→ expiry-liquidation path); otherwise 1–25% of lpUsdc
     const swapUsdcUnits = rng() < 0.15
       ? 0n
       : BigInt(Math.floor(Number(lpUsdcUnits) * rng() * 0.25));
@@ -317,11 +317,7 @@ async function runSequence(params: Params): Promise<void> {
     params.lpToken,
     0n, // no position caps
     0n,
-    0n,
-    "airTOKEN",
-    "airTOKENUsd",
-    18
-  );
+    0n);
   const receiptCreate = await txCreate.wait();
 
   const iface  = factory.interface;
@@ -334,9 +330,9 @@ async function runSequence(params: Params): Promise<void> {
 
   // ── Fund trader ───────────────────────────────────────────────────────────
   // Trader starts with USDC only (zero token).  Any token they hold at the end
-  // came exclusively from trading operations (pump swap + realizeLong).
+  // came exclusively from trading operations (the pump swap).
   //
-  // Budget: 5% open fee + worst-case realizeLong notional + pump swap + buffer.
+  // Budget: 5% open fee + headroom + pump swap + buffer.
   const baseFee      = (params.longUsdc * OPEN_FEE_BPS) / BPS_DENOM;
   // OI=0 for first position: integral formula simplifies to N²*BPS/(2*U*10000)
   const impactFee    = (IMPACT_FEE_BPS * params.longUsdc * params.longUsdc)
@@ -366,16 +362,24 @@ async function runSequence(params: Params): Promise<void> {
 
   // ── Step 2: USDC → token pump swap (optional) ─────────────────────────────
 
+  let pumpReverted = false;
   if (params.swapUsdc > 0n) {
-    // tokenToUsdc = false → USDC in, token out
-    await pool.connect(trader).swap(params.swapUsdc, 0n, false, trader.address);
+    // tokenToUsdc = false → USDC in, token out.
+    // At these grid sizes the swap fee can outgrow the raw output, which the
+    // pool now rejects instead of taking the input for nothing. The scenario
+    // then degenerates to "position opened, no pump" — still a valid case to
+    // measure, so record it rather than failing the run.
+    try {
+      await pool.connect(trader).swap(params.swapUsdc, 0n, false, trader.address);
+    } catch {
+      pumpReverted = true;
+    }
   }
 
   // ── Step 3: Decide close path from live chain state ───────────────────────
-  // Read state now (post-pump) to decide whether closeLong or realizeLong
-  const airTokenAddr   = await pool.airToken();
-  const airToken  = (await ethers.getContractAt("AirToken", airTokenAddr)) as AirToken;
-  const airTokenSupply = await airToken.totalSupply();
+  // Read state now (post-pump) to decide whether closeLong succeeds or the
+  // position is underwater and must be liquidated after expiry.
+  const airTokenSupply = await pool.airTokenSupply();
   const backedAirUsd  = await pool.backedAirUsd();
   const pos           = await positionNFT.getPosition(nftId);
   const lockedAmount  = pos.lockedAmount;
@@ -390,18 +394,23 @@ async function runSequence(params: Params): Promise<void> {
     // ── Step 3a: Close long (profitable) — receive USDC surplus ─────────────
     await pool.connect(trader).closeLong(nftId, 0n);
   } else {
-    // ── Step 3b: Realize long (at par) — pay airUsdMinted USDC, get raw token ─
-    // Budget always covers longUsdc (= airUsdMinted): see traderBudget above.
-    await pool.connect(trader).realizeLong(nftId);
+    // ── Step 3b: Underwater — expire and liquidate (collateral → LP, no payout)
+    await time.increase(7 * 24 * 60 * 60 + 1);
+    await pool.connect(trader).closePositionAfterDeadline(nftId, 0n);
   }
 
   // ── Step 4: Sell ALL token back to the pool (token → USDC) ─────────────────
-  // Covers: token received from the pump swap (closeLong path) and/or the
-  // token delivered by realizeLong.  The CPM formula guarantees this never
-  // completely drains the pool's USDC reserve.
+  // Covers the token received from the pump swap (closeLong path).
+  // The CPM formula guarantees this never completely drains the pool's USDC
+  // reserve.
   const finalTokenBalance = await baseToken.balanceOf(trader.address);
   if (finalTokenBalance > 0n) {
-    await pool.connect(trader).swap(finalTokenBalance, 0n, true, trader.address); // tokenToUsdc = true
+    // May revert for the same zero-output reason as the pump leg; if it does,
+    // the trader simply keeps the tokens and the PnL accounting below still
+    // values them at p0.
+    try {
+      await pool.connect(trader).swap(finalTokenBalance, 0n, true, trader.address); // tokenToUsdc = true
+    } catch { /* zero-output: trader keeps the tokens */ }
   }
 
   // ── Compute and log trader P&L ────────────────────────────────────────────
@@ -414,7 +423,7 @@ async function runSequence(params: Params): Promise<void> {
   console.log(
     `    [${params.label}] ` +
     `net: ${sign}$${usdStr} | ` +
-    `mode: ${profitable ? "closeLong" : "realizeLong"}`
+    `mode: ${profitable ? "closeLong" : "expiredUnderwater"}`
   );
 
   // ── Assertions ────────────────────────────────────────────────────────────
@@ -430,16 +439,16 @@ async function runSequence(params: Params): Promise<void> {
   // All positions must be settled
   expect(await pool.openPositionCount()).to.equal(
     0n,
-    "openPositionCount must be 0 after position is closed/realized"
+    "openPositionCount must be 0 after position is closed/liquidated"
   );
 
-  // LP must have earned fees from the 3% position-open LP fee share
-  const lpFees = await pool.lpFeesAccumulated();
-  expect(lpFees).to.be.gt(0n, "LP fees must be positive");
-
-  // LP can claim all accumulated fees
-  await pool.connect(lp).claimFees();
-  expect(await pool.lpFeesAccumulated()).to.equal(0n, "lpFeesAccumulated must be 0 after claim");
+  // LP must have earned fees from the 3% position-open LP fee share.
+  // Fees accrue (pull payment) and are withdrawn via claimFees.
+  const lpFeesAccrued = await pool.lpFeesAccumulated();
+  expect(lpFeesAccrued).to.be.gt(0n, "accrued LP fees must be positive");
+  await pool.connect(lp).claimFees(lp.address);
+  expect(await pool.lpFeesAccumulated()).to.equal(0n, "claim drains the accrual");
+  expect(await pool.lpFeesPaidTotal()).to.equal(lpFeesAccrued);
 
   // LP can remove all liquidity (requires openPositionCount == 0)
   await pool.connect(lp).removeLiquidity();

@@ -1,0 +1,56 @@
+[Unit]
+Description=EXNIHILO Ponder indexer + API
+Documentation=https://ponder.sh
+# Only ordering hints — if Postgres runs in Docker or on another host these
+# are simply no-ops, and Restart= below covers a database that is slow to come up.
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=exnihilo
+Group=exnihilo
+WorkingDirectory=/srv/exnihilo/packages/indexer
+
+# Secrets (DATABASE_URL, PONDER_RPC_URL_43113) live here, not in the unit.
+# chmod 600 and owned by the service user.
+EnvironmentFile=/etc/exnihilo/indexer.env
+Environment=NODE_ENV=production
+Environment=PORT=42069
+
+ExecStart=/usr/bin/npm run start --workspace packages/indexer
+
+# Ponder exits non-zero on an indexing error (see the uncaughtException handler),
+# and a wedged sync should not require a human. Always restart, but back off so
+# a genuine crash-loop does not hammer the RPC provider.
+Restart=always
+RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Ponder's shutdown path can hang; give it room, then SIGKILL.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+FinalKillSignal=SIGKILL
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=exnihilo-indexer
+
+# ── Hardening ───────────────────────────────────────────────────────────────
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/exnihilo/packages/indexer
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

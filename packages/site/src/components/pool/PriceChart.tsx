@@ -1,50 +1,6 @@
 import { useState, useMemo } from "react";
 
-// ─── Fake data generators (fallback when indexer has no data) ────────────────
-
 let chartIdCounter = 0;
-
-function nextSeed(s: number): number {
-  return ((s * 1664525) + 1013904223) | 0;
-}
-
-function generateFakeSpotPath(poolAddr: string, n: number): number[] {
-  let seed = 5381;
-  for (let i = 0; i < poolAddr.length; i++) {
-    seed = (((seed << 5) + seed) + poolAddr.charCodeAt(i)) | 0;
-  }
-  seed = Math.abs(seed) || 1;
-  const pts: number[] = [];
-  let v = 0.4 + ((seed & 0xFF) / 255) * 0.2;
-  for (let i = 0; i < n; i++) {
-    seed = nextSeed(seed);
-    const delta = (((seed >>> 0) & 0xFF) / 255 - 0.5) * 0.05;
-    v = Math.max(0.15, Math.min(0.85, v + delta));
-    pts.push(v);
-  }
-  return pts;
-}
-
-function deriveFakeLines(spotPts: number[], poolAddr: string) {
-  let seed = 5381;
-  const tag = poolAddr + "_spread";
-  for (let i = 0; i < tag.length; i++) {
-    seed = (((seed << 5) + seed) + tag.charCodeAt(i)) | 0;
-  }
-  seed = Math.abs(seed) || 1;
-  const n = spotPts.length;
-  const longPts: number[] = [];
-  const shortPts: number[] = [];
-  for (let i = 0; i < n; i++) {
-    seed = nextSeed(seed);
-    const t = i / (n - 1);
-    const maxSpread = 0.05 + (((seed >>> 0) & 0xFF) / 255) * 0.07;
-    const spread = i === 0 ? 0 : maxSpread * Math.log(1 + t * 9) / Math.log(10);
-    longPts.push(Math.max(0.02, spotPts[i] - spread));
-    shortPts.push(Math.min(0.98, spotPts[i] + spread));
-  }
-  return { longPts, shortPts };
-}
 
 // ─── Normalize real price data to 0–1 range ─────────────────────────────────
 
@@ -99,7 +55,6 @@ function normalizePrices(
 // ─── Price Chart ─────────────────────────────────────────────────────────────
 
 export default function PriceChart({
-  poolAddress,
   height = 380,
   highlightLine,
   priceData,
@@ -107,7 +62,6 @@ export default function PriceChart({
   longLabel,
   shortLabel,
 }: {
-  poolAddress: string;
   height?: number;
   highlightLine?: "long" | "short" | null;
   priceData?: { spot: bigint; long: bigint; short: bigint }[];
@@ -124,14 +78,14 @@ export default function PriceChart({
 
   const hasRealData = priceData && priceData.length >= 2;
 
-  const { spotPts, longPts, shortPts } = useMemo(() => {
-    if (hasRealData) {
-      return normalizePrices(priceData!, N);
-    }
-    const fakeSpot = generateFakeSpotPath(poolAddress, N);
-    const { longPts, shortPts } = deriveFakeLines(fakeSpot, poolAddress);
-    return { spotPts: fakeSpot, longPts, shortPts };
-  }, [hasRealData, priceData, poolAddress]);
+  // No synthetic fallback: an invented price path on a trading screen is
+  // indistinguishable from a real one. With no history we draw no lines.
+  const { spotPts, longPts, shortPts } = useMemo(
+    () => (hasRealData
+      ? normalizePrices(priceData!, N)
+      : { spotPts: [], longPts: [], shortPts: [] }),
+    [hasRealData, priceData, N],
+  );
 
   const toSvg = (pts: number[]) =>
     pts.map((x, i) => ({
@@ -190,6 +144,71 @@ export default function PriceChart({
   const shortHighlight = highlightLine === "short";
   const longPulse  = !highlightLine || highlightLine === "long";
   const shortPulse = !highlightLine || highlightLine === "short";
+
+  // Fixed price labels — LONG left, SPOT center, SHORT right — just above the
+  // chart. These come from live contract reads rather than indexed history, so
+  // they stay valid (and shown) even when there is nothing to plot.
+  const labelY = H * TOP_PAD - 6;
+  const nameY  = labelY - 12;
+
+  const priceLabels = (
+    <>
+      <text x={W * 0.15} y={nameY} textAnchor="middle"
+        fill="#00ff88" fontSize="8" fontFamily="var(--font-mono)" fontWeight="600" opacity="0">
+        LONG
+        <animate attributeName="opacity" from="0" to="0.6" begin={LABEL_BEGIN} dur="0.4s" fill="freeze" />
+      </text>
+      <text x={W * 0.15} y={labelY} textAnchor="middle"
+        fill="#00ff88" fontSize="12" fontFamily="var(--font-mono)" fontWeight="700" opacity="0">
+        {longLabel ?? "—"}
+        <animate attributeName="opacity" from="0" to="1" begin={LABEL_BEGIN} dur="0.4s" fill="freeze" />
+      </text>
+
+      <text x={W * 0.5} y={nameY} textAnchor="middle"
+        fill="#aaaaaa" fontSize="8" fontFamily="var(--font-mono)" fontWeight="600" opacity="0">
+        SPOT
+        <animate attributeName="opacity" from="0" to="0.6" begin={LABEL_BEGIN} dur="0.4s" fill="freeze" />
+      </text>
+      <text x={W * 0.5} y={labelY} textAnchor="middle"
+        fill="#aaaaaa" fontSize="12" fontFamily="var(--font-mono)" fontWeight="700" opacity="0">
+        {spotLabel ?? "—"}
+        <animate attributeName="opacity" from="0" to="1" begin={LABEL_BEGIN} dur="0.4s" fill="freeze" />
+      </text>
+
+      <text x={W * 0.85} y={nameY} textAnchor="middle"
+        fill="#ff3b30" fontSize="8" fontFamily="var(--font-mono)" fontWeight="600" opacity="0">
+        SHORT
+        <animate attributeName="opacity" from="0" to="0.6" begin={LABEL_BEGIN} dur="0.4s" fill="freeze" />
+      </text>
+      <text x={W * 0.85} y={labelY} textAnchor="middle"
+        fill="#ff3b30" fontSize="12" fontFamily="var(--font-mono)" fontWeight="700" opacity="0">
+        {shortLabel ?? "—"}
+        <animate attributeName="opacity" from="0" to="1" begin={LABEL_BEGIN} dur="0.4s" fill="freeze" />
+      </text>
+    </>
+  );
+
+  // Grid + live labels only — nothing is drawn where no history exists.
+  if (!hasRealData) {
+    return (
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block" }}
+        preserveAspectRatio="none"
+      >
+        {[0.25, 0.5, 0.75].map((f) => (
+          <line key={f} x1={0} y1={f * H} x2={W} y2={f * H}
+            stroke="rgba(255,255,255,0.04)" strokeWidth="1" />
+        ))}
+        {priceLabels}
+        <text x={W * 0.5} y={H * 0.62} textAnchor="middle"
+          fill="rgba(255,255,255,0.25)" fontSize="9"
+          fontFamily="var(--font-mono)" letterSpacing="1.5">
+          NO PRICE HISTORY YET
+        </text>
+      </svg>
+    );
+  }
 
   return (
     <svg
@@ -347,47 +366,7 @@ export default function PriceChart({
         </circle>
       )}
 
-      {/* Fixed price labels — LONG left, SPOT center, SHORT right — just above chart */}
-      {(() => {
-        const labelY = H * TOP_PAD - 6;
-        const nameY  = labelY - 12;
-        return (
-          <>
-            <text x={W * 0.15} y={nameY} textAnchor="middle"
-              fill="#00ff88" fontSize="8" fontFamily="var(--font-mono)" fontWeight="600" opacity="0">
-              LONG
-              <animate attributeName="opacity" from="0" to="0.6" begin={LABEL_BEGIN} dur="0.4s" fill="freeze" />
-            </text>
-            <text x={W * 0.15} y={labelY} textAnchor="middle"
-              fill="#00ff88" fontSize="12" fontFamily="var(--font-mono)" fontWeight="700" opacity="0">
-              {longLabel ?? "—"}
-              <animate attributeName="opacity" from="0" to="1" begin={LABEL_BEGIN} dur="0.4s" fill="freeze" />
-            </text>
-
-            <text x={W * 0.5} y={nameY} textAnchor="middle"
-              fill="#aaaaaa" fontSize="8" fontFamily="var(--font-mono)" fontWeight="600" opacity="0">
-              SPOT
-              <animate attributeName="opacity" from="0" to="0.6" begin={LABEL_BEGIN} dur="0.4s" fill="freeze" />
-            </text>
-            <text x={W * 0.5} y={labelY} textAnchor="middle"
-              fill="#aaaaaa" fontSize="12" fontFamily="var(--font-mono)" fontWeight="700" opacity="0">
-              {spotLabel ?? "—"}
-              <animate attributeName="opacity" from="0" to="1" begin={LABEL_BEGIN} dur="0.4s" fill="freeze" />
-            </text>
-
-            <text x={W * 0.85} y={nameY} textAnchor="middle"
-              fill="#ff3b30" fontSize="8" fontFamily="var(--font-mono)" fontWeight="600" opacity="0">
-              SHORT
-              <animate attributeName="opacity" from="0" to="0.6" begin={LABEL_BEGIN} dur="0.4s" fill="freeze" />
-            </text>
-            <text x={W * 0.85} y={labelY} textAnchor="middle"
-              fill="#ff3b30" fontSize="12" fontFamily="var(--font-mono)" fontWeight="700" opacity="0">
-              {shortLabel ?? "—"}
-              <animate attributeName="opacity" from="0" to="1" begin={LABEL_BEGIN} dur="0.4s" fill="freeze" />
-            </text>
-          </>
-        );
-      })()}
+      {priceLabels}
     </svg>
   );
 }

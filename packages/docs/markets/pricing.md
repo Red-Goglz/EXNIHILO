@@ -27,12 +27,12 @@ This is the standard Uniswap-style `x * y = k` model. Larger trades relative to 
 | Curve | reserveIn / reserveOut | Purpose |
 |---|---|---|
 | SWAP-1 | backedAirToken ↔ backedAirUsd | Normal swaps |
-| SWAP-2 | backedAirToken ↔ airUsd.totalSupply() | Long open / short close |
-| SWAP-3 | airToken.totalSupply() ↔ backedAirUsd | Short open / long close |
+| SWAP-2 | backedAirToken ↔ airUsdSupply | Long open / short close |
+| SWAP-3 | airTokenSupply ↔ backedAirUsd | Short open / long close |
 
 The key difference between curves is what counts as "reserves":
 - **SWAP-1** uses only backed reserves (real collateral)
-- **SWAP-2 / SWAP-3** use one backed reserve and one totalSupply (backed + synthetic)
+- **SWAP-2 / SWAP-3** use one backed reserve and one total supply counter (backed + synthetic)
 
 This means leveraged positions trade against a different curve than spot swaps, which is what creates the leveraged exposure.
 

@@ -135,6 +135,11 @@ export const positionNFTAbi = [
   },
   {
     "inputs": [],
+    "name": "FactoryNotSet",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "OnlyDeployer",
     "type": "error"
   },
@@ -145,23 +150,17 @@ export const positionNFTAbi = [
   },
   {
     "inputs": [],
+    "name": "OnlyTokenOwner",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "PositionNotFound",
     "type": "error"
   },
   {
     "inputs": [],
     "name": "PositionNotFromPool",
-    "type": "error"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "address",
-        "name": "token",
-        "type": "address"
-      }
-    ],
-    "name": "SafeERC20FailedOperation",
     "type": "error"
   },
   {
@@ -224,6 +223,31 @@ export const positionNFTAbi = [
     "inputs": [
       {
         "indexed": true,
+        "internalType": "uint256",
+        "name": "tokenId",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "bool",
+        "name": "enabled",
+        "type": "bool"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "maxFee",
+        "type": "uint256"
+      }
+    ],
+    "name": "AutoRenewSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
         "internalType": "address",
         "name": "factory",
         "type": "address"
@@ -260,6 +284,39 @@ export const positionNFTAbi = [
   {
     "inputs": [
       {
+        "internalType": "uint256",
+        "name": "tokenId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "newLockedAmount",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "newAirUsdMinted",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "addFeesPaid",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "newDeadline",
+        "type": "uint256"
+      }
+    ],
+    "name": "applyRenewal",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
         "internalType": "address",
         "name": "to",
         "type": "address"
@@ -292,24 +349,6 @@ export const positionNFTAbi = [
       }
     ],
     "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "uint256",
-        "name": "tokenId",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "newDeadline",
-        "type": "uint256"
-      }
-    ],
-    "name": "extendDeadline",
-    "outputs": [],
-    "stateMutability": "nonpayable",
     "type": "function"
   },
   {
@@ -352,6 +391,30 @@ export const positionNFTAbi = [
         "type": "uint256"
       }
     ],
+    "name": "getAutoRenew",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "enabled",
+        "type": "bool"
+      },
+      {
+        "internalType": "uint256",
+        "name": "maxFee",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "tokenId",
+        "type": "uint256"
+      }
+    ],
     "name": "getPosition",
     "outputs": [
       {
@@ -364,11 +427,6 @@ export const positionNFTAbi = [
           {
             "internalType": "address",
             "name": "pool",
-            "type": "address"
-          },
-          {
-            "internalType": "address",
-            "name": "lockedToken",
             "type": "address"
           },
           {
@@ -465,11 +523,6 @@ export const positionNFTAbi = [
         "type": "address"
       },
       {
-        "internalType": "address",
-        "name": "airToken",
-        "type": "address"
-      },
-      {
         "internalType": "uint256",
         "name": "usdcIn",
         "type": "uint256"
@@ -516,11 +569,6 @@ export const positionNFTAbi = [
       {
         "internalType": "address",
         "name": "pool",
-        "type": "address"
-      },
-      {
-        "internalType": "address",
-        "name": "airUsdToken",
         "type": "address"
       },
       {
@@ -612,11 +660,6 @@ export const positionNFTAbi = [
           {
             "internalType": "address",
             "name": "pool",
-            "type": "address"
-          },
-          {
-            "internalType": "address",
-            "name": "lockedToken",
             "type": "address"
           },
           {
@@ -728,6 +771,29 @@ export const positionNFTAbi = [
       }
     ],
     "name": "setApprovalForAll",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "tokenId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "bool",
+        "name": "enabled",
+        "type": "bool"
+      },
+      {
+        "internalType": "uint256",
+        "name": "maxFee",
+        "type": "uint256"
+      }
+    ],
+    "name": "setAutoRenew",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

@@ -3,16 +3,6 @@ export const exnihiloPoolAbi = [
     "inputs": [
       {
         "internalType": "address",
-        "name": "airToken_",
-        "type": "address"
-      },
-      {
-        "internalType": "address",
-        "name": "airUsdToken_",
-        "type": "address"
-      },
-      {
-        "internalType": "address",
         "name": "underlyingToken_",
         "type": "address"
       },
@@ -20,6 +10,11 @@ export const exnihiloPoolAbi = [
         "internalType": "address",
         "name": "underlyingUsdc_",
         "type": "address"
+      },
+      {
+        "internalType": "uint8",
+        "name": "tokenDecimals_",
+        "type": "uint8"
       },
       {
         "internalType": "address",
@@ -60,10 +55,20 @@ export const exnihiloPoolAbi = [
         "internalType": "uint256",
         "name": "positionDuration_",
         "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "factory_",
+        "type": "address"
       }
     ],
     "stateMutability": "nonpayable",
     "type": "constructor"
+  },
+  {
+    "inputs": [],
+    "name": "AutoRenewActive",
+    "type": "error"
   },
   {
     "inputs": [],
@@ -107,12 +112,32 @@ export const exnihiloPoolAbi = [
   },
   {
     "inputs": [],
+    "name": "OnlyLpHolderOrDeployer",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "OnlyPositionHolder",
     "type": "error"
   },
   {
     "inputs": [],
+    "name": "OnlyTreasury",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "OpenPositionsExist",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "PoolAlreadyClosed",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "PoolClosing",
     "type": "error"
   },
   {
@@ -152,93 +177,18 @@ export const exnihiloPoolAbi = [
   },
   {
     "inputs": [],
-    "name": "ReserveInvariantViolated",
-    "type": "error"
-  },
-  {
-    "inputs": [],
-    "name": "OnlyLpHolderOrDeployer",
-    "type": "error"
-  },
-  {
-    "inputs": [],
-    "name": "PoolAlreadyClosed",
-    "type": "error"
-  },
-  {
-    "inputs": [],
-    "name": "PoolClosing",
-    "type": "error"
-  },
-  {
-    "inputs": [],
     "name": "RenewalExceedsCloseDate",
     "type": "error"
   },
   {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "closedBy",
-        "type": "address"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "closeDate",
-        "type": "uint256"
-      }
-    ],
-    "name": "PoolClosed",
-    "type": "event"
+    "inputs": [],
+    "name": "RenewalFeeExceedsMax",
+    "type": "error"
   },
   {
     "inputs": [],
-    "name": "closeDate",
-    "outputs": [
-      {
-        "internalType": "uint256",
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "closePool",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "factory",
-    "outputs": [
-      {
-        "internalType": "address",
-        "name": "",
-        "type": "address"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "isClosing",
-    "outputs": [
-      {
-        "internalType": "bool",
-        "name": "",
-        "type": "bool"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
+    "name": "ReserveInvariantViolated",
+    "type": "error"
   },
   {
     "inputs": [
@@ -265,6 +215,88 @@ export const exnihiloPoolAbi = [
     "inputs": [],
     "name": "ZeroLiquidity",
     "type": "error"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "LpFeesPaid",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "recipient",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "PayoutClaimed",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "recipient",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "PayoutCredited",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "closedBy",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "closeDate",
+        "type": "uint256"
+      }
+    ],
+    "name": "PoolClosed",
+    "type": "event"
   },
   {
     "anonymous": false,
@@ -342,6 +374,62 @@ export const exnihiloPoolAbi = [
     "type": "event"
   },
   {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "nftId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "caller",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "feePaid",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "newDeadline",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "bool",
+        "name": "autoRenewed",
+        "type": "bool"
+      }
+    ],
+    "name": "PositionRenewed",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "ProtocolFeesPaid",
+    "type": "event"
+  },
+  {
     "inputs": [
       {
         "internalType": "uint256",
@@ -361,12 +449,12 @@ export const exnihiloPoolAbi = [
   },
   {
     "inputs": [],
-    "name": "airToken",
+    "name": "airTokenSupply",
     "outputs": [
       {
-        "internalType": "contract IAirToken",
+        "internalType": "uint256",
         "name": "",
-        "type": "address"
+        "type": "uint256"
       }
     ],
     "stateMutability": "view",
@@ -374,12 +462,12 @@ export const exnihiloPoolAbi = [
   },
   {
     "inputs": [],
-    "name": "airUsdToken",
+    "name": "airUsdSupply",
     "outputs": [
       {
-        "internalType": "contract IAirToken",
+        "internalType": "uint256",
         "name": "",
-        "type": "address"
+        "type": "uint256"
       }
     ],
     "stateMutability": "view",
@@ -412,10 +500,74 @@ export const exnihiloPoolAbi = [
     "type": "function"
   },
   {
-    "inputs": [],
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
+      }
+    ],
     "name": "claimFees",
     "outputs": [],
     "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
+      }
+    ],
+    "name": "claimPayout",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
+      }
+    ],
+    "name": "claimProtocolFees",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "name": "claimable",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "closeDate",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
     "type": "function"
   },
   {
@@ -437,19 +589,8 @@ export const exnihiloPoolAbi = [
     "type": "function"
   },
   {
-    "inputs": [
-      {
-        "internalType": "uint256",
-        "name": "nftId",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "minUsdcOut",
-        "type": "uint256"
-      }
-    ],
-    "name": "closeShort",
+    "inputs": [],
+    "name": "closePool",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
@@ -473,6 +614,101 @@ export const exnihiloPoolAbi = [
     "type": "function"
   },
   {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "nftId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "minUsdcOut",
+        "type": "uint256"
+      }
+    ],
+    "name": "closeShort",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "effectiveLeverageCap",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "factory",
+    "outputs": [
+      {
+        "internalType": "contract IEXNIHILOFactory",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "indexerState",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "backedAirToken_",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "backedAirUsd_",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "longPrice_",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "shortPrice_",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "lpFeesLifetime",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "protocolFeesLifetime",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "isClosing",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [],
     "name": "longOpenInterest",
     "outputs": [
@@ -487,7 +723,33 @@ export const exnihiloPoolAbi = [
   },
   {
     "inputs": [],
+    "name": "longPrice",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "lpFeesAccumulated",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "lpFeesPaidTotal",
     "outputs": [
       {
         "internalType": "uint256",
@@ -637,6 +899,32 @@ export const exnihiloPoolAbi = [
   },
   {
     "inputs": [],
+    "name": "protocolFeesAccumulated",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "protocolFeesPaidTotal",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "protocolTreasury",
     "outputs": [
       {
@@ -656,9 +944,44 @@ export const exnihiloPoolAbi = [
         "type": "uint256"
       }
     ],
-    "name": "realizeLong",
-    "outputs": [],
-    "stateMutability": "nonpayable",
+    "name": "quoteClose",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "ready",
+        "type": "bool"
+      },
+      {
+        "internalType": "int256",
+        "name": "pnl",
+        "type": "int256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "notional",
+        "type": "uint256"
+      },
+      {
+        "internalType": "bool",
+        "name": "isLong",
+        "type": "bool"
+      }
+    ],
+    "name": "quoteOpenFee",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "totalFee",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
     "type": "function"
   },
   {
@@ -669,9 +992,15 @@ export const exnihiloPoolAbi = [
         "type": "uint256"
       }
     ],
-    "name": "realizeShort",
-    "outputs": [],
-    "stateMutability": "nonpayable",
+    "name": "quoteRenewFee",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "totalFee",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
     "type": "function"
   },
   {
@@ -686,6 +1015,11 @@ export const exnihiloPoolAbi = [
       {
         "internalType": "uint256",
         "name": "nftId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "maxFee",
         "type": "uint256"
       }
     ],
@@ -713,34 +1047,26 @@ export const exnihiloPoolAbi = [
     "type": "function"
   },
   {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "nftId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "minPayout",
+        "type": "uint256"
+      }
+    ],
+    "name": "settleExpired",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
     "inputs": [],
     "name": "shortOpenInterest",
-    "outputs": [
-      {
-        "internalType": "uint256",
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "spotPrice",
-    "outputs": [
-      {
-        "internalType": "uint256",
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "longPrice",
     "outputs": [
       {
         "internalType": "uint256",
@@ -766,7 +1092,7 @@ export const exnihiloPoolAbi = [
   },
   {
     "inputs": [],
-    "name": "effectiveLeverageCap",
+    "name": "spotPrice",
     "outputs": [
       {
         "internalType": "uint256",
@@ -808,6 +1134,32 @@ export const exnihiloPoolAbi = [
   {
     "inputs": [],
     "name": "swapFeeBps",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "tokenDecimals",
+    "outputs": [
+      {
+        "internalType": "uint8",
+        "name": "",
+        "type": "uint8"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "totalClaimable",
     "outputs": [
       {
         "internalType": "uint256",

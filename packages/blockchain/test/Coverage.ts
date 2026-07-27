@@ -6,7 +6,7 @@
  * those files leave uncovered according to `npx hardhat coverage`.
  *
  * Contracts targeted:
- *   EXNIHILOPool   — constructor guards, swap/open/close/realize
+ *   EXNIHILOPool   — constructor guards, swap/open/close
  *                     edge branches, removeLiquidity partial-reserve branches,
  *                     addLiquidity ratio tolerance, _cpAmountOut zero-reserve.
  *   EXNIHILOFactory — _safeDecimals fallback.
@@ -22,7 +22,6 @@ import {
   LpNFT,
   PositionNFT,
   MockERC20,
-  AirToken,
   ReentrantToken,
   FeeOnTransferToken,
 } from "../typechain-types";
@@ -147,11 +146,7 @@ async function deployPoolFixture() {
     INITIAL_TOKEN,
     ethers.parseUnits("9000", 6),  // maxPositionUsd
     9000n,                          // maxPositionBps
-    0n,
-    "airPEPE",
-    "airPEPEUsd",
-    18
-  );
+    0n);
   const receipt = await tx.wait();
   const iface = factory.interface;
   const log = receipt!.logs
@@ -207,286 +202,100 @@ async function openShort(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Deploy a raw EXNIHILOPool directly (not via factory) for constructor tests
-// ─────────────────────────────────────────────────────────────────────────────
-
-async function deployRawPool(overrides: {
-  airToken?: string;
-  airUsd?: string;
-  underlyingToken?: string;
-  underlyingUsdc?: string;
-  positionNFT?: string;
-  lpNftContract?: string;
-  protocolTreasury?: string;
-  maxPositionBps?: bigint;
-  swapFeeBps?: bigint;
-}): Promise<void> {
-  const [deployer] = await ethers.getSigners();
-  const ZERO = ethers.ZeroAddress;
-  const MockERC20F = await ethers.getContractFactory("MockERC20");
-  const token  = (await MockERC20F.deploy("M", "M", 18)) as unknown as MockERC20;
-  const usdc = (await MockERC20F.deploy("U", "U", 6))  as unknown as MockERC20;
-  const posNFT = await (await ethers.getContractFactory("PositionNFT")).deploy();
-  const lpNFT  = await (await ethers.getContractFactory("LpNFT")).deploy(deployer.address);
-
-  const airTokenF = await ethers.getContractFactory("AirToken");
-  const airToken = await airTokenF.deploy("am", "am", 18);
-  const airUsd  = await airTokenF.deploy("au", "au", 6);
-
-  const PoolF = await ethers.getContractFactory("EXNIHILOPool");
-  await PoolF.deploy(
-    overrides.airToken        ?? await airToken.getAddress(),
-    overrides.airUsd         ?? await airUsd.getAddress(),
-    overrides.underlyingToken ?? await token.getAddress(),
-    overrides.underlyingUsdc ?? await usdc.getAddress(),
-    overrides.positionNFT    ?? await posNFT.getAddress(),
-    overrides.lpNftContract  ?? await lpNFT.getAddress(),
-    0,  // lpNftId
-    overrides.protocolTreasury ?? deployer.address,
-    0,  // maxPositionUsd
-    overrides.maxPositionBps ?? 0n,
-    overrides.swapFeeBps     ?? 100n,
-    0n,
-    deployer.address, // factory
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("Coverage — EXNIHILOPool constructor guards", function () {
 
-  it("reverts with ZeroAddress when airToken is zero", async function () {
-    const PoolF = await ethers.getContractFactory("EXNIHILOPool");
+  /**
+   * Deploys the support contracts once and returns a deploy helper whose
+   * arguments can be overridden per test. Constructor order:
+   *   (underlyingToken, underlyingUsdc, tokenDecimals, positionNFT,
+   *    lpNftContract, lpNftId, protocolTreasury, maxPositionUsd,
+   *    maxPositionBps, swapFeeBps, positionDuration, factory)
+   */
+  async function rawPoolFixture() {
     const [deployer] = await ethers.getSigners();
     const MockF = await ethers.getContractFactory("MockERC20");
     const m  = await MockF.deploy("M", "M", 18);
     const u  = await MockF.deploy("U", "U", 6);
     const pn = await (await ethers.getContractFactory("PositionNFT")).deploy();
-    const ln = await (await ethers.getContractFactory("LpNFT")).deploy((await ethers.getSigners())[0].address);
-    const au = await (await ethers.getContractFactory("AirToken")).deploy("au", "au", 6);
+    const ln = await (await ethers.getContractFactory("LpNFT")).deploy(deployer.address);
 
-    await expect(
-      PoolF.deploy(
-        ethers.ZeroAddress, // airToken_ = zero
-        await au.getAddress(),
-        await m.getAddress(),
-        await u.getAddress(),
-        await pn.getAddress(),
-        await ln.getAddress(),
-        0, deployer.address, 0, 0, 100, 0n, deployer.address
-      )
-    ).to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "ZeroAddress");
-  });
-
-  it("reverts with ZeroAddress when airUsdToken is zero", async function () {
     const PoolF = await ethers.getContractFactory("EXNIHILOPool");
-    const [deployer] = await ethers.getSigners();
-    const MockF = await ethers.getContractFactory("MockERC20");
-    const m  = await MockF.deploy("M", "M", 18);
-    const u  = await MockF.deploy("U", "U", 6);
-    const pn = await (await ethers.getContractFactory("PositionNFT")).deploy();
-    const ln = await (await ethers.getContractFactory("LpNFT")).deploy((await ethers.getSigners())[0].address);
-    const am = await (await ethers.getContractFactory("AirToken")).deploy("am", "am", 18);
-
-    await expect(
-      PoolF.deploy(
-        await am.getAddress(),
-        ethers.ZeroAddress, // airUsdToken_ = zero
-        await m.getAddress(),
-        await u.getAddress(),
-        await pn.getAddress(),
-        await ln.getAddress(),
-        0, deployer.address, 0, 0, 100, 0n, deployer.address
-      )
-    ).to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "ZeroAddress");
-  });
+    const defaults = {
+      underlyingToken: await m.getAddress(),
+      underlyingUsdc: await u.getAddress(),
+      tokenDecimals: 18,
+      positionNFT: await pn.getAddress(),
+      lpNftContract: await ln.getAddress(),
+      protocolTreasury: deployer.address,
+      maxPositionBps: 0n,
+      swapFeeBps: 100n,
+      factory: deployer.address,
+    };
+    const deployPool = (o: Partial<typeof defaults> = {}) => {
+      const p = { ...defaults, ...o };
+      return PoolF.deploy(
+        p.underlyingToken, p.underlyingUsdc, p.tokenDecimals,
+        p.positionNFT, p.lpNftContract, 0, p.protocolTreasury,
+        0, p.maxPositionBps, p.swapFeeBps, 0n, p.factory
+      );
+    };
+    return { PoolF, deployPool };
+  }
 
   it("reverts with ZeroAddress when underlyingToken is zero", async function () {
-    const PoolF = await ethers.getContractFactory("EXNIHILOPool");
-    const [deployer] = await ethers.getSigners();
-    const MockF = await ethers.getContractFactory("MockERC20");
-    const u  = await MockF.deploy("U", "U", 6);
-    const pn = await (await ethers.getContractFactory("PositionNFT")).deploy();
-    const ln = await (await ethers.getContractFactory("LpNFT")).deploy((await ethers.getSigners())[0].address);
-    const AirF = await ethers.getContractFactory("AirToken");
-    const am = await AirF.deploy("am", "am", 18);
-    const au = await AirF.deploy("au", "au", 6);
-
-    await expect(
-      PoolF.deploy(
-        await am.getAddress(),
-        await au.getAddress(),
-        ethers.ZeroAddress, // underlyingToken_ = zero
-        await u.getAddress(),
-        await pn.getAddress(),
-        await ln.getAddress(),
-        0, deployer.address, 0, 0, 100, 0n, deployer.address
-      )
-    ).to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "ZeroAddress");
+    const { PoolF, deployPool } = await loadFixture(rawPoolFixture);
+    await expect(deployPool({ underlyingToken: ethers.ZeroAddress }))
+      .to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "ZeroAddress");
   });
 
   it("reverts with ZeroAddress when underlyingUsdc is zero", async function () {
-    const PoolF = await ethers.getContractFactory("EXNIHILOPool");
-    const [deployer] = await ethers.getSigners();
-    const MockF = await ethers.getContractFactory("MockERC20");
-    const m  = await MockF.deploy("M", "M", 18);
-    const pn = await (await ethers.getContractFactory("PositionNFT")).deploy();
-    const ln = await (await ethers.getContractFactory("LpNFT")).deploy((await ethers.getSigners())[0].address);
-    const AirF = await ethers.getContractFactory("AirToken");
-    const am = await AirF.deploy("am", "am", 18);
-    const au = await AirF.deploy("au", "au", 6);
-
-    await expect(
-      PoolF.deploy(
-        await am.getAddress(),
-        await au.getAddress(),
-        await m.getAddress(),
-        ethers.ZeroAddress, // underlyingUsdc_ = zero
-        await pn.getAddress(),
-        await ln.getAddress(),
-        0, deployer.address, 0, 0, 100, 0n, deployer.address
-      )
-    ).to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "ZeroAddress");
+    const { PoolF, deployPool } = await loadFixture(rawPoolFixture);
+    await expect(deployPool({ underlyingUsdc: ethers.ZeroAddress }))
+      .to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "ZeroAddress");
   });
 
   it("reverts with ZeroAddress when positionNFT is zero", async function () {
-    const PoolF = await ethers.getContractFactory("EXNIHILOPool");
-    const [deployer] = await ethers.getSigners();
-    const MockF = await ethers.getContractFactory("MockERC20");
-    const m  = await MockF.deploy("M", "M", 18);
-    const u  = await MockF.deploy("U", "U", 6);
-    const ln = await (await ethers.getContractFactory("LpNFT")).deploy((await ethers.getSigners())[0].address);
-    const AirF = await ethers.getContractFactory("AirToken");
-    const am = await AirF.deploy("am", "am", 18);
-    const au = await AirF.deploy("au", "au", 6);
-
-    await expect(
-      PoolF.deploy(
-        await am.getAddress(),
-        await au.getAddress(),
-        await m.getAddress(),
-        await u.getAddress(),
-        ethers.ZeroAddress, // positionNFT_ = zero
-        await ln.getAddress(),
-        0, deployer.address, 0, 0, 100, 0n, deployer.address
-      )
-    ).to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "ZeroAddress");
+    const { PoolF, deployPool } = await loadFixture(rawPoolFixture);
+    await expect(deployPool({ positionNFT: ethers.ZeroAddress }))
+      .to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "ZeroAddress");
   });
 
   it("reverts with ZeroAddress when lpNftContract is zero", async function () {
-    const PoolF = await ethers.getContractFactory("EXNIHILOPool");
-    const [deployer] = await ethers.getSigners();
-    const MockF = await ethers.getContractFactory("MockERC20");
-    const m  = await MockF.deploy("M", "M", 18);
-    const u  = await MockF.deploy("U", "U", 6);
-    const pn = await (await ethers.getContractFactory("PositionNFT")).deploy();
-    const AirF = await ethers.getContractFactory("AirToken");
-    const am = await AirF.deploy("am", "am", 18);
-    const au = await AirF.deploy("au", "au", 6);
-
-    await expect(
-      PoolF.deploy(
-        await am.getAddress(),
-        await au.getAddress(),
-        await m.getAddress(),
-        await u.getAddress(),
-        await pn.getAddress(),
-        ethers.ZeroAddress, // lpNftContract_ = zero
-        0, deployer.address, 0, 0, 100, 0n, deployer.address
-      )
-    ).to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "ZeroAddress");
+    const { PoolF, deployPool } = await loadFixture(rawPoolFixture);
+    await expect(deployPool({ lpNftContract: ethers.ZeroAddress }))
+      .to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "ZeroAddress");
   });
 
   it("reverts with ZeroAddress when protocolTreasury is zero", async function () {
-    const PoolF = await ethers.getContractFactory("EXNIHILOPool");
-    const MockF = await ethers.getContractFactory("MockERC20");
-    const m  = await MockF.deploy("M", "M", 18);
-    const u  = await MockF.deploy("U", "U", 6);
-    const pn = await (await ethers.getContractFactory("PositionNFT")).deploy();
-    const ln = await (await ethers.getContractFactory("LpNFT")).deploy((await ethers.getSigners())[0].address);
-    const AirF = await ethers.getContractFactory("AirToken");
-    const am = await AirF.deploy("am", "am", 18);
-    const au = await AirF.deploy("au", "au", 6);
-
-    await expect(
-      PoolF.deploy(
-        await am.getAddress(),
-        await au.getAddress(),
-        await m.getAddress(),
-        await u.getAddress(),
-        await pn.getAddress(),
-        await ln.getAddress(),
-        0,
-        ethers.ZeroAddress, // protocolTreasury_ = zero
-        0, 0, 100, 0n,
-        (await ethers.getSigners())[0].address
-      )
-    ).to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "ZeroAddress");
+    const { PoolF, deployPool } = await loadFixture(rawPoolFixture);
+    await expect(deployPool({ protocolTreasury: ethers.ZeroAddress }))
+      .to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "ZeroAddress");
   });
 
   it("reverts with InvalidMaxPositionBps when maxPositionBps is out of range", async function () {
-    const PoolF = await ethers.getContractFactory("EXNIHILOPool");
-    const [deployer] = await ethers.getSigners();
-    const MockF = await ethers.getContractFactory("MockERC20");
-    const m  = await MockF.deploy("M", "M", 18);
-    const u  = await MockF.deploy("U", "U", 6);
-    const pn = await (await ethers.getContractFactory("PositionNFT")).deploy();
-    const ln = await (await ethers.getContractFactory("LpNFT")).deploy((await ethers.getSigners())[0].address);
-    const AirF = await ethers.getContractFactory("AirToken");
-    const am = await AirF.deploy("am", "am", 18);
-    const au = await AirF.deploy("au", "au", 6);
-
-    await expect(
-      PoolF.deploy(
-        await am.getAddress(),
-        await au.getAddress(),
-        await m.getAddress(),
-        await u.getAddress(),
-        await pn.getAddress(),
-        await ln.getAddress(),
-        0, deployer.address,
-        0,
-        9901n,  // above maximum (9900)
-        100n,
-        0n,
-        deployer.address
-      )
-    ).to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "InvalidMaxPositionBps");
+    const { PoolF, deployPool } = await loadFixture(rawPoolFixture);
+    await expect(deployPool({ maxPositionBps: 9901n })) // above maximum (9900)
+      .to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "InvalidMaxPositionBps");
   });
 
   it("reverts with InvalidSwapFeeBps when swapFeeBps is out of range", async function () {
-    const PoolF = await ethers.getContractFactory("EXNIHILOPool");
-    const [deployer] = await ethers.getSigners();
-    const MockF = await ethers.getContractFactory("MockERC20");
-    const m  = await MockF.deploy("M", "M", 18);
-    const u  = await MockF.deploy("U", "U", 6);
-    const pn = await (await ethers.getContractFactory("PositionNFT")).deploy();
-    const ln = await (await ethers.getContractFactory("LpNFT")).deploy((await ethers.getSigners())[0].address);
-    const AirF = await ethers.getContractFactory("AirToken");
-    const am = await AirF.deploy("am", "am", 18);
-    const au = await AirF.deploy("au", "au", 6);
-
-    const [amA, auA, mA, uA, pnA, lnA] = await Promise.all([
-      am.getAddress(), au.getAddress(), m.getAddress(),
-      u.getAddress(),  pn.getAddress(), ln.getAddress(),
-    ]);
-    const deployWithFee = (fee: bigint) =>
-      PoolF.deploy(amA, auA, mA, uA, pnA, lnA, 0, deployer.address, 0, 0, fee, 0n, deployer.address);
+    const { PoolF, deployPool } = await loadFixture(rawPoolFixture);
 
     // Upper bound: swapFeeBps_ >= BPS_DENOM (10000) should revert
-    await expect(deployWithFee(10000n))
+    await expect(deployPool({ swapFeeBps: 10000n }))
       .to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "InvalidSwapFeeBps");
 
     // Lower bound: swapFeeBps_ < MIN_SWAP_FEE_BPS (100) — blocks flash-loan arbitrage (OFL-3)
-    await expect(deployWithFee(0n))
+    await expect(deployPool({ swapFeeBps: 0n }))
       .to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "InvalidSwapFeeBps");
-    await expect(deployWithFee(99n))
+    await expect(deployPool({ swapFeeBps: 99n }))
       .to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "InvalidSwapFeeBps");
 
     // Boundary (100 bps = 1 %) must be accepted
-    await expect(deployWithFee(100n)).to.not.be.reverted;
+    await expect(deployPool({ swapFeeBps: 100n })).to.not.be.reverted;
   });
 });
 
@@ -591,8 +400,7 @@ describe("Coverage — closeLong edge branches", function () {
     const tx2 = await factory.connect(creator).createMarket(
       await baseToken2.getAddress(),
       INITIAL_USDC, INITIAL_TOKEN,
-      ethers.parseUnits("9000", 6), 9000n, 0n, "airDOGE", "airDOGEUsd", 18
-    );
+      ethers.parseUnits("9000", 6), 9000n, 0n);
     const receipt2 = await tx2.wait();
     const log2 = receipt2!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -607,30 +415,21 @@ describe("Coverage — closeLong edge branches", function () {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Coverage — realizeLong: wrong pool / wrong side
+// Coverage — closeLong: wrong pool / wrong side
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("Coverage — realizeLong edge branches", function () {
+describe("Coverage — closeLong edge branches", function () {
 
-  it("reverts with PositionNotLong when trying to realizeLong on a short NFT", async function () {
+  it("reverts with PositionNotLong when trying to closeLong on a short NFT", async function () {
     const { pool, trader1 } = await loadFixture(deployPoolFixture);
     const shortNftId = await openShort(pool, trader1, ethers.parseUnits("100", 6));
 
     await expect(
-      pool.connect(trader1).realizeLong(shortNftId)
+      pool.connect(trader1).closeLong(shortNftId, 0n)
     ).to.be.revertedWithCustomError(pool, "PositionNotLong");
   });
 
-  it("reverts with OnlyPositionHolder when non-holder calls realizeLong", async function () {
-    const { pool, trader1, trader2 } = await loadFixture(deployPoolFixture);
-    const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
-
-    await expect(
-      pool.connect(trader2).realizeLong(nftId)
-    ).to.be.revertedWithCustomError(pool, "OnlyPositionHolder");
-  });
-
-  it("reverts with PositionNotFromThisPool when realizeLong uses another pool's NFT", async function () {
+  it("reverts with PositionNotFromThisPool when closeLong uses another pool's NFT", async function () {
     const {
       pool, factory, baseToken, usdc, creator, trader1,
     } = await loadFixture(deployPoolFixture);
@@ -646,8 +445,7 @@ describe("Coverage — realizeLong edge branches", function () {
     const tx2 = await factory.connect(creator).createMarket(
       await baseToken2.getAddress(),
       INITIAL_USDC, INITIAL_TOKEN,
-      ethers.parseUnits("9000", 6), 9000n, 0n, "airDOGE", "airDOGEUsd", 18
-    );
+      ethers.parseUnits("9000", 6), 9000n, 0n);
     const receipt2 = await tx2.wait();
     const log2 = receipt2!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -655,7 +453,7 @@ describe("Coverage — realizeLong edge branches", function () {
     const pool2 = await ethers.getContractAt("EXNIHILOPool", log2.args.pool as string) as EXNIHILOPool;
 
     await expect(
-      pool2.connect(trader1).realizeLong(nftId)
+      pool2.connect(trader1).closeLong(nftId, 0n)
     ).to.be.revertedWithCustomError(pool2, "PositionNotFromThisPool");
   });
 });
@@ -691,8 +489,7 @@ describe("Coverage — closeShort edge branches", function () {
     const tx2 = await factory.connect(creator).createMarket(
       await baseToken2.getAddress(),
       INITIAL_USDC, INITIAL_TOKEN,
-      ethers.parseUnits("9000", 6), 9000n, 0n, "airDOGE", "airDOGEUsd", 18
-    );
+      ethers.parseUnits("9000", 6), 9000n, 0n);
     const receipt2 = await tx2.wait();
     const log2 = receipt2!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -707,13 +504,14 @@ describe("Coverage — closeShort edge branches", function () {
   /**
    * Profitable closeShort happy path.
    *
-   * For a short to be profitable, cpAmountOut(lockedAmount, airUsdSupply, backedAirToken)
-   * must be >= airTokenMinted (the buyback covers the debt).
+   * For a short to be profitable, cpAmountOut(lockedAmount, airUsdSupply − locked,
+   * backedAirToken) must be >= airTokenMinted (the buyback covers the debt).
    *
-   * Strategy: use a 6-decimal token so that airTokenMinted (6 dec) is
-   * comparable in magnitude to the locked airUsd (6 dec).  Then dump
-   * the token price so airToken becomes very cheap in USDC terms, ensuring the
-   * proportional buyback covers the debt.
+   * The decimals of the token are IRRELEVANT to profitability — the buyback
+   * comparison is decimals-invariant (both sides scale with the pool ratio).
+   * A short is profitable when the price DUMPS, making the airToken debt cheap
+   * to buy back; see the 18-dec proof in EXNIHILOPool.ts §6. This test happens
+   * to use a 6-dec token, but an 18-dec token behaves identically.
    */
   it("profitable closeShort: NFT burned, surplus USDC sent to holder, openPositionCount decrements", async function () {
     // Deploy everything fresh with a 6-decimal token.
@@ -731,6 +529,7 @@ describe("Coverage — closeShort edge branches", function () {
       await usdc.getAddress()
     );
     const factoryAddr = await factory.getAddress();
+    await posNFT.connect(deployer).initFactory(factoryAddr);
 
     // Seed: 10,000 USDC and 1,000,000 M6 (both 6 dec)
     const initToken6 = ethers.parseUnits("1000000", 6);
@@ -742,8 +541,7 @@ describe("Coverage — closeShort edge branches", function () {
 
     const tx = await factory.connect(creator).createMarket(
       await token6.getAddress(), initUsdc, initToken6,
-      ethers.parseUnits("9000", 6), 9000n, 0n, "airM6", "airM6Usd", 6
-    );
+      ethers.parseUnits("9000", 6), 9000n, 0n);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -773,14 +571,9 @@ describe("Coverage — closeShort edge branches", function () {
     await pool.connect(trader2).swap(dumpAmt, 0n, true, trader2.address);
 
     // Verify the short is now profitable before calling closeShort.
-    const airUsdAddr = await pool.airUsdToken();
-    const airUsdToken = await ethers.getContractAt("AirToken", airUsdAddr);
-    const airTokenAddr = await pool.airToken();
-    const airToken = await ethers.getContractAt("AirToken", airTokenAddr);
-
     const backedToken   = await pool.backedAirToken();
     const backedUsd    = await pool.backedAirUsd();
-    const airUsdSupply = await airUsdToken.totalSupply();
+    const airUsdSupply = await pool.airUsdSupply();
 
     // Verify profitable: cpOut(lockedAmount, airUsdSupply, backedToken) >= airTokenMinted.
     const airTokenMinted = pos.airTokenMinted;
@@ -816,6 +609,7 @@ describe("Coverage — closeShort edge branches", function () {
       await usdc.getAddress()
     );
     const factoryAddr = await factory.getAddress();
+    await posNFT.connect(deployer).initFactory(factoryAddr);
 
     const initToken6 = ethers.parseUnits("1000000", 6);
     const initUsdc  = ethers.parseUnits("10000", 6);
@@ -826,8 +620,7 @@ describe("Coverage — closeShort edge branches", function () {
 
     const tx = await factory.connect(creator).createMarket(
       await token6.getAddress(), initUsdc, initToken6,
-      ethers.parseUnits("9000", 6), 9000n, 0n, "airM6", "airM6Usd", 6
-    );
+      ethers.parseUnits("9000", 6), 9000n, 0n);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -851,10 +644,8 @@ describe("Coverage — closeShort edge branches", function () {
     // Dump hard to collapse price.
     await pool.connect(trader2).swap(initToken6 * 50n, 0n, true, trader2.address);
 
-    const airUsdAddr = await pool.airUsdToken();
-    const airUsdToken = await ethers.getContractAt("AirToken", airUsdAddr);
     const backedToken   = await pool.backedAirToken();
-    const airUsdSupply = await airUsdToken.totalSupply();
+    const airUsdSupply = await pool.airUsdSupply();
     const airTokenMinted = pos.airTokenMinted;
 
     if (airTokenMinted < backedToken) {
@@ -887,6 +678,7 @@ describe("Coverage — closeShort edge branches", function () {
       await usdc.getAddress()
     );
     const factoryAddr = await factory.getAddress();
+    await posNFT.connect(deployer).initFactory(factoryAddr);
 
     const initToken6 = ethers.parseUnits("1000000", 6);
     const initUsdc  = ethers.parseUnits("10000", 6);
@@ -897,8 +689,7 @@ describe("Coverage — closeShort edge branches", function () {
 
     const tx = await factory.connect(creator).createMarket(
       await token6.getAddress(), initUsdc, initToken6,
-      ethers.parseUnits("9000", 6), 9000n, 0n, "airM6", "airM6Usd", 6
-    );
+      ethers.parseUnits("9000", 6), 9000n, 0n);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -921,10 +712,8 @@ describe("Coverage — closeShort edge branches", function () {
 
     await pool.connect(trader2).swap(initToken6 * 50n, 0n, true, trader2.address);
 
-    const airUsdAddr = await pool.airUsdToken();
-    const airUsdToken = await ethers.getContractAt("AirToken", airUsdAddr);
     const backedToken   = await pool.backedAirToken();
-    const airUsdSupply = await airUsdToken.totalSupply();
+    const airUsdSupply = await pool.airUsdSupply();
     const airTokenMinted = pos.airTokenMinted;
 
     if (airTokenMinted < backedToken) {
@@ -941,62 +730,6 @@ describe("Coverage — closeShort edge branches", function () {
     this.skip();
   });
 });
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Coverage — realizeShort: wrong pool / wrong side
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe("Coverage — realizeShort edge branches", function () {
-
-  it("reverts with PositionNotShort when trying to realizeShort on a long NFT", async function () {
-    const { pool, trader1 } = await loadFixture(deployPoolFixture);
-    const longNftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
-
-    await expect(
-      pool.connect(trader1).realizeShort(longNftId)
-    ).to.be.revertedWithCustomError(pool, "PositionNotShort");
-  });
-
-  it("reverts with OnlyPositionHolder when non-holder calls realizeShort", async function () {
-    const { pool, trader1, trader2 } = await loadFixture(deployPoolFixture);
-    const nftId = await openShort(pool, trader1, ethers.parseUnits("100", 6));
-
-    await expect(
-      pool.connect(trader2).realizeShort(nftId)
-    ).to.be.revertedWithCustomError(pool, "OnlyPositionHolder");
-  });
-
-  it("reverts with PositionNotFromThisPool when realizeShort uses another pool's NFT", async function () {
-    const {
-      pool, factory, baseToken, usdc, creator, trader1,
-    } = await loadFixture(deployPoolFixture);
-
-    const nftId = await openShort(pool, trader1, ethers.parseUnits("100", 6));
-
-    const baseToken2 = (await (await ethers.getContractFactory("MockERC20"))
-      .deploy("DOGE", "DOGE", 18)) as unknown as MockERC20;
-    await baseToken2.mint(creator.address, INITIAL_TOKEN);
-    await baseToken2.connect(creator).approve(await factory.getAddress(), ethers.MaxUint256);
-    await usdc.mint(creator.address, INITIAL_USDC);
-
-    const tx2 = await factory.connect(creator).createMarket(
-      await baseToken2.getAddress(),
-      INITIAL_USDC, INITIAL_TOKEN,
-      ethers.parseUnits("9000", 6), 9000n, 0n, "airDOGE", "airDOGEUsd", 18
-    );
-    const receipt2 = await tx2.wait();
-    const log2 = receipt2!.logs
-      .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
-      .find((l) => l?.name === "MarketCreated")!;
-    const pool2 = await ethers.getContractAt("EXNIHILOPool", log2.args.pool as string) as EXNIHILOPool;
-
-    await expect(
-      pool2.connect(trader1).realizeShort(nftId)
-    ).to.be.revertedWithCustomError(pool2, "PositionNotFromThisPool");
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Coverage — addLiquidity ratio branches
@@ -1122,6 +855,7 @@ describe("Coverage — EXNIHILOFactory _safeDecimals fallback", function () {
       await usdc.getAddress()
     );
     const factoryAddr = await factory.getAddress();
+    await posNFT.connect(deployer).initFactory(factoryAddr);
 
     // Mint initial liquidity — NoMetaERC20 uses 18 decimals internally.
     const TOKEN_AMOUNT = ethers.parseEther("1000000");
@@ -1131,22 +865,19 @@ describe("Coverage — EXNIHILOFactory _safeDecimals fallback", function () {
     await (noMeta as any).connect(creator).approve(factoryAddr, ethers.MaxUint256);
     await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
 
-    // createMarket should succeed; _safeDecimals returns 18 for NoMetaERC20.
+    // createMarket should succeed; the decimals fallback returns 18 for NoMetaERC20.
     const tx = await factory.connect(creator).createMarket(
       await noMeta.getAddress(),
       USDC_AMOUNT, TOKEN_AMOUNT,
-      0n, 0n, 0n, "airTOKEN", "airTOKENUsd", 18
-    );
+      0n, 0n, 0n);
     await tx.wait();
 
-    // The airToken token should be 18 decimals (the fallback).
+    // The pool's tokenDecimals should be 18 (the fallback).
     const pool = await ethers.getContractAt(
       "EXNIHILOPool",
       await factory.allPools(0n)
     );
-    const airTokenAddr = await pool.airToken();
-    const airToken = await ethers.getContractAt("AirToken", airTokenAddr);
-    expect(await airToken.decimals()).to.equal(18);
+    expect(await pool.tokenDecimals()).to.equal(18n);
   });
 });
 
@@ -1193,6 +924,7 @@ describe("Coverage — openShort ZeroAmount when airTokenMinted rounds to zero",
       await usdc.getAddress()
     );
     const factoryAddr = await factory.getAddress();
+    await posNFT.connect(deployer).initFactory(factoryAddr);
 
     // Large USDC pool, tiny token (so airTokenSupply is small in absolute terms).
     // airTokenMinted = notional * airTokenSupply / backedAirUsd
@@ -1219,8 +951,7 @@ describe("Coverage — openShort ZeroAmount when airTokenMinted rounds to zero",
     const tx = await factory.connect(creator).createMarket(
       await token6.getAddress(),
       LARGE_USDC, TINY_TOKEN6,
-      0n, 0n, 0n, "airM6", "airM6Usd", 6
-    );
+      0n, 0n, 0n);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -1257,13 +988,14 @@ describe("Coverage — openShort slippage guard (minAirUsdOut)", function () {
 // Coverage — closeShort PositionUnderwater when airTokenMinted >= totalBuyable
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// In closeShort, totalBuyable = cpAmountOut(lockedAmount, airUsdSupply, backedAirToken).
-// When the position is large enough that lockedAmount (6-dec) cannot buy back
-// airTokenMinted (18-dec) worth of airToken, PositionUnderwater is triggered.
+// In closeShort, totalBuyable = cpAmountOut(lockedAmount, airUsdSupply − locked,
+// backedAirToken). When the debt (airTokenMinted) exceeds what the locked
+// collateral can buy back, PositionUnderwater is triggered. This is a
+// SIZE/price effect, not a decimals effect.
 //
 // Strategy: open a short with usdcNotional = backedAirUsd (full pool notional),
-// producing airTokenMinted ≈ backedAirToken. The tiny lockedAmount of airUsd
-// cannot buy back such a large airToken debt.
+// producing airTokenMinted ≈ backedAirToken. At the unchanged open price the
+// locked collateral cannot buy the debt back at a profit → underwater.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("Coverage — closeShort PositionUnderwater when debt exceeds totalBuyable", function () {
@@ -1284,6 +1016,7 @@ describe("Coverage — closeShort PositionUnderwater when debt exceeds totalBuya
       await usdc.getAddress()
     );
     const factoryAddr = await factory.getAddress();
+    await posNFT.connect(deployer).initFactory(factoryAddr);
 
     await token.mint(creator.address, INITIAL_TOKEN);
     await usdc.mint(creator.address, INITIAL_USDC);
@@ -1293,8 +1026,7 @@ describe("Coverage — closeShort PositionUnderwater when debt exceeds totalBuya
     // No caps — allows opening a short equal to full backedAirUsd.
     const tx = await factory.connect(creator).createMarket(
       await token.getAddress(), INITIAL_USDC, INITIAL_TOKEN,
-      0n, 0n, 0n, "airPEPE", "airPEPEUsd", 18
-    );
+      0n, 0n, 0n);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -1328,20 +1060,32 @@ describe("Coverage — removeLiquidity partial backed reserves (storage-forced)"
   /**
    * Force backedAirToken to 0 while keeping backedAirUsd non-zero.
    * Pool storage slots:
-   *   slot 0: _status (ReentrancyGuard)
-   *   slot 1: maxPositionUsd
-   *   slot 2: maxPositionBps
-   *   slot 3: backedAirToken
-   *   slot 4: backedAirUsd
-   *   slot 5: lpFeesAccumulated
-   *   slot 6: openPositionCount
-   *   slot 7: longOpenInterest
-   *   slot 8: shortOpenInterest
+   *   OpenZeppelin 5.6's ReentrancyGuard uses a namespaced (ERC-7201) slot,
+   *   NOT a sequential one, so it occupies no slot here. Every pool variable
+   *   sits one lower than a naive count suggests. Verified against live
+   *   storage: slot 0 reads maxPositionUsd.
+   *   slot 0: maxPositionUsd
+   *   slot 1: maxPositionBps
+   *   slot 2: airTokenSupply
+   *   slot 3: airUsdSupply
+   *   slot 4: backedAirToken
+   *   slot 5: backedAirUsd
+   *   slot 6: lpFeesAccumulated
+   *   slot 7: protocolFeesAccumulated
+   *   slot 8: lpFeesPaidTotal
+   *   slot 9: protocolFeesPaidTotal
+   *   slot 10: claimable (mapping)
+   *   slot 11: totalClaimable
+   *   slot 12: openPositionCount
+   *   slot 13: longOpenInterest
+   *   slot 14: shortOpenInterest
+   *   slot 15: closeDate
+   *   slot 16: totalShortCollateral
    */
   async function zeroBackedAirToken(poolAddress: string): Promise<void> {
     await ethers.provider.send("hardhat_setStorageAt", [
       poolAddress,
-      "0x3", // slot 3 = backedAirToken
+      "0x4", // slot 4 = backedAirToken
       "0x0000000000000000000000000000000000000000000000000000000000000000",
     ]);
   }
@@ -1349,7 +1093,7 @@ describe("Coverage — removeLiquidity partial backed reserves (storage-forced)"
   async function zeroBackedAirUsd(poolAddress: string): Promise<void> {
     await ethers.provider.send("hardhat_setStorageAt", [
       poolAddress,
-      "0x4", // slot 4 = backedAirUsd
+      "0x5", // slot 5 = backedAirUsd
       "0x0000000000000000000000000000000000000000000000000000000000000000",
     ]);
   }
@@ -1409,20 +1153,32 @@ describe("Coverage — swap/openLong/openShort with only backedAirUsd = 0", func
   /**
    * Force backedAirUsd to 0 in storage while leaving backedAirToken non-zero.
    * EXNIHILOPool layout:
-   *   slot 0: _status (ReentrancyGuard)
-   *   slot 1: maxPositionUsd
-   *   slot 2: maxPositionBps
-   *   slot 3: backedAirToken
-   *   slot 4: backedAirUsd
-   *   slot 5: lpFeesAccumulated
-   *   slot 6: openPositionCount
-   *   slot 7: longOpenInterest
-   *   slot 8: shortOpenInterest
+   *   OpenZeppelin 5.6's ReentrancyGuard uses a namespaced (ERC-7201) slot,
+   *   NOT a sequential one, so it occupies no slot here. Every pool variable
+   *   sits one lower than a naive count suggests. Verified against live
+   *   storage: slot 0 reads maxPositionUsd.
+   *   slot 0: maxPositionUsd
+   *   slot 1: maxPositionBps
+   *   slot 2: airTokenSupply
+   *   slot 3: airUsdSupply
+   *   slot 4: backedAirToken
+   *   slot 5: backedAirUsd
+   *   slot 6: lpFeesAccumulated
+   *   slot 7: protocolFeesAccumulated
+   *   slot 8: lpFeesPaidTotal
+   *   slot 9: protocolFeesPaidTotal
+   *   slot 10: claimable (mapping)
+   *   slot 11: totalClaimable
+   *   slot 12: openPositionCount
+   *   slot 13: longOpenInterest
+   *   slot 14: shortOpenInterest
+   *   slot 15: closeDate
+   *   slot 16: totalShortCollateral
    */
   async function zeroBackedAirUsd(poolAddress: string): Promise<void> {
     await ethers.provider.send("hardhat_setStorageAt", [
       poolAddress,
-      "0x4", // slot 4 = backedAirUsd
+      "0x5", // slot 5 = backedAirUsd
       "0x0000000000000000000000000000000000000000000000000000000000000000",
     ]);
   }
@@ -1466,7 +1222,7 @@ describe("Coverage — swap with zero backedAirUsd (storage-forced)", function (
   async function zeroBackedAirUsd(poolAddress: string): Promise<void> {
     await ethers.provider.send("hardhat_setStorageAt", [
       poolAddress,
-      "0x4", // slot 4 = backedAirUsd
+      "0x5", // slot 5 = backedAirUsd
       "0x0000000000000000000000000000000000000000000000000000000000000000",
     ]);
   }
@@ -1502,8 +1258,7 @@ describe("Coverage — closeLong slippage guard", function () {
 
     // Verify position is profitable first.
     const pos = await (await ethers.getContractAt("PositionNFT", await pool.positionNFT())).getPosition(nftId);
-    const airToken = await ethers.getContractAt("AirToken", await pool.airToken());
-    const airTokenSupply = await airToken.totalSupply();
+    const airTokenSupply = await pool.airTokenSupply();
     const backedAirUsd  = await pool.backedAirUsd();
     // airUsdOut via SWAP-3: cpOut(lockedAmount, airTokenSupply-lockedAmount, backedAirUsd)
     const amtInAfterFee = pos.lockedAmount * (BPS_DENOM - SWAP_FEE_BPS);
@@ -1556,6 +1311,7 @@ describe("Coverage — leverage cap enforcement when only maxPositionUsd is set"
       await usdc.getAddress()
     );
     const factoryAddr = await factory.getAddress();
+    await posNFT.connect(deployer).initFactory(factoryAddr);
 
     await token.mint(creator.address, INITIAL_TOKEN);
     await usdc.mint(creator.address, INITIAL_USDC);
@@ -1565,8 +1321,7 @@ describe("Coverage — leverage cap enforcement when only maxPositionUsd is set"
     const maxUsd = ethers.parseUnits("10", 6); // 10 USDC cap
     const tx = await factory.connect(creator).createMarket(
       await token.getAddress(), INITIAL_USDC, INITIAL_TOKEN,
-      maxUsd, 0n, 0n, "airPEPE", "airPEPEUsd", 18
-    );
+      maxUsd, 0n, 0n);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -1620,6 +1375,7 @@ describe("Coverage — _cpAmountOut reserveIn = 0 when all airToken is locked", 
       await usdc.getAddress()
     );
     const factoryAddr = await factory.getAddress();
+    await posNFT.connect(deployer).initFactory(factoryAddr);
 
     // Small pool: 1 USDC and 100 token (both low so we can drain airToken).
     const tinyUsdc = ethers.parseUnits("1", 6);
@@ -1630,8 +1386,7 @@ describe("Coverage — _cpAmountOut reserveIn = 0 when all airToken is locked", 
     await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
 
     const tx = await factory.connect(creator).createMarket(
-      await token.getAddress(), tinyUsdc, tinyToken, 0n, 0n, 0n, "airPEPE", "airPEPEUsd", 18
-    );
+      await token.getAddress(), tinyUsdc, tinyToken, 0n, 0n, 0n);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -1643,39 +1398,25 @@ describe("Coverage — _cpAmountOut reserveIn = 0 when all airToken is locked", 
     await usdc.mint(trader1.address, ethers.parseUnits("100000", 6));
     await usdc.connect(trader1).approve(poolAddr, ethers.MaxUint256);
 
-    // Open a long with very large notional.  The SWAP-2 formula will return
-    // close to (but less than) backedAirToken.  Keep looping smaller amounts
-    // until we find one where totalSupply - lockedAmount == 0.
-    // Actually, _cpAmountOut returns strictly less than reserveOut (backedAirToken).
-    // So totalSupply - lockedAmount > 0 always.  We need a different approach:
-    // force storage to make totalSupply == lockedAmount after the open.
-
-    // Simpler: open one long, then forcibly zero the airToken balance of the pool
-    // itself (so totalSupply still includes the locked amount but pool balance is 0).
-    // Actually: the coverage tool will see the reserveIn=0 path if we go through
-    // _cpAmountOut with reserveIn==0 from any path.
-
-    // The cleanest path: open a long, then use hardhat_setStorageAt on the airToken
-    // ERC20 contract to make totalSupply == lockedAmount.  The ERC20 totalSupply
-    // slot in OpenZeppelin ERC20 is slot 2.
+    // _cpAmountOut returns strictly less than reserveOut (backedAirToken), so
+    // airTokenSupply - lockedAmount > 0 can never occur organically. Force
+    // storage instead: open a long, then use hardhat_setStorageAt on the
+    // pool's airTokenSupply slot to make it equal lockedAmount.
     const nftId = await openLong(pool, trader1, ethers.parseUnits("0.5", 6));
     const posNFTContract = await ethers.getContractAt("PositionNFT", await pool.positionNFT());
     const pos = await posNFTContract.getPosition(nftId);
 
-    const airTokenAddr = await pool.airToken();
-    // Force airToken.totalSupply() = pos.lockedAmount by setting ERC20 totalSupply slot.
-    // In OZ ERC20, _totalSupply is at slot 2.
+    // Force pool.airTokenSupply() = pos.lockedAmount (slot 3 = airTokenSupply).
     const lockedHex = "0x" + pos.lockedAmount.toString(16).padStart(64, "0");
     await ethers.provider.send("hardhat_setStorageAt", [
-      airTokenAddr,
-      "0x2", // OZ ERC20 _totalSupply slot
+      poolAddr,
+      "0x2", // slot 2 = airTokenSupply
       lockedHex,
     ]);
 
-    const airToken = await ethers.getContractAt("AirToken", airTokenAddr);
-    expect(await airToken.totalSupply()).to.equal(pos.lockedAmount);
+    expect(await pool.airTokenSupply()).to.equal(pos.lockedAmount);
 
-    // Now closeLong: reserveIn = totalSupply - lockedAmount = 0 → _cpAmountOut returns 0
+    // Now closeLong: reserveIn = airTokenSupply - lockedAmount = 0 → _cpAmountOut returns 0
     // → airUsdOut = 0 < airUsdMinted → PositionUnderwater.
     await expect(
       pool.connect(trader1).closeLong(nftId, 0n)
@@ -1687,21 +1428,19 @@ describe("Coverage — _cpAmountOut reserveIn = 0 when all airToken is locked", 
 // Coverage — openShort with airTokenSupplyBefore == 0 (storage manipulation)
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("Coverage — openShort with airToken totalSupply = 0 (storage-forced)", function () {
+describe("Coverage — openShort with airTokenSupply = 0 (storage-forced)", function () {
 
-  it("openShort reverts InsufficientBackedReserves when airToken.totalSupply() is forced to 0", async function () {
+  it("openShort reverts InsufficientBackedReserves when airTokenSupply is forced to 0", async function () {
     const { pool, poolAddress, trader1 } = await loadFixture(deployPoolFixture);
 
-    const airTokenAddr = await pool.airToken();
-    // OZ ERC20 _totalSupply is at storage slot 2.
+    // Pool airTokenSupply is at storage slot 2.
     await ethers.provider.send("hardhat_setStorageAt", [
-      airTokenAddr,
+      poolAddress,
       "0x2",
       "0x0000000000000000000000000000000000000000000000000000000000000000",
     ]);
 
-    const airToken = await ethers.getContractAt("AirToken", airTokenAddr);
-    expect(await airToken.totalSupply()).to.equal(0n);
+    expect(await pool.airTokenSupply()).to.equal(0n);
 
     // backedAirToken and backedAirUsd are still non-zero (not zeroed).
     // openShort checks airTokenSupplyBefore == 0 → InsufficientBackedReserves.
@@ -1743,6 +1482,7 @@ describe("Coverage — ReentrancyGuard nonReentrant revert paths", function () {
       await usdc.getAddress()
     );
     const factoryAddr = await factory.getAddress();
+    await posNFT.connect(deployer).initFactory(factoryAddr);
 
     const TOKEN_AMT = ethers.parseEther("1000000");
     const USDC_AMT = ethers.parseUnits("10000", 6);
@@ -1752,8 +1492,7 @@ describe("Coverage — ReentrancyGuard nonReentrant revert paths", function () {
     await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
 
     const tx = await factory.connect(creator).createMarket(
-      await reenToken.getAddress(), USDC_AMT, TOKEN_AMT, 0n, 0n, 0n, "airREEM", "airREEMUsd", 18
-    );
+      await reenToken.getAddress(), USDC_AMT, TOKEN_AMT, 0n, 0n, 0n);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -1855,6 +1594,7 @@ describe("Coverage — ReentrancyGuard nonReentrant revert paths", function () {
     );
 
     const factoryAddr = await factory.getAddress();
+    await posNFT.connect(deployer).initFactory(factoryAddr);
     const TOKEN_AMT = ethers.parseEther("1000000");
     const USDC_AMT = ethers.parseUnits("10000", 6);
     await token.mint(creator.address, TOKEN_AMT);
@@ -1863,8 +1603,7 @@ describe("Coverage — ReentrancyGuard nonReentrant revert paths", function () {
     await reenUsdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
 
     const tx = await factory.connect(creator).createMarket(
-      await token.getAddress(), USDC_AMT, TOKEN_AMT, 0n, 0n, 0n, "airTOKEN", "airTOKENUsd", 18
-    );
+      await token.getAddress(), USDC_AMT, TOKEN_AMT, 0n, 0n, 0n);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -1909,69 +1648,23 @@ describe("Coverage — ReentrancyGuard nonReentrant revert paths", function () {
     ).to.be.revertedWithCustomError(pool, "ReentrancyGuardReentrantCall");
   });
 
-  it("closeLong() reverts with ReentrancyGuardReentrantCall when reentered via usdc.transfer (surplus send)", async function () {
-    // closeLong sends surplus USDC to holder — but that's safeTransfer, not transferFrom.
-    // We need to trigger reentrancy on the safeTransfer path instead.
-    // ReentrantToken's transferFrom fires on transferFrom; for transfer we need
-    // a different hook. Use openLong's USDC fee collection instead (transferFrom).
-    // Actually the easiest path: open a long with the reentrant USDC, which
-    // calls usdc.safeTransferFrom. Let's test closeLong's reentrancy differently:
-    // open long normally, then set reentrancy target so that the safeTransfer
-    // to the holder during closeLong re-enters swap().
-    // But ReentrantToken only hooks transferFrom, not transfer. Skip this
-    // and test realizeLong instead (which calls usdc.safeTransferFrom from holder).
-    const { pool, reenUsdc, token, trader1, creator, poolAddr, posNFT } =
-      await deployPoolWithReentrantUsdc();
+  it("renewPosition() reverts with ReentrancyGuardReentrantCall when reentered via usdc.transferFrom", async function () {
+    // renewPosition pulls the renewal fee via usdc.safeTransferFrom — the
+    // remaining USDC-pull path besides the opens.
+    const { pool, reenUsdc, trader1, poolAddr } = await deployPoolWithReentrantUsdc();
 
     // Open a long on this pool (uses reentrant usdc for fees — disable first).
     await reenUsdc.disableReentrant();
     const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
 
-    // Pump price so the long is profitable.
-    await reenUsdc.disableReentrant();
-
-    // Now set up reentrancy: during realizeLong's usdc.safeTransferFrom(holder → pool),
-    // re-enter pool.swap(). But wait — there's a profitable long, let's test closeLong.
-    // closeLong calls usdc.safeTransfer(holder, surplus) — that's `transfer`, not `transferFrom`.
-    // Our ReentrantToken only hooks transferFrom. So for closeLong, reentrancy via usdc
-    // isn't possible with this approach.
-
-    // Instead, realize the long (which calls usdc.safeTransferFrom from holder to pool).
-    const pos = await posNFT.getPosition(nftId);
-    // Set reentrancy during realizeLong's usdc.safeTransferFrom.
+    // Re-enter swap during renewPosition's usdc.safeTransferFrom fee pull.
     const reentrantCall = pool.interface.encodeFunctionData("swap", [
       ethers.parseEther("100"), 0n, true, trader1.address
     ]);
     await reenUsdc.setReentrantCall(poolAddr, reentrantCall);
 
     await expect(
-      pool.connect(trader1).realizeLong(nftId)
-    ).to.be.revertedWithCustomError(pool, "ReentrancyGuardReentrantCall");
-  });
-
-  it("realizeShort() reverts with ReentrancyGuardReentrantCall when reentered via token.transferFrom", async function () {
-    // realizeShort pulls token from holder via underlyingToken.safeTransferFrom.
-    // Use reentrant token for this test.
-    const { pool, reenToken, trader1, poolAddr } = await deployPoolWithReentrantToken();
-
-    // Open a short (disable reentrant for the fee collection).
-    await reenToken.disableReentrant();
-    const nftId = await openShort(pool, trader1, ethers.parseUnits("100", 6));
-
-    // Now set reentrancy: during realizeShort's token.safeTransferFrom, re-enter swap.
-    const reentrantCall = pool.interface.encodeFunctionData("swap", [
-      ethers.parseEther("100"), 0n, true, trader1.address
-    ]);
-    await reenToken.setReentrantCall(poolAddr, reentrantCall);
-
-    const posNFTAddr = await pool.positionNFT();
-    const posNFT = await ethers.getContractAt("PositionNFT", posNFTAddr);
-    const pos = await posNFT.getPosition(nftId);
-    // Mint enough token for the realize (need pos.airTokenMinted).
-    await reenToken.mint(trader1.address, pos.airTokenMinted);
-
-    await expect(
-      pool.connect(trader1).realizeShort(nftId)
+      pool.connect(trader1).renewPosition(nftId, ethers.MaxUint256)
     ).to.be.revertedWithCustomError(pool, "ReentrancyGuardReentrantCall");
   });
 
@@ -2034,6 +1727,7 @@ describe("Coverage — FeeOnTransferNotSupported guard in _transferIn", function
       await usdc.getAddress()
     );
     const factoryAddr = await factory.getAddress();
+    await posNFT.connect(deployer).initFactory(factoryAddr);
 
     await fotToken.mint(creator.address, TOKEN_AMT);
     await usdc.mint(creator.address, USDC_AMT);
@@ -2042,8 +1736,7 @@ describe("Coverage — FeeOnTransferNotSupported guard in _transferIn", function
 
     // Deploy pool (fee disabled so initial addLiquidity inside createMarket succeeds).
     const tx = await factory.connect(creator).createMarket(
-      await fotToken.getAddress(), USDC_AMT, TOKEN_AMT, 0n, 0n, 0n, "airFTOKEN", "airFTOKENUsd", 18
-    );
+      await fotToken.getAddress(), USDC_AMT, TOKEN_AMT, 0n, 0n, 0n);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -2080,6 +1773,7 @@ describe("Coverage — FeeOnTransferNotSupported guard in _transferIn", function
       await fotUsdc.getAddress()
     );
     const factoryAddr = await factory.getAddress();
+    await posNFT.connect(deployer).initFactory(factoryAddr);
 
     await token.mint(creator.address, TOKEN_AMT);
     await fotUsdc.mint(creator.address, USDC_AMT);
@@ -2088,8 +1782,7 @@ describe("Coverage — FeeOnTransferNotSupported guard in _transferIn", function
 
     // Deploy pool (fee disabled so initial addLiquidity succeeds).
     const tx = await factory.connect(creator).createMarket(
-      await token.getAddress(), USDC_AMT, TOKEN_AMT, 0n, 0n, 0n, "airTOKEN", "airTOKENUsd", 18
-    );
+      await token.getAddress(), USDC_AMT, TOKEN_AMT, 0n, 0n, 0n);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -2181,9 +1874,9 @@ describe("Coverage — FeeOnTransferNotSupported guard in _transferIn", function
     ).to.be.revertedWithCustomError(pool, "FeeOnTransferNotSupported");
   });
 
-  // ── realizeLong: _transferIn(underlyingUsdc, holder, pos.airUsdMinted) ────
+  // ── renewPosition: _transferIn(underlyingUsdc, holder, totalFee) ──────────
 
-  it("realizeLong reverts FeeOnTransferNotSupported when USDC has transfer fee", async function () {
+  it("renewPosition reverts FeeOnTransferNotSupported when USDC has transfer fee", async function () {
     const { pool, fotUsdc, trader1 } = await deployPoolWithFeeOnTransferUsdc();
 
     // Open the long while fee is still disabled.
@@ -2191,29 +1884,7 @@ describe("Coverage — FeeOnTransferNotSupported guard in _transferIn", function
 
     await fotUsdc.enableFee();
     await expect(
-      pool.connect(trader1).realizeLong(nftId)
-    ).to.be.revertedWithCustomError(pool, "FeeOnTransferNotSupported");
-  });
-
-  // ── realizeShort: _transferIn(underlyingToken, holder, pos.airTokenMinted) ──
-
-  it("realizeShort reverts FeeOnTransferNotSupported when token has transfer fee", async function () {
-    const { pool, fotToken, trader1, poolAddr } = await deployPoolWithFeeOnTransferToken();
-
-    // Open the short while fee is still disabled.
-    const nftId = await openShort(pool, trader1, ethers.parseUnits("100", 6));
-
-    // Get the token amount the holder must pay.
-    const posNFTAddr = await pool.positionNFT();
-    const posNFT     = await ethers.getContractAt("PositionNFT", posNFTAddr);
-    const pos        = await posNFT.getPosition(nftId);
-
-    // Ensure trader1 has enough token (may need top-up beyond the fixture mint).
-    await fotToken.mint(trader1.address, pos.airTokenMinted);
-
-    await fotToken.enableFee();
-    await expect(
-      pool.connect(trader1).realizeShort(nftId)
+      pool.connect(trader1).renewPosition(nftId, ethers.MaxUint256)
     ).to.be.revertedWithCustomError(pool, "FeeOnTransferNotSupported");
   });
 
@@ -2263,6 +1934,7 @@ describe("Coverage — ZeroAmount guards on openLong / openShort output", functi
       await usdc.getAddress()
     );
     const factoryAddr = await factory.getAddress();
+    await posNFT.connect(deployer).initFactory(factoryAddr);
 
     // 1 unit of 6-dec token, 1000 USDC — backedAirToken = 1, backedAirUsd = 1e9.
     const TOKEN_TINY  = 1n;
@@ -2274,8 +1946,7 @@ describe("Coverage — ZeroAmount guards on openLong / openShort output", functi
     await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
 
     const tx = await factory.connect(creator).createMarket(
-      await token6.getAddress(), USDC_LARGE, TOKEN_TINY, 0n, 0n, 0n, "airM6", "airM6Usd", 6
-    );
+      await token6.getAddress(), USDC_LARGE, TOKEN_TINY, 0n, 0n, 0n);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -2360,37 +2031,27 @@ describe("Coverage — PositionNFT factory guard", function () {
   it("mintLong reverts when factory is set but caller is not a registered pool", async function () {
     const [deployer, treasury, fakePool, trader] = await ethers.getSigners();
     const nft = await (await ethers.getContractFactory("PositionNFT")).connect(deployer).deploy() as PositionNFT;
-    const air = await (await ethers.getContractFactory("AirToken")).connect(deployer).deploy("air", "air", 18) as AirToken;
-    await air.connect(deployer).initPool(fakePool.address);
 
     // Deploy a real factory (no pools registered) — fakePool won't pass isPool
     const usdc = (await (await ethers.getContractFactory("MockERC20")).connect(deployer).deploy("USDC", "USDC", 6)) as unknown as MockERC20;
     const { factory } = await deploySystem(treasury.address, await nft.getAddress(), await usdc.getAddress());
     await nft.connect(deployer).initFactory(await factory.getAddress());
 
-    await air.connect(fakePool).mint(fakePool.address, 100n);
-    await air.connect(fakePool).approve(await nft.getAddress(), 100n);
-
     await expect(
-      nft.connect(fakePool).mintLong(trader.address, fakePool.address, await air.getAddress(), 10n, 10n, 100n, 1n, 9999999999n)
+      nft.connect(fakePool).mintLong(trader.address, fakePool.address, 10n, 10n, 100n, 1n, 9999999999n)
     ).to.be.revertedWithCustomError(nft, "OnlyPool");
   });
 
   it("mintShort reverts when factory is set but caller is not a registered pool", async function () {
     const [deployer, treasury, fakePool, trader] = await ethers.getSigners();
     const nft = await (await ethers.getContractFactory("PositionNFT")).connect(deployer).deploy() as PositionNFT;
-    const air = await (await ethers.getContractFactory("AirToken")).connect(deployer).deploy("airUsd", "airUsd", 6) as AirToken;
-    await air.connect(deployer).initPool(fakePool.address);
 
     const usdc = (await (await ethers.getContractFactory("MockERC20")).connect(deployer).deploy("USDC", "USDC", 6)) as unknown as MockERC20;
     const { factory } = await deploySystem(treasury.address, await nft.getAddress(), await usdc.getAddress());
     await nft.connect(deployer).initFactory(await factory.getAddress());
 
-    await air.connect(fakePool).mint(fakePool.address, 100n);
-    await air.connect(fakePool).approve(await nft.getAddress(), 100n);
-
     await expect(
-      nft.connect(fakePool).mintShort(trader.address, fakePool.address, await air.getAddress(), 50n, 100n, 10n, 1n, 9999999999n)
+      nft.connect(fakePool).mintShort(trader.address, fakePool.address, 50n, 100n, 10n, 1n, 9999999999n)
     ).to.be.revertedWithCustomError(nft, "OnlyPool");
   });
 });
@@ -2437,7 +2098,7 @@ describe("Coverage — PositionNFT.tokenURI", function () {
     expect(traits).to.include("Opened");
     expect(traits).to.include("Deadline");
     expect(traits).to.include("Est. PnL (USDC)");
-    expect(traits).to.include("Est. PnL %");
+    expect(traits).to.include("Est. PnL % (on fees)");
     const side = json.attributes.find((a: any) => a.trait_type === "Side");
     expect(side.value).to.equal("Long");
   });
@@ -2546,7 +2207,7 @@ describe("Coverage — renewPosition min-fee branch", function () {
     const nftId = await openLong(fix.pool, fix.trader1, 100_000n); // 0.1 USDC
     // Approve enough for renewal fee
     await fix.usdc.connect(fix.trader1).approve(fix.poolAddress, ethers.MaxUint256);
-    await fix.pool.connect(fix.trader1).renewPosition(nftId);
+    await fix.pool.connect(fix.trader1).renewPosition(nftId, ethers.MaxUint256);
   });
 });
 
@@ -2581,8 +2242,7 @@ describe("Coverage — Router empty-pool guard", function () {
     await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
 
     const tx = await factory.connect(creator).createMarket(
-      await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n, "airTKN", "airTKNUsd", 18
-    );
+      await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -2712,12 +2372,17 @@ describe("Regression — N-2: renewPosition fee uses notional for shorts", funct
     // They should differ (AMM slippage + fee means lockedAmount < notional)
     expect(pos.usdcIn).to.be.gt(pos.lockedAmount);
 
-    // Compute expected renewal fee: 5% of NOTIONAL (usdcIn), not lockedAmount
+    // Compute expected renewal fee from NOTIONAL (usdcIn), not lockedAmount:
+    // base fee on mark (= usdcIn, surplus is 0 on a fresh position) plus the
+    // position's OI impact slice (it is the only short → offset 0).
     const BPS_DENOM = 10_000n;
     const LP_FEE_BPS = 300n;
     const PROTO_FEE_BPS = 200n;
+    const IMPACT_FEE_BPS = 1500n;
+    const backed = await fix.pool.backedAirUsd();
     const expectedFee = (pos.usdcIn * PROTO_FEE_BPS) / BPS_DENOM
-                      + (pos.usdcIn * LP_FEE_BPS) / BPS_DENOM;
+                      + (pos.usdcIn * LP_FEE_BPS) / BPS_DENOM
+                      + (IMPACT_FEE_BPS * pos.usdcIn * pos.usdcIn) / (2n * backed * BPS_DENOM);
 
     // Fund trader and approve
     await fix.usdc.mint(fix.trader1.address, expectedFee * 2n);
@@ -2726,7 +2391,7 @@ describe("Regression — N-2: renewPosition fee uses notional for shorts", funct
     const usdcBefore = await fix.usdc.balanceOf(fix.trader1.address);
 
     // Renew
-    await fix.pool.connect(fix.trader1).renewPosition(shortId);
+    await fix.pool.connect(fix.trader1).renewPosition(shortId, expectedFee);
 
     const usdcAfter = await fix.usdc.balanceOf(fix.trader1.address);
     const feePaid = usdcBefore - usdcAfter;
@@ -2752,8 +2417,8 @@ describe("Regression — N-2: renewPosition fee uses notional for shorts", funct
     const longBefore  = await fix.usdc.balanceOf(fix.trader1.address);
     const shortBefore = await fix.usdc.balanceOf(fix.trader2.address);
 
-    await fix.pool.connect(fix.trader1).renewPosition(longId);
-    await fix.pool.connect(fix.trader2).renewPosition(shortId);
+    await fix.pool.connect(fix.trader1).renewPosition(longId, ethers.MaxUint256);
+    await fix.pool.connect(fix.trader2).renewPosition(shortId, ethers.MaxUint256);
 
     const longFee  = longBefore  - (await fix.usdc.balanceOf(fix.trader1.address));
     const shortFee = shortBefore - (await fix.usdc.balanceOf(fix.trader2.address));
@@ -2838,10 +2503,10 @@ describe("Regression — N2-I1: openPositionCount tracks correctly through lifec
     // Total should be 3
     expect(await fix.pool.openPositionCount()).to.equal(3n);
 
-    // Realize long1
-    const pos1 = await fix.positionNFT.getPosition(long1);
-    await fix.usdc.mint(fix.trader1.address, pos1.airUsdMinted);
-    await fix.pool.connect(fix.trader1).realizeLong(long1);
+    // Close long1 (pump first so it is profitable)
+    await fix.usdc.mint(fix.trader2.address, ethers.parseUnits("3000", 6));
+    await fix.pool.connect(fix.trader2).swap(ethers.parseUnits("3000", 6), 0n, false, fix.trader2.address);
+    await fix.pool.connect(fix.trader1).closeLong(long1, 0n);
     expect(await fix.pool.openPositionCount()).to.equal(2n);
   });
 });

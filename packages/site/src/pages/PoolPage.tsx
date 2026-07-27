@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
-import { useAccount, useChainId, useReadContracts } from "wagmi";
+import { useAccount, useReadContracts } from "wagmi";
 import { exnihiloPoolAbi, erc20Abi, lpNFTAbi } from "@exnihilio/abis";
-import { getAddresses, FUJI_CHAIN_ID } from "../contracts/addresses.ts";
-import { formatUsdc, formatToken, decodeSpotPrice } from "../lib/format.ts";
+import { useAppChain } from "../hooks/useAppChain.ts";
+import { formatUsdc, formatUsdcCompact, formatToken, decodeSpotPrice } from "../lib/format.ts";
+import { premiumPct } from "../components/pool/PoolCard.tsx";
 import { usePriceHistory } from "../hooks/usePriceHistory.ts";
 import { usePoolApr } from "../hooks/usePoolApr.ts";
 import ChainGuard from "../components/wallet/ChainGuard.tsx";
@@ -13,80 +14,6 @@ import LpPanel from "../components/trade/LpPanel.tsx";
 import SwapPanel from "../components/trade/SwapPanel.tsx";
 
 type Tab = "trade" | "swap" | "lp";
-
-const STAR_LEVELS = [
-  { stars: 1, label: "NO LIQUIDITY",   threshold: "< $1K" },
-  { stars: 2, label: "LOW LIQUIDITY",  threshold: "$1K – $10K" },
-  { stars: 3, label: "GROWING",        threshold: "$10K – $100K" },
-  { stars: 4, label: "ESTABLISHED",    threshold: "$100K – $1M" },
-  { stars: 5, label: "DEEP LIQUIDITY", threshold: "> $1M" },
-];
-
-function starRating(tvlRaw: bigint | undefined): 1 | 2 | 3 | 4 | 5 {
-  if (tvlRaw === undefined) return 1;
-  const tvl = Number(tvlRaw) / 1_000_000;
-  if (tvl >= 1_000_000) return 5;
-  if (tvl >= 100_000)   return 4;
-  if (tvl >= 10_000)    return 3;
-  if (tvl >= 1_000)     return 2;
-  return 1;
-}
-
-function StarsWithTooltip({ count }: { count: 1 | 2 | 3 | 4 | 5 }) {
-  const [visible, setVisible] = useState(false);
-  return (
-    <div
-      style={{ position: "relative", display: "inline-block", cursor: "help" }}
-      onMouseEnter={() => setVisible(true)}
-      onMouseLeave={() => setVisible(false)}
-    >
-      <span style={{ letterSpacing: "0.05em", fontSize: "1rem" }}>
-        {([1, 2, 3, 4, 5] as const).map((i) => (
-          <span key={i} style={{ color: i <= count ? "var(--cyan)" : "var(--dim)" }}>★</span>
-        ))}
-      </span>
-
-      {visible && (
-        <div
-          style={{
-            position: "absolute",
-            bottom: "calc(100% + 10px)",
-            right: 0,
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            padding: "10px 14px",
-            zIndex: 50,
-            whiteSpace: "nowrap",
-            display: "flex",
-            flexDirection: "column",
-            gap: 7,
-            boxShadow: "0 4px 24px rgba(0,0,0,0.6)",
-          }}
-        >
-          {/* Cyber corner accent */}
-          <span style={{ position: "absolute", top: -1, left: -1, width: 8, height: 8, borderTop: "1px solid var(--cyan)", borderLeft: "1px solid var(--cyan)" }} />
-          <span style={{ position: "absolute", bottom: -1, right: -1, width: 8, height: 8, borderBottom: "1px solid var(--cyan)", borderRight: "1px solid var(--cyan)" }} />
-
-          {[...STAR_LEVELS].reverse().map(({ stars, label, threshold }) => (
-            <div key={stars} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ fontSize: "0.72rem", letterSpacing: "0.04em" }}>
-                {([1, 2, 3, 4, 5] as const).map((i) => (
-                  <span key={i} style={{ color: i <= stars ? "var(--cyan)" : "var(--dim)" }}>★</span>
-                ))}
-              </span>
-              <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.6rem", letterSpacing: "0.06em", color: "var(--muted)", minWidth: 110 }}>
-                {label}
-              </span>
-              <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.6rem", color: "var(--dim)" }}>
-                {threshold}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function pctColor(pct: number): string {
   if (pct === 0) return "var(--muted)";
@@ -107,8 +34,7 @@ export default function PoolPage() {
 function PoolContent() {
   const { poolAddr } = useParams<{ poolAddr: string }>();
   const { address: userAddress } = useAccount();
-  const chainId = useChainId();
-  const addresses = getAddresses(chainId || FUJI_CHAIN_ID);
+  const { chainId, addresses, path } = useAppChain();
 
   const [tab, setTab] = useState<Tab>("trade");
   const tradePanelRef = useRef<HTMLDivElement>(null);
@@ -128,7 +54,7 @@ function PoolContent() {
   );
 
   const poolAddress = poolAddr as `0x${string}`;
-  const poolContract = { address: poolAddress, abi: exnihiloPoolAbi } as const;
+  const poolContract = { address: poolAddress, abi: exnihiloPoolAbi, chainId } as const;
 
   const { data } = useReadContracts({
     contracts: [
@@ -163,8 +89,8 @@ function PoolContent() {
   const { data: tokenMeta } = useReadContracts({
     contracts: underlyingToken
       ? [
-          { address: underlyingToken, abi: erc20Abi, functionName: "symbol" },
-          { address: underlyingToken, abi: erc20Abi, functionName: "decimals" },
+          { address: underlyingToken, abi: erc20Abi, functionName: "symbol", chainId },
+          { address: underlyingToken, abi: erc20Abi, functionName: "decimals", chainId },
         ]
       : [],
     query: { enabled: !!underlyingToken },
@@ -176,13 +102,13 @@ function PoolContent() {
   // LP ownership — only query once lpNftId is known
   const { data: lpOwnerData } = useReadContracts({
     contracts: lpNftId !== undefined
-      ? [{ address: addresses.lpNFT, abi: lpNFTAbi, functionName: "ownerOf", args: [lpNftId] }]
+      ? [{ address: addresses.lpNFT, abi: lpNFTAbi, functionName: "ownerOf", args: [lpNftId], chainId }]
       : [],
     query: { enabled: lpNftId !== undefined },
   });
 
-  const { data: priceHistory } = usePriceHistory(poolAddress);
-  const { data: aprData } = usePoolApr(poolAddress);
+  const { data: priceHistory } = usePriceHistory(poolAddress, chainId);
+  const { data: aprData } = usePoolApr(poolAddress, chainId);
 
   const lpOwner   = lpOwnerData?.[0]?.result as `0x${string}` | undefined;
   const isLpHolder = !!userAddress && !!lpOwner &&
@@ -233,8 +159,15 @@ function PoolContent() {
       : 0;
 
   const hasOiData = longOpenInterest !== undefined && shortOpenInterest !== undefined;
+  const totalOiRaw = hasOiData ? longOpenInterest! + shortOpenInterest! : undefined;
+  const longOiShare =
+    totalOiRaw !== undefined && totalOiRaw > 0n
+      ? Number((longOpenInterest! * 1000n) / totalOiRaw) / 10
+      : 0;
 
-  const rating = starRating(totalTvlRaw);
+  // Entry-price gap vs spot: how far synthetic supply has bent each curve.
+  const longPremium  = premiumPct(longPriceRaw, spotPriceRaw);
+  const shortPremium = premiumPct(shortPriceRaw, spotPriceRaw);
 
   const tabs: { key: Tab; label: string }[] = [
     { key: "trade", label: "LONG / SHORT" },
@@ -247,10 +180,10 @@ function PoolContent() {
       {/* Breadcrumb */}
       <div className="mb-5">
         <Link
-          to="/app/markets"
+          to={path("markets")}
           style={{
             fontFamily: "var(--font-mono)",
-            fontSize: "0.65rem",
+            fontSize: "var(--fs-body-s)",
             letterSpacing: "0.1em",
             color: "var(--muted)",
             textDecoration: "none",
@@ -279,7 +212,7 @@ function PoolContent() {
         <p
           style={{
             fontFamily: "var(--font-mono)",
-            fontSize: "0.62rem",
+            fontSize: "var(--fs-label)",
             color: "var(--muted)",
             letterSpacing: "0.05em",
             marginTop: 4,
@@ -290,7 +223,7 @@ function PoolContent() {
       </div>
 
       {/* Stats — row 1: prices */}
-      <div className="grid grid-cols-3 gap-3 mb-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
         <div className="stat-box">
           <div className="stat-label">SPOT PRICE</div>
           <div className="stat-value" style={{ color: "var(--cyan)" }}>{price}</div>
@@ -298,15 +231,25 @@ function PoolContent() {
         <div className="stat-box">
           <div className="stat-label">LONG PRICE</div>
           <div className="stat-value" style={{ color: "var(--green)" }}>{longPrice}</div>
+          {longPremium !== undefined && (
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-micro)", color: "var(--dim)", letterSpacing: "0.04em", marginTop: 2 }}>
+              {longPremium >= 0 ? "+" : ""}{longPremium.toFixed(1)}% vs spot
+            </div>
+          )}
         </div>
         <div className="stat-box">
           <div className="stat-label">SHORT PRICE</div>
-          <div className="stat-value" style={{ color: "var(--red)" }}>{shortPrice}</div>
+          <div className="stat-value" style={{ color: "var(--magenta)" }}>{shortPrice}</div>
+          {shortPremium !== undefined && (
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-micro)", color: "var(--dim)", letterSpacing: "0.04em", marginTop: 2 }}>
+              {shortPremium >= 0 ? "+" : ""}{shortPremium.toFixed(1)}% vs spot
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Stats — row 2: reserves */}
-      <div className="grid grid-cols-2 gap-3 mb-3">
+      {/* Stats — row 2: reserves + TVL */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
         <div className="stat-box">
           <div className="stat-label">BACKED {tokenSymbol !== "…" ? tokenSymbol : "TOKEN"}</div>
           <div className="stat-value">
@@ -319,11 +262,17 @@ function PoolContent() {
             {backedAirUsd !== undefined ? formatUsdc(backedAirUsd) : "—"}
           </div>
         </div>
+        <div className="stat-box">
+          <div className="stat-label">TOTAL TVL</div>
+          <div className="stat-value">
+            {totalTvlRaw !== undefined ? formatUsdcCompact(totalTvlRaw) : "—"}
+          </div>
+        </div>
       </div>
 
       {/* APR bar */}
       {aprData && (
-        <div className="grid grid-cols-3 gap-3 mb-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
           <div className="stat-box">
             <div className="stat-label">APR (24H)</div>
             <div className="stat-value" style={{ color: aprData["1d"].apr > 0 ? "var(--green)" : "var(--muted)" }}>
@@ -345,14 +294,18 @@ function PoolContent() {
         </div>
       )}
 
-      {/* Stats — row 2: positions, OI, rating */}
-      <div className="grid grid-cols-4 gap-3 mb-8">
+      {/* Stats — row 3: positions + open interest */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
         <div className="stat-box">
           <div className="stat-label">OPEN POSITIONS</div>
           <div className="stat-value">{openPositionCount?.toString() ?? "—"}</div>
         </div>
-        <div className="stat-box">
-          <div className="stat-label">% LONG</div>
+        <div
+          className="stat-box"
+          title="Long open interest as % of the pool's USDC reserves — LP utilization, not trader sentiment. High = the pool is heavily drawn on by longs."
+          style={{ cursor: "help" }}
+        >
+          <div className="stat-label">% LONG · UTIL</div>
           <div
             className="stat-value"
             style={{ color: pctColor(pctLong), fontWeight: pctLong > 0 ? 600 : 400 }}
@@ -360,8 +313,12 @@ function PoolContent() {
             {hasOiData ? formatPct(pctLong) : "—"}
           </div>
         </div>
-        <div className="stat-box">
-          <div className="stat-label">% SHORT</div>
+        <div
+          className="stat-box"
+          title="Short open interest as % of the pool's USDC reserves — LP utilization, not trader sentiment. High = the pool is heavily drawn on by shorts."
+          style={{ cursor: "help" }}
+        >
+          <div className="stat-label">% SHORT · UTIL</div>
           <div
             className="stat-value"
             style={{ color: pctColor(pctShort), fontWeight: pctShort > 0 ? 600 : 400 }}
@@ -370,21 +327,44 @@ function PoolContent() {
           </div>
         </div>
         <div className="stat-box">
-          <div className="stat-label">LIQUIDITY</div>
-          <div style={{ marginTop: 4 }}>
-            <StarsWithTooltip count={rating} />
-          </div>
+          <div className="stat-label">OPEN INTEREST</div>
+          {totalOiRaw !== undefined && totalOiRaw > 0n ? (
+            <>
+              <div className="stat-value">{formatUsdcCompact(totalOiRaw)}</div>
+              <div
+                style={{ display: "flex", height: 3, marginTop: 6, background: "var(--dim)" }}
+                title={`Long ${formatUsdcCompact(longOpenInterest!)} / Short ${formatUsdcCompact(shortOpenInterest!)}`}
+              >
+                <span style={{ width: `${longOiShare}%`, background: "var(--green)" }} />
+                <span style={{ flex: 1, background: "var(--magenta)" }} />
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "var(--fs-nano)",
+                  letterSpacing: "0.04em",
+                  marginTop: 3,
+                }}
+              >
+                <span style={{ color: "var(--green)" }}>L {formatUsdcCompact(longOpenInterest!)}</span>
+                <span style={{ color: "var(--magenta)" }}>S {formatUsdcCompact(shortOpenInterest!)}</span>
+              </div>
+            </>
+          ) : (
+            <div className="stat-value" style={{ color: "var(--dim)" }}>—</div>
+          )}
         </div>
       </div>
 
-      {/* Trade panel + Chart */}
-      <div style={{ display: "flex", gap: 24, alignItems: "flex-start" }}>
+      {/* Trade panel + Chart — wraps to a stacked layout on narrow screens */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 24, alignItems: "flex-start" }}>
         {/* Trade panel */}
         <div
           ref={tradePanelRef}
           style={{
-            width: 500,
-            minWidth: 380,
+            width: "min(500px, 100%)",
             flexShrink: 0,
             background: "var(--surface)",
             border: "1px solid var(--border)",
@@ -479,8 +459,8 @@ function PoolContent() {
         {/* Price chart */}
         <div
           style={{
-            flex: 1,
-            minWidth: 300,
+            flex: "1 1 300px",
+            maxWidth: "100%",
             height: panelHeight || 420,
             position: "relative",
             background: "var(--surface)",
@@ -531,7 +511,6 @@ function PoolContent() {
           </div>
 
           <PoolPriceChart
-            poolAddress={poolAddress}
             highlightLine={null}
             priceData={priceHistory}
             spotLabel={price}

@@ -1,7 +1,8 @@
-import { useState, useEffect, useMemo } from "react";
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useAccount } from "wagmi";
-
-const INDEXER = import.meta.env.VITE_INDEXER_URL || "";
+import { useAppChain } from "../hooks/useAppChain.ts";
+import { hasIndexer, indexerFetch } from "../lib/indexer.ts";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -19,13 +20,13 @@ interface ProtocolMetrics {
 interface PoolMetric {
   pool: string;
   positionVolume: string;
-  totalVolume: string;
   totalFees: string;
   lpFees: string;
   protocolFees: string;
   longCount: number;
   shortCount: number;
   closeCount: number;
+  totalPayout: string;
 }
 
 interface UserMetrics {
@@ -40,19 +41,20 @@ interface UserDetail {
   address: string;
   firstSeen: number;
   lastSeen: number;
-  swapCount: number;
   longCount: number;
   shortCount: number;
+  closeCount: number;
   totalVolume: string;
   totalFeesPaid: string;
+  totalPayout: string;
 }
 
 interface DailyPoint {
   date: number;
   volume: string;
   fees: string;
-  swaps: number;
   positions: number;
+  closes: number;
   users: number;
 }
 
@@ -75,12 +77,9 @@ function fmtDate(ts: number): string {
   return new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-async function fetchJson<T>(path: string): Promise<T | null> {
-  if (!INDEXER) return null;
+async function fetchJson<T>(path: string, chainId: number): Promise<T | null> {
   try {
-    const res = await fetch(`${INDEXER}${path}`);
-    if (!res.ok) return null;
-    return await res.json();
+    return await indexerFetch<T>(chainId, path);
   } catch {
     return null;
   }
@@ -153,37 +152,42 @@ function MiniBarChart({
 
 export default function AnalyticsPage() {
   const { address } = useAccount();
+  const { chainId, label: chainLabel } = useAppChain();
 
-  const [protocol, setProtocol] = useState<ProtocolMetrics | null>(null);
-  const [pools, setPools] = useState<PoolMetric[]>([]);
-  const [users, setUsers] = useState<UserMetrics | null>(null);
-  const [daily, setDaily] = useState<DailyPoint[]>([]);
-  const [myStats, setMyStats] = useState<UserDetail | null>(null);
-  const [loading, setLoading] = useState(true);
+  const indexed = hasIndexer(chainId);
 
-  useEffect(() => {
-    if (!INDEXER) { setLoading(false); return; }
-    Promise.all([
-      fetchJson<ProtocolMetrics>("/metrics/protocol"),
-      fetchJson<{ pools: PoolMetric[] }>("/metrics/pools"),
-      fetchJson<UserMetrics>("/metrics/users"),
-      fetchJson<{ days: DailyPoint[] }>("/metrics/daily?days=30"),
-    ]).then(([p, pm, u, d]) => {
-      if (p) setProtocol(p);
-      if (pm) setPools(pm.pools);
-      if (u) setUsers(u);
-      if (d) setDaily(d.days);
-      setLoading(false);
-    });
-  }, []);
+  // chainId is part of every query key, so switching chains reads a different
+  // cache entry instead of leaving the previous chain's numbers on screen.
+  const overview = useQuery({
+    queryKey: ["analytics", chainId],
+    enabled: indexed,
+    staleTime: 30_000,
+    refetchInterval: 30_000,
+    queryFn: async () => {
+      const [p, pm, u, d] = await Promise.all([
+        fetchJson<ProtocolMetrics>("/metrics/protocol", chainId),
+        fetchJson<{ pools: PoolMetric[] }>("/metrics/pools", chainId),
+        fetchJson<UserMetrics>("/metrics/users", chainId),
+        fetchJson<{ days: DailyPoint[] }>("/metrics/daily?days=30", chainId),
+      ]);
+      return { protocol: p, pools: pm?.pools ?? [], users: u, daily: d?.days ?? [] };
+    },
+  });
 
-  // Fetch connected user's stats
-  useEffect(() => {
-    if (!address || !INDEXER) return;
-    fetchJson<UserDetail>(`/metrics/user/${address.toLowerCase()}`).then((u) => {
-      if (u) setMyStats(u);
-    });
-  }, [address]);
+  const myStatsQuery = useQuery({
+    queryKey: ["analyticsUser", chainId, address],
+    enabled: indexed && !!address,
+    staleTime: 30_000,
+    queryFn: () =>
+      fetchJson<UserDetail>(`/metrics/user/${address!.toLowerCase()}`, chainId),
+  });
+
+  const protocol = overview.data?.protocol ?? null;
+  const pools = overview.data?.pools ?? [];
+  const users = overview.data?.users ?? null;
+  const daily = useMemo(() => overview.data?.daily ?? [], [overview.data]);
+  const myStats = myStatsQuery.data ?? null;
+  const loading = overview.isPending;
 
   const dailyChartData = useMemo(() =>
     daily.map((d) => ({
@@ -209,10 +213,10 @@ export default function AnalyticsPage() {
     [daily],
   );
 
-  if (!INDEXER) {
+  if (!indexed) {
     return (
       <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.7rem", color: "var(--muted)", letterSpacing: "0.1em", padding: "40px 0" }}>
-        INDEXER NOT CONFIGURED — set VITE_INDEXER_URL
+        NO INDEXER FOR {chainLabel} — ANALYTICS UNAVAILABLE ON THIS CHAIN
       </div>
     );
   }
@@ -239,7 +243,7 @@ export default function AnalyticsPage() {
       </h1>
       <p style={{
         fontFamily: "var(--font-mono)",
-        fontSize: "0.62rem",
+        fontSize: "var(--fs-label)",
         color: "var(--muted)",
         letterSpacing: "0.06em",
         marginBottom: 24,
@@ -287,11 +291,12 @@ export default function AnalyticsPage() {
           <div className="grid grid-cols-4 gap-3 mb-3">
             <StatBox label="YOUR VOLUME" value={fmtUsd(myStats.totalVolume)} color="var(--cyan)" />
             <StatBox label="FEES PAID" value={fmtUsd(myStats.totalFeesPaid)} />
-            <StatBox label="SWAPS" value={String(myStats.swapCount)} />
+            <StatBox label="PAYOUT" value={fmtUsd(myStats.totalPayout)} color="var(--green)" />
             <StatBox label="LONGS" value={String(myStats.longCount)} />
           </div>
-          <div className="grid grid-cols-3 gap-3 mb-3">
+          <div className="grid grid-cols-4 gap-3 mb-3">
             <StatBox label="SHORTS" value={String(myStats.shortCount)} />
+            <StatBox label="CLOSES" value={String(myStats.closeCount)} />
             <StatBox label="FIRST SEEN" value={fmtDate(myStats.firstSeen)} />
             <StatBox label="LAST SEEN" value={fmtDate(myStats.lastSeen)} />
           </div>
@@ -340,7 +345,7 @@ export default function AnalyticsPage() {
               width: "100%",
               borderCollapse: "collapse",
               fontFamily: "var(--font-mono)",
-              fontSize: "0.62rem",
+              fontSize: "var(--fs-label)",
               letterSpacing: "0.04em",
             }}>
               <thead>
@@ -352,7 +357,7 @@ export default function AnalyticsPage() {
                       color: "var(--muted)",
                       fontWeight: 600,
                       letterSpacing: "0.1em",
-                      fontSize: "0.58rem",
+                      fontSize: "var(--fs-micro)",
                     }}>
                       {h}
                     </th>
@@ -363,7 +368,7 @@ export default function AnalyticsPage() {
                 {pools.map((p) => (
                   <tr key={p.pool} style={{ borderBottom: "1px solid var(--border)" }}>
                     <td style={{ padding: "10px 12px", color: "var(--cyan)" }}>{shortAddr(p.pool)}</td>
-                    <td style={{ padding: "10px 12px" }}>{fmtUsd(p.totalVolume)}</td>
+                    <td style={{ padding: "10px 12px" }}>{fmtUsd(p.positionVolume)}</td>
                     <td style={{ padding: "10px 12px", color: "var(--green)" }}>{fmtUsd(p.totalFees)}</td>
                     <td style={{ padding: "10px 12px" }}>{p.longCount}</td>
                     <td style={{ padding: "10px 12px" }}>{p.shortCount}</td>

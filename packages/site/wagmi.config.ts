@@ -1,21 +1,18 @@
-import { http, createConfig } from "wagmi";
-import { avalancheFuji, hardhat } from "wagmi/chains";
+import { createConfig } from "wagmi";
 import { injected, walletConnect } from "wagmi/connectors";
+import { wagmiChains, wagmiTransports } from "./src/lib/chains.ts";
 
 const wcProjectId = import.meta.env.VITE_WC_PROJECT_ID ?? "";
-const fujiRpcUrl =
-  import.meta.env.VITE_RPC_FUJI ?? "https://api.avax-test.network/ext/bc/C/rpc";
 
+// Chains and transports derive from the registry in src/lib/chains.ts —
+// add new chains there, not here.
 export const config = createConfig({
-  chains: [avalancheFuji, hardhat],
+  chains: wagmiChains,
   connectors: [
     injected(),                          // catches any window.ethereum (legacy fallback)
     walletConnect({ projectId: wcProjectId }), // WalletConnect v2 (mobile + Rabby desktop via WC)
   ],
   // EIP-6963 multi-wallet discovery is enabled by default — Rabby, MetaMask, etc.
   // will appear automatically as additional connectors alongside the above.
-  transports: {
-    [hardhat.id]:       http("http://127.0.0.1:8545"),
-    [avalancheFuji.id]: http(fujiRpcUrl),
-  },
+  transports: wagmiTransports,
 });

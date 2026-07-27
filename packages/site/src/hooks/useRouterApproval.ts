@@ -1,6 +1,6 @@
-import { useAccount, useChainId, useReadContracts } from "wagmi";
+import { useAccount, useReadContracts } from "wagmi";
 import { erc20Abi } from "@exnihilio/abis";
-import { getAddresses } from "../contracts/addresses.ts";
+import { useAppChain } from "./useAppChain.ts";
 
 const ZERO = "0x0000000000000000000000000000000000000000" as `0x${string}`;
 
@@ -10,15 +10,9 @@ const ZERO = "0x0000000000000000000000000000000000000000" as `0x${string}`;
  */
 export function useRouterApproval(usdcAddress: `0x${string}`) {
   const { address } = useAccount();
-  const chainId = useChainId();
+  const { chainId, addresses } = useAppChain();
 
-  let routerAddress: `0x${string}` | undefined;
-  try {
-    const addrs = getAddresses(chainId);
-    routerAddress = addrs.router;
-  } catch {
-    /* unsupported chain */
-  }
+  const routerAddress: `0x${string}` | undefined = addresses.router;
 
   const hasRouter = !!routerAddress && routerAddress !== ZERO;
 
@@ -31,6 +25,7 @@ export function useRouterApproval(usdcAddress: `0x${string}`) {
               abi: erc20Abi,
               functionName: "allowance" as const,
               args: [address, routerAddress!] as const,
+              chainId,
             },
           ]
         : [],

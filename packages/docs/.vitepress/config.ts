@@ -25,7 +25,7 @@ export default defineConfig({
     siteTitle: "EXNIHILO",
     nav: [
       { text: "Home", link: "/" },
-      { text: "Launch App", link: "https://exnihilo.finance/app" },
+      { text: "Launch App", link: "https://exnihilo.markets/app" },
     ],
     sidebar: [
       {
@@ -43,7 +43,7 @@ export default defineConfig({
         items: [
           { text: "Opening a Long", link: "/trading/opening-a-long" },
           { text: "Opening a Short", link: "/trading/opening-a-short" },
-          { text: "Closing / Realizing", link: "/trading/closing-realizing" },
+          { text: "Closing Positions", link: "/trading/closing-realizing" },
           { text: "Swapping Tokens", link: "/trading/swapping" },
           { text: "Fees", link: "/trading/fees" },
           { text: "P&L Calculation", link: "/trading/pnl" },
@@ -98,6 +98,7 @@ export default defineConfig({
           { text: "Contract Reference", link: "/developers/reference" },
           { text: "ABIs", link: "/developers/abis" },
           { text: "Local Development", link: "/developers/local-dev" },
+          { text: "Indexer", link: "/developers/indexer" },
         ],
       },
       {

@@ -12,6 +12,11 @@ const config: HardhatUserConfig = {
   solidity: {
     version: "0.8.24",
     settings: {
+      // OpenZeppelin 5.6 uses `mcopy` (via Strings.sol → Bytes.sol), which is a
+      // Cancun opcode. 0.8.24 still defaults to shanghai, so it must be opted
+      // into or compilation fails with "Function \"mcopy\" not found".
+      // Avalanche C-Chain and Fuji both support Cancun.
+      evmVersion: "cancun",
       viaIR: true,
       optimizer: {
         enabled: true,

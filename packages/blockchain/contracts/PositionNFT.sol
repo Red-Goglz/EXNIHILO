@@ -2,8 +2,6 @@
 pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/Base64.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 
@@ -11,29 +9,24 @@ import "@openzeppelin/contracts/utils/Strings.sol";
  * @title PositionNFT
  * @notice Manages both Long and Short position tokens for all EXNIHILO pools.
  *
- * Custody model
- * ─────────────
- * When a position is opened the pool approves this contract to pull the locked
- * wrapper tokens, then calls mintLong / mintShort.  The tokens live here for
- * the lifetime of the position.
- *
- * When a position is settled (close, realize, or LP liquidation) the pool calls
- * release(), which burns the NFT and returns the locked tokens to the pool.
- * The returned Position struct gives the pool everything it needs to emit the
- * correct event and complete the settlement math.
+ * Registry model
+ * ──────────────
+ * The NFT is a pure position registry: locked collateral never leaves the
+ * pool — the pool's supply counters plus the Position struct's lockedAmount
+ * fully describe it. mintLong / mintShort record the position and mint the
+ * NFT; release() burns the NFT and returns the Position struct, which gives
+ * the pool everything it needs to complete the settlement math.
  *
  * Access control
  * ──────────────
- * mintLong / mintShort  →  msg.sender must equal the `pool` argument.
+ * mintLong / mintShort  →  factory must be initialised, msg.sender must equal
+ *                          the `pool` argument, and the pool must be registered
+ *                          with the factory.
  * release               →  msg.sender must equal positions[tokenId].pool.
  */
 interface IEXNIHILOPool {
-    function backedAirToken()  external view returns (uint256);
-    function backedAirUsd()   external view returns (uint256);
-    function airToken()   external view returns (address);
-    function airUsdToken()    external view returns (address);
     function underlyingToken() external view returns (address);
-    function swapFeeBps()    external view returns (uint256);
+    function quoteClose(uint256 nftId) external view returns (bool ready, int256 pnl);
 }
 
 interface ITokenMeta {
@@ -47,7 +40,6 @@ interface IEXNIHILOFactory {
 }
 
 contract PositionNFT is ERC721Enumerable {
-    using SafeERC20 for IERC20;
     using Strings for uint256;
 
     // ── Position data ──────────────────────────────────────────────────────────
@@ -55,8 +47,6 @@ contract PositionNFT is ERC721Enumerable {
     struct Position {
         bool isLong;
         address pool;
-        /// @dev airToken for longs, airUsd for shorts
-        address lockedToken;
         /// @dev airTokenLocked for longs, airUsdLocked for shorts
         uint256 lockedAmount;
         /// @dev Long only: USDC notional used to open the position
@@ -85,6 +75,16 @@ contract PositionNFT is ERC721Enumerable {
     uint256 private _nextTokenId;
     mapping(uint256 => Position) private _positions;
 
+    /// @dev Auto-renew opt-in per position. `maxFee` caps the renewal fee the
+    ///      pool may charge against the position's equity at expiry. Cleared on
+    ///      every ownership change so each new holder must opt in themselves.
+    struct AutoRenewConfig {
+        bool    enabled;
+        uint256 maxFee;
+    }
+
+    mapping(uint256 => AutoRenewConfig) private _autoRenew;
+
     /// @notice The deployer address (used to authorize initFactory).
     address private immutable _deployer;
 
@@ -97,9 +97,11 @@ contract PositionNFT is ERC721Enumerable {
     error OnlyPool();
     error OnlyDeployer();
     error FactoryAlreadySet();
+    error FactoryNotSet();
     error ZeroAddress();
     error PositionNotFound();
     error PositionNotFromPool();
+    error OnlyTokenOwner();
 
     // ── Constructor ────────────────────────────────────────────────────────────
 
@@ -110,6 +112,7 @@ contract PositionNFT is ERC721Enumerable {
     // ── Events ─────────────────────────────────────────────────────────────────
 
     event FactoryInitialized(address indexed factory);
+    event AutoRenewSet(uint256 indexed tokenId, bool enabled, uint256 maxFee);
 
     // ── Factory initialisation ────────────────────────────────────────────────
 
@@ -146,7 +149,7 @@ contract PositionNFT is ERC721Enumerable {
         if (_positions[tokenId].pool == address(0)) revert PositionNotFound();
         Position memory pos = _positions[tokenId];
 
-        LiveData memory ld = _readLive(pos);
+        LiveData memory ld = _readLive(tokenId, pos);
 
         bytes memory svg  = _buildSVG(tokenId, pos, ld);
         bytes memory json = abi.encodePacked(
@@ -205,7 +208,7 @@ contract PositionNFT is ERC721Enumerable {
                 '{"trait_type":"Est. PnL (USDC)","display_type":"number","value":',
                 ld.pnlPositive ? "" : "-",
                 _fmt6(ld.pnlAbs), '},',
-                '{"trait_type":"Est. PnL %","display_type":"number","value":',
+                '{"trait_type":"Est. PnL % (on fees)","display_type":"number","value":',
                 ld.pnlPositive ? "" : "-",
                 pct.toString(), '}'
             );
@@ -221,23 +224,20 @@ contract PositionNFT is ERC721Enumerable {
     function mintLong(
         address to,
         address pool,
-        address airToken,
         uint256 usdcIn,
         uint256 airUsdMinted,
         uint256 airTokenLocked,
         uint256 feesPaid,
         uint256 deadline
     ) external returns (uint256 tokenId) {
+        if (factory == address(0)) revert FactoryNotSet();
         if (msg.sender != pool) revert OnlyPool();
-        if (factory != address(0) && !IEXNIHILOFactory(factory).isPool(pool)) revert OnlyPool();
-
-        IERC20(airToken).safeTransferFrom(pool, address(this), airTokenLocked);
+        if (!IEXNIHILOFactory(factory).isPool(pool)) revert OnlyPool();
 
         tokenId = _nextTokenId++;
         _positions[tokenId] = Position({
             isLong: true,
             pool: pool,
-            lockedToken: airToken,
             lockedAmount: airTokenLocked,
             usdcIn: usdcIn,
             airUsdMinted: airUsdMinted,
@@ -253,23 +253,20 @@ contract PositionNFT is ERC721Enumerable {
     function mintShort(
         address to,
         address pool,
-        address airUsdToken,
         uint256 airTokenMinted,
         uint256 airUsdLocked,
         uint256 usdcIn,
         uint256 feesPaid,
         uint256 deadline
     ) external returns (uint256 tokenId) {
+        if (factory == address(0)) revert FactoryNotSet();
         if (msg.sender != pool) revert OnlyPool();
-        if (factory != address(0) && !IEXNIHILOFactory(factory).isPool(pool)) revert OnlyPool();
-
-        IERC20(airUsdToken).safeTransferFrom(pool, address(this), airUsdLocked);
+        if (!IEXNIHILOFactory(factory).isPool(pool)) revert OnlyPool();
 
         tokenId = _nextTokenId++;
         _positions[tokenId] = Position({
             isLong: false,
             pool: pool,
-            lockedToken: airUsdToken,
             lockedAmount: airUsdLocked,
             usdcIn: usdcIn,
             airUsdMinted: 0,
@@ -282,13 +279,77 @@ contract PositionNFT is ERC721Enumerable {
         _safeMint(to, tokenId);
     }
 
-    // ── Extend deadline ───────────────────────────────────────────────────────
+    // ── Renewal ───────────────────────────────────────────────────────────────
 
-    function extendDeadline(uint256 tokenId, uint256 newDeadline) external {
+    /**
+     * @notice Apply a renewal to a position. Pool-only.
+     *
+     *         Covers both renewal modes:
+     *           Manual  — locked/debt unchanged, deadline extended, fee added.
+     *           Auto    — the pool charges the fee against the position's own
+     *                     equity: a long's synthetic debt grows, a short's
+     *                     locked collateral shrinks. The pool passes the new
+     *                     values; this contract just records them.
+     */
+    function applyRenewal(
+        uint256 tokenId,
+        uint256 newLockedAmount,
+        uint256 newAirUsdMinted,
+        uint256 addFeesPaid,
+        uint256 newDeadline
+    ) external {
         Position storage pos = _positions[tokenId];
         if (pos.pool == address(0)) revert PositionNotFound();
         if (msg.sender != pos.pool) revert PositionNotFromPool();
-        pos.deadline = newDeadline;
+        pos.lockedAmount = newLockedAmount;
+        pos.airUsdMinted = newAirUsdMinted;
+        pos.feesPaid    += addFeesPaid;
+        pos.deadline     = newDeadline;
+    }
+
+    // ── Auto-renew opt-in ─────────────────────────────────────────────────────
+
+    /**
+     * @notice Opt a position in or out of keeper-driven auto-renewal at expiry.
+     *         Holder only. `maxFee` is the ceiling on the renewal fee the pool
+     *         may charge against the position's equity — if the dynamic fee
+     *         quote exceeds it at expiry, the keeper closes instead of renewing.
+     *
+     *         The setting is cleared on every transfer: each new holder must
+     *         opt in themselves.
+     */
+    function setAutoRenew(uint256 tokenId, bool enabled, uint256 maxFee) external {
+        if (_positions[tokenId].pool == address(0)) revert PositionNotFound();
+        if (ownerOf(tokenId) != msg.sender) revert OnlyTokenOwner();
+        if (enabled) {
+            _autoRenew[tokenId] = AutoRenewConfig({enabled: true, maxFee: maxFee});
+        } else {
+            delete _autoRenew[tokenId];
+        }
+        emit AutoRenewSet(tokenId, enabled, enabled ? maxFee : 0);
+    }
+
+    /// @notice Auto-renew configuration for `tokenId` (enabled=false if unset).
+    function getAutoRenew(uint256 tokenId) external view returns (bool enabled, uint256 maxFee) {
+        AutoRenewConfig memory cfg = _autoRenew[tokenId];
+        return (cfg.enabled, cfg.maxFee);
+    }
+
+    /**
+     * @dev Clear the auto-renew opt-in on every ownership change (transfer or
+     *      burn). Opt-in is personal to the holder who set it — a buyer must
+     *      not inherit a keeper authorization they never gave.
+     */
+    function _update(address to, uint256 tokenId, address auth)
+        internal
+        override
+        returns (address from)
+    {
+        from = super._update(to, tokenId, auth);
+        if (from != address(0) && _autoRenew[tokenId].enabled) {
+            delete _autoRenew[tokenId];
+            emit AutoRenewSet(tokenId, false, 0);
+        }
     }
 
     // ── Release ────────────────────────────────────────────────────────────────
@@ -300,91 +361,42 @@ contract PositionNFT is ERC721Enumerable {
 
         delete _positions[tokenId];
         _burn(tokenId);
-
-        IERC20(position.lockedToken).safeTransfer(position.pool, position.lockedAmount);
     }
 
     // ── Live data reader ───────────────────────────────────────────────────────
 
     /**
-     * @dev Reads current pool reserves to compute live PnL and token symbol.
-     *      All external calls are wrapped in try/catch so tokenURI never reverts
-     *      due to pool state issues.
+     * @dev Reads token metadata and the live PnL quote from the pool.
+     *      All external calls are wrapped in try/catch so tokenURI never
+     *      reverts due to pool state issues.
      *
-     *      Long PnL  (SWAP-3: reserveIn = airTokenSupply − locked, reserveOut = backedAirUsd):
-     *        airUsdOut = cpOut(locked, airTokenSup − locked, backedAirUsd, swapFee)
-     *        surplus   = airUsdOut − airUsdMinted
-     *        pnl       = surplus − 1 % closeFee    (if profitable)
-     *                  = airUsdMinted − airUsdOut   (if underwater, no fee)
-     *
-     *      Short PnL (SWAP-2: reserveIn = airUsdSupply, reserveOut = backedAirToken):
-     *        totalBuyable = cpOut(locked, airUsdSup, backedAirToken, swapFee)
-     *        cost          = ceil(locked * airTokenMinted / totalBuyable)
-     *        surplus       = locked − cost
-     *        pnl           = surplus − 1 % closeFee  (if profitable)
-     *                      = cost − locked            (if underwater, no fee)
+     *      PnL is delegated to EXNIHILOPool.quoteClose(), the single source
+     *      of truth that mirrors the exact closeLong / closeShort settlement
+     *      math — this contract no longer replicates any AMM formulas.
      */
-    function _readLive(Position memory pos) internal view returns (LiveData memory ld) {
+    function _readLive(uint256 tokenId, Position memory pos) internal view returns (LiveData memory ld) {
         ld.tokenDecimals = 18; // safe default
 
-        // Token symbol (best-effort)
+        // Token symbol + decimals (best-effort)
         try IEXNIHILOPool(pos.pool).underlyingToken() returns (address token) {
             try ITokenMeta(token).symbol() returns (string memory sym) {
                 ld.tokenSymbol = sym;
             } catch { ld.tokenSymbol = "TOKEN"; }
-        } catch { ld.tokenSymbol = "TOKEN"; }
-
-        // Pool reserves for PnL
-        try IEXNIHILOPool(pos.pool).backedAirToken() returns (uint256 bam) {
-            uint256 bau         = IEXNIHILOPool(pos.pool).backedAirUsd();
-            address airTokenAddr = IEXNIHILOPool(pos.pool).airToken();
-            address airUsdAddr  = IEXNIHILOPool(pos.pool).airUsdToken();
-            uint256 airTokenSup  = ITokenMeta(airTokenAddr).totalSupply();
-            uint256 airUsdSup   = ITokenMeta(airUsdAddr).totalSupply();
-            uint256 swapFee      = IEXNIHILOPool(pos.pool).swapFeeBps();
-
-            // Read airToken decimals for display formatting
-            try ITokenMeta(airTokenAddr).decimals() returns (uint8 d) {
+            try ITokenMeta(token).decimals() returns (uint8 d) {
                 ld.tokenDecimals = d;
             } catch {}
+        } catch { ld.tokenSymbol = "TOKEN"; }
 
-            if (pos.isLong) {
-                // SWAP-3: mirrors closeLong
-                if (airTokenSup > pos.lockedAmount) {
-                    uint256 airUsdOut = _cpOut(
-                        pos.lockedAmount,
-                        airTokenSup - pos.lockedAmount,
-                        bau,
-                        swapFee
-                    );
-                    ld.pnlReady = true;
-                    if (airUsdOut >= pos.airUsdMinted) {
-                        uint256 surplus  = airUsdOut - pos.airUsdMinted;
-                        uint256 closeFee = (surplus * _CLOSE_FEE_BPS) / _BPS_DENOM;
-                        ld.pnlPositive   = true;
-                        ld.pnlAbs        = surplus - closeFee;
-                    } else {
-                        ld.pnlPositive = false;
-                        ld.pnlAbs      = pos.airUsdMinted - airUsdOut;
-                    }
-                }
-            } else {
-                // SWAP-2: mirrors closeShort — subtract lockedAmount from airUsd supply
-                // (locked airUsd is in PositionNFT, not in the pool's active reserve).
-                uint256 effectiveAirUsdSup = airUsdSup > pos.lockedAmount ? airUsdSup - pos.lockedAmount : 0;
-                uint256 totalBuyable = _cpOut(pos.lockedAmount, effectiveAirUsdSup, bam, swapFee);
-                if (totalBuyable > 0 && totalBuyable >= pos.airTokenMinted) {
-                    uint256 cost = (pos.lockedAmount * pos.airTokenMinted + totalBuyable - 1) / totalBuyable;
-                    ld.pnlReady = true;
-                    if (pos.lockedAmount > cost) {
-                        uint256 surplus  = pos.lockedAmount - cost;
-                        uint256 closeFee = (surplus * _CLOSE_FEE_BPS) / _BPS_DENOM;
-                        ld.pnlPositive   = true;
-                        ld.pnlAbs        = surplus - closeFee;
-                    } else {
-                        ld.pnlPositive = false;
-                        ld.pnlAbs      = cost - pos.lockedAmount;
-                    }
+        // Live PnL quote (net of close fee on profit)
+        try IEXNIHILOPool(pos.pool).quoteClose(tokenId) returns (bool ready, int256 pnl) {
+            if (ready) {
+                ld.pnlReady = true;
+                if (pnl >= 0) {
+                    ld.pnlPositive = true;
+                    ld.pnlAbs      = uint256(pnl);
+                } else {
+                    ld.pnlPositive = false;
+                    ld.pnlAbs      = uint256(-pnl);
                 }
             }
         } catch { /* pnlReady stays false */ }
@@ -416,8 +428,8 @@ contract PositionNFT is ERC721Enumerable {
         bytes memory styles = abi.encodePacked(
             "<defs><style>",
             ".f{font-family:'Courier New',Courier,monospace;}",
-            ".lbl{font-size:9;letter-spacing:2;fill:#555;}",
-            ".val{font-size:13;fill:#ccc;}",
+            ".lbl{font-size:10;letter-spacing:2;fill:#555;}",
+            ".val{font-size:15;fill:#ccc;}",
             // Glitch cyan — exact keyframes from the website
             "@keyframes gc{",
             "0%,87%,100%{clip-path:inset(0 0 100% 0);opacity:0;transform:translateX(0)}",
@@ -437,26 +449,27 @@ contract PositionNFT is ERC721Enumerable {
             "</style></defs>"
         );
 
+        // 800x450 — 16:9, the ratio X renders in-timeline without cropping.
         bytes memory chrome = abi.encodePacked(
-            '<rect width="400" height="440" fill="#000"/>',
-            '<rect x="1" y="1" width="398" height="438" fill="none" stroke="#1a1a1a"/>',
-            '<polyline points="1,20 1,1 20,1"           fill="none" stroke="#00e5ff" stroke-width="1.5"/>',
-            '<polyline points="380,1 399,1 399,20"       fill="none" stroke="#00e5ff" stroke-width="1.5"/>',
-            '<polyline points="1,420 1,439 20,439"       fill="none" stroke="#00e5ff" stroke-width="1.5"/>',
-            '<polyline points="380,439 399,439 399,420"  fill="none" stroke="#00e5ff" stroke-width="1.5"/>'
+            '<rect width="800" height="450" fill="#000"/>',
+            '<rect x="1" y="1" width="798" height="448" fill="none" stroke="#1a1a1a"/>',
+            '<polyline points="1,24 1,1 24,1"            fill="none" stroke="#00e5ff" stroke-width="1.5"/>',
+            '<polyline points="776,1 799,1 799,24"       fill="none" stroke="#00e5ff" stroke-width="1.5"/>',
+            '<polyline points="1,426 1,449 24,449"       fill="none" stroke="#00e5ff" stroke-width="1.5"/>',
+            '<polyline points="776,449 799,449 799,426"  fill="none" stroke="#00e5ff" stroke-width="1.5"/>'
         );
 
         // Three-layer glitch title: cyan behind, red behind, white on top
         bytes memory title = abi.encodePacked(
-            '<text x="20" y="42" class="f gc" font-size="26" letter-spacing="6" font-weight="bold">EXNIHILO</text>',
-            '<text x="20" y="42" class="f gr" font-size="26" letter-spacing="6" font-weight="bold">EXNIHILO</text>',
-            '<text x="20" y="42" class="f"    font-size="26" letter-spacing="6" fill="#fff" font-weight="bold">EXNIHILO</text>',
-            '<text x="20" y="58" class="f" font-size="9" letter-spacing="3" fill="#00e5ff">POSITION CERTIFICATE</text>',
-            '<line x1="20" y1="70" x2="380" y2="70" stroke="#1a1a1a"/>'
+            '<text x="32" y="58" class="f gc" font-size="32" letter-spacing="8" font-weight="bold">EXNIHILO</text>',
+            '<text x="32" y="58" class="f gr" font-size="32" letter-spacing="8" font-weight="bold">EXNIHILO</text>',
+            '<text x="32" y="58" class="f"    font-size="32" letter-spacing="8" fill="#fff" font-weight="bold">EXNIHILO</text>',
+            '<text x="32" y="78" class="f" font-size="10" letter-spacing="3" fill="#00e5ff">POSITION CERTIFICATE</text>',
+            '<line x1="32" y1="96" x2="768" y2="96" stroke="#1a1a1a"/>'
         );
 
         return abi.encodePacked(
-            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 440">',
+            '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450" viewBox="0 0 800 450">',
             styles,
             chrome,
             title
@@ -470,37 +483,46 @@ contract PositionNFT is ERC721Enumerable {
         string memory tokenSymbol
     ) internal pure returns (bytes memory) {
         string memory market = string(abi.encodePacked(tokenSymbol, " / USDC"));
-        return abi.encodePacked(
-            '<rect x="20" y="82" width="56" height="20" fill="', sc, '" fill-opacity="0.08"/>',
-            '<rect x="20" y="82" width="56" height="20" fill="none" stroke="', sc, '" stroke-opacity="0.35"/>',
-            '<text x="48" y="96" class="f" font-size="10" letter-spacing="2" fill="', sc, '" text-anchor="middle">', sl, "</text>",
-            '<text x="86" y="96" class="f" font-size="14" letter-spacing="2" fill="#fff" font-weight="bold">', market, "</text>",
-            '<text x="380" y="96" class="f" font-size="10" fill="#3a3a3a" text-anchor="end">#', tokenId.toString(), "</text>",
-            '<line x1="20" y1="114" x2="380" y2="114" stroke="#1a1a1a"/>'
+
+        // Split across two calls to stay within encodePacked's 16-argument limit.
+        bytes memory badge = abi.encodePacked(
+            '<rect x="32" y="110" width="68" height="24" fill="', sc, '" fill-opacity="0.08"/>',
+            '<rect x="32" y="110" width="68" height="24" fill="none" stroke="', sc, '" stroke-opacity="0.35"/>',
+            '<text x="66" y="126" class="f" font-size="11" letter-spacing="2" fill="', sc, '" text-anchor="middle">', sl, "</text>"
         );
+
+        bytes memory head = abi.encodePacked(
+            '<text x="112" y="128" class="f" font-size="19" letter-spacing="2" fill="#fff" font-weight="bold">', market, "</text>",
+            '<text x="768" y="58" class="f" font-size="12" fill="#3a3a3a" text-anchor="end">#', tokenId.toString(), "</text>"
+        );
+
+        return abi.encodePacked(badge, head);
     }
 
     function _svgLongData(Position memory pos, LiveData memory ld) internal pure returns (bytes memory) {
+        // Columns 1-3 of the bottom stats strip; the footer adds 4-5.
         string memory lockedLabel = string(abi.encodePacked("LOCKED ", ld.tokenSymbol));
         return abi.encodePacked(
-            '<text x="20"  y="136" class="f lbl">POSITION SIZE</text>',
-            '<text x="210" y="136" class="f lbl">', lockedLabel, "</text>",
-            '<text x="20"  y="156" class="f val">', _fmt6(pos.usdcIn),        "</text>",
-            '<text x="210" y="156" class="f val">', _fmtToken(pos.lockedAmount, ld.tokenDecimals), "</text>",
-            '<text x="20"  y="196" class="f lbl">FEES PAID</text>',
-            '<text x="20"  y="216" class="f val">', _fmt6(pos.feesPaid), "</text>"
+            '<text x="32"  y="326" class="f lbl">POSITION SIZE</text>',
+            '<text x="179" y="326" class="f lbl">', lockedLabel, "</text>",
+            '<text x="326" y="326" class="f lbl">FEES PAID</text>',
+            '<text x="32"  y="352" class="f val">', _fmt6(pos.usdcIn),        "</text>",
+            '<text x="179" y="352" class="f val">', _fmtToken(pos.lockedAmount, ld.tokenDecimals), "</text>",
+            '<text x="326" y="352" class="f val">', _fmt6(pos.feesPaid), "</text>"
         );
     }
 
-    function _svgShortData(Position memory pos, LiveData memory ld) internal pure returns (bytes memory) {
-        string memory debtLabel = string(abi.encodePacked("DEBT (air", ld.tokenSymbol, ")"));
+    function _svgShortData(Position memory pos, LiveData memory) internal pure returns (bytes memory) {
+        // Mirrors the long layout (SIZE | LOCKED collateral) so both sides
+        // read the same. The airToken debt stays in the JSON attributes for
+        // marketplace pricing — on the certificate it is noise.
         return abi.encodePacked(
-            '<text x="20"  y="136" class="f lbl">LOCKED USDC</text>',
-            '<text x="210" y="136" class="f lbl">', debtLabel, "</text>",
-            '<text x="20"  y="156" class="f val">', _fmt6(pos.lockedAmount), "</text>",
-            '<text x="210" y="156" class="f val">', _fmtToken(pos.airTokenMinted, ld.tokenDecimals), "</text>",
-            '<text x="20"  y="196" class="f lbl">FEES PAID</text>',
-            '<text x="20"  y="216" class="f val">', _fmt6(pos.feesPaid),     "</text>"
+            '<text x="32"  y="326" class="f lbl">POSITION SIZE</text>',
+            '<text x="179" y="326" class="f lbl">LOCKED USDC</text>',
+            '<text x="326" y="326" class="f lbl">FEES PAID</text>',
+            '<text x="32"  y="352" class="f val">', _fmt6(pos.usdcIn),      "</text>",
+            '<text x="179" y="352" class="f val">', _fmt6(pos.lockedAmount), "</text>",
+            '<text x="326" y="352" class="f val">', _fmt6(pos.feesPaid),     "</text>"
         );
     }
 
@@ -526,43 +548,24 @@ contract PositionNFT is ERC721Enumerable {
             pnlText = string(abi.encodePacked(sign, _fmt6(ld.pnlAbs), pctPart));
         }
 
+        // Hero of the card — centred in the open space above the stats strip.
         return abi.encodePacked(
-            '<line x1="20" y1="244" x2="380" y2="244" stroke="#1a1a1a"/>',
-            '<text x="200" y="268" class="f lbl" text-anchor="middle" letter-spacing="4">EST. PnL</text>',
-            '<text x="200" y="310" class="f" font-size="24" font-weight="bold" fill="', pnlColor, '" text-anchor="middle" letter-spacing="2">', pnlText, "</text>",
-            '<line x1="20" y1="334" x2="380" y2="334" stroke="#1a1a1a"/>'
+            '<text x="400" y="200" class="f lbl" text-anchor="middle" letter-spacing="4">EST. PnL</text>',
+            '<text x="400" y="256" class="f" font-size="48" font-weight="bold" fill="', pnlColor, '" text-anchor="middle" letter-spacing="2">', pnlText, "</text>"
         );
     }
 
     function _svgFooter(Position memory pos) internal pure returns (bytes memory) {
+        // Divider above the strip, columns 4-5, and the tagline.
         return abi.encodePacked(
-            '<text x="20" y="356" class="f lbl">OPENED</text>',
-            '<text x="20" y="374" class="f" font-size="11" fill="#444">', _fmtDate(pos.openedAt), "</text>",
-            '<text x="210" y="356" class="f lbl">EXPIRES</text>',
-            '<text x="210" y="374" class="f" font-size="11" fill="#444">', _fmtDate(pos.deadline), "</text>"
+            '<line x1="32" y1="296" x2="768" y2="296" stroke="#1a1a1a"/>',
+            '<text x="473" y="326" class="f lbl">OPENED</text>',
+            '<text x="473" y="352" class="f" font-size="13" fill="#666">', _fmtDate(pos.openedAt), "</text>",
+            '<text x="620" y="326" class="f lbl">EXPIRES</text>',
+            '<text x="620" y="352" class="f" font-size="13" fill="#666">', _fmtDate(pos.deadline), "</text>",
+            '<text x="768" y="424" class="f" font-size="10" letter-spacing="3" fill="#333" text-anchor="end">OUT OF THIN AIR</text>',
+            '<text x="32" y="424" class="f" font-size="10" letter-spacing="2" fill="#333">exnihilo.markets</text>'
         );
-    }
-
-    // ── AMM math (mirrors EXNIHILOPool) ──────────────────────────────────────
-
-    uint256 private constant _BPS_DENOM      = 10_000;
-    uint256 private constant _CLOSE_FEE_BPS  = 100; // 1 % — must match EXNIHILOPool
-
-    /**
-     * @dev Constant-product output with spot-price fee, identical to
-     *      EXNIHILOPool._cpAmountOut.
-     */
-    function _cpOut(
-        uint256 amountIn,
-        uint256 reserveIn,
-        uint256 reserveOut,
-        uint256 feeBps
-    ) internal pure returns (uint256) {
-        if (reserveIn == 0 || reserveOut == 0) return 0;
-        uint256 rawOut = (amountIn * reserveOut) / (reserveIn + amountIn);
-        uint256 fee    = (amountIn * reserveOut * feeBps) / (reserveIn * _BPS_DENOM);
-        if (rawOut <= fee) return 0;
-        return rawOut - fee;
     }
 
     // ── Formatters ─────────────────────────────────────────────────────────────

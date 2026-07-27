@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { loadFixture, time } from "@nomicfoundation/hardhat-network-helpers";
-import { AirToken, PositionNFT } from "../typechain-types";
+import { PositionNFT } from "../typechain-types";
 
 describe("PositionNFT", function () {
   // ── Helpers ────────────────────────────────────────────────────────────────
@@ -18,79 +18,55 @@ describe("PositionNFT", function () {
   // ── Fixtures ───────────────────────────────────────────────────────────────
 
   /**
-   * Deploys PositionNFT and two AirTokens (airToken 18dec, airUsd 6dec).
-   * `pool` signer acts as the pool for both AirTokens and as msg.sender for
-   * mintLong / mintShort calls.
+   * Deploys PositionNFT. The NFT is a pure registry: no collateral custody,
+   * positions are described entirely by the stored struct. `pool` signer acts
+   * as msg.sender for mintLong / mintShort calls. A MockFactory registers the
+   * pool signer so PositionNFT's registered-pool mint guard passes.
    */
   async function baseFixture() {
     const [factory, pool, trader, other] = await ethers.getSigners();
 
-    // Deploy and wire airToken (18 decimals)
-    const AirToken = await ethers.getContractFactory("AirToken");
-    const airToken: AirToken = await AirToken.connect(factory).deploy(
-      "airPEPE",
-      "airPEPE",
-      18
-    );
-    await airToken.connect(factory).initPool(pool.address);
-
-    // Deploy and wire airUsd (6 decimals)
-    const airUsd: AirToken = await AirToken.connect(factory).deploy(
-      "airPEPEUsd",
-      "airPEPEUsd",
-      6
-    );
-    await airUsd.connect(factory).initPool(pool.address);
-
-    // Deploy PositionNFT
     const PositionNFT = await ethers.getContractFactory("PositionNFT");
     const nft: PositionNFT = await PositionNFT.deploy();
 
-    return { nft, airToken, airUsd, factory, pool, trader, other };
+    const mockFactory = await (await ethers.getContractFactory("MockFactory")).deploy();
+    await nft.connect(factory).initFactory(await mockFactory.getAddress());
+    await mockFactory.setPool(pool.address, true);
+
+    return { nft, mockFactory, factory, pool, trader, other };
   }
 
   /**
-   * Extends baseFixture with a pool-side helper that mints wrapper tokens to
-   * the pool, approves the NFT contract, and calls mintLong.
+   * Extends baseFixture with a minted long position.
    */
   async function withLongPositionFixture() {
     const base = await baseFixture();
-    const { nft, airToken, pool, trader } = base;
+    const { nft, pool, trader } = base;
 
-    // Pool mints airToken to itself, then approves and locks
-    await airToken.connect(pool).mint(pool.address, LOCK_AMOUNT);
-    await airToken.connect(pool).approve(await nft.getAddress(), LOCK_AMOUNT);
-
-    const tx = await nft
+    await nft
       .connect(pool)
       .mintLong(
         trader.address,
         pool.address,
-        await airToken.getAddress(),
         USDC_IN,
         AIR_USD_MINTED,
         LOCK_AMOUNT,
         FEES_PAID,
         9999999999n
       );
-    const receipt = await tx.wait();
 
     return { ...base, longTokenId: 0n };
   }
 
   async function withShortPositionFixture() {
     const base = await baseFixture();
-    const { nft, airUsd, pool, trader } = base;
-
-    await airUsd.connect(pool).mint(pool.address, AIR_USD_LOCKED);
-    await airUsd.connect(pool).approve(await nft.getAddress(), AIR_USD_LOCKED);
+    const { nft, pool, trader } = base;
 
     await nft
       .connect(pool)
       .mintShort(
         trader.address,
         pool.address,
-        await airUsd.getAddress(),
         AIR_TOKEN_MINTED,
         AIR_USD_LOCKED,
         SHORT_USDC_NOTIONAL,
@@ -120,12 +96,11 @@ describe("PositionNFT", function () {
     });
 
     it("stores correct position data", async function () {
-      const { nft, airToken, pool } = await loadFixture(withLongPositionFixture);
+      const { nft, pool } = await loadFixture(withLongPositionFixture);
       const pos = await nft.getPosition(0n);
 
       expect(pos.isLong).to.equal(true);
       expect(pos.pool).to.equal(pool.address);
-      expect(pos.lockedToken).to.equal(await airToken.getAddress());
       expect(pos.lockedAmount).to.equal(LOCK_AMOUNT);
       expect(pos.usdcIn).to.equal(USDC_IN);
       expect(pos.airUsdMinted).to.equal(AIR_USD_MINTED);
@@ -140,37 +115,19 @@ describe("PositionNFT", function () {
       expect(pos.openedAt).to.equal(BigInt(block!.timestamp));
     });
 
-    it("pulls airToken into the NFT contract custody", async function () {
-      const { nft, airToken } = await loadFixture(withLongPositionFixture);
-      expect(await airToken.balanceOf(await nft.getAddress())).to.equal(
-        LOCK_AMOUNT
-      );
-    });
-
-    it("removes airToken from the pool", async function () {
-      const { airToken, pool } = await loadFixture(withLongPositionFixture);
-      expect(await airToken.balanceOf(pool.address)).to.equal(0n);
-    });
-
     it("increments token IDs for successive mints", async function () {
-      const { nft, airToken, airUsd, pool, trader } =
-        await loadFixture(baseFixture);
-
-      await airToken.connect(pool).mint(pool.address, LOCK_AMOUNT * 2n);
-      await airToken
-        .connect(pool)
-        .approve(await nft.getAddress(), LOCK_AMOUNT * 2n);
+      const { nft, pool, trader } = await loadFixture(baseFixture);
 
       await nft
         .connect(pool)
         .mintLong(
-          trader.address, pool.address, await airToken.getAddress(),
+          trader.address, pool.address,
           USDC_IN, AIR_USD_MINTED, LOCK_AMOUNT, FEES_PAID, 9999999999n
         );
       await nft
         .connect(pool)
         .mintLong(
-          trader.address, pool.address, await airToken.getAddress(),
+          trader.address, pool.address,
           USDC_IN, AIR_USD_MINTED, LOCK_AMOUNT, FEES_PAID, 9999999999n
         );
 
@@ -179,34 +136,45 @@ describe("PositionNFT", function () {
     });
 
     it("reverts when msg.sender differs from pool argument", async function () {
-      const { nft, airToken, pool, other, trader } =
-        await loadFixture(baseFixture);
-      await airToken.connect(pool).mint(pool.address, LOCK_AMOUNT);
-      await airToken.connect(pool).approve(await nft.getAddress(), LOCK_AMOUNT);
+      const { nft, pool, other, trader } = await loadFixture(baseFixture);
 
       await expect(
         nft
           .connect(other) // not `pool`
           .mintLong(
-            trader.address, pool.address, await airToken.getAddress(),
+            trader.address, pool.address,
             USDC_IN, AIR_USD_MINTED, LOCK_AMOUNT, FEES_PAID, 9999999999n
           )
       ).to.be.revertedWithCustomError(nft, "OnlyPool");
     });
 
-    it("reverts when pool has not approved enough airToken", async function () {
-      const { nft, airToken, pool, trader } = await loadFixture(baseFixture);
-      await airToken.connect(pool).mint(pool.address, LOCK_AMOUNT);
-      // No approve call
+    it("reverts with FactoryNotSet before initFactory is called (NM-001)", async function () {
+      const { pool, trader } = await loadFixture(baseFixture);
+      const freshNft = await (await ethers.getContractFactory("PositionNFT")).deploy();
 
       await expect(
-        nft
+        freshNft
           .connect(pool)
           .mintLong(
-            trader.address, pool.address, await airToken.getAddress(),
+            trader.address, pool.address,
             USDC_IN, AIR_USD_MINTED, LOCK_AMOUNT, FEES_PAID, 9999999999n
           )
-      ).to.be.revertedWithCustomError(airToken, "ERC20InsufficientAllowance");
+      ).to.be.revertedWithCustomError(freshNft, "FactoryNotSet");
+    });
+
+    it("reverts when the pool is not registered with the factory (NM-001)", async function () {
+      const { nft, other, trader } = await loadFixture(baseFixture);
+
+      // `other` passes the msg.sender == pool check by naming itself as the
+      // pool, but is not registered with the factory.
+      await expect(
+        nft
+          .connect(other)
+          .mintLong(
+            trader.address, other.address,
+            USDC_IN, AIR_USD_MINTED, LOCK_AMOUNT, FEES_PAID, 9999999999n
+          )
+      ).to.be.revertedWithCustomError(nft, "OnlyPool");
     });
   });
 
@@ -219,12 +187,11 @@ describe("PositionNFT", function () {
     });
 
     it("stores correct position data", async function () {
-      const { nft, airUsd, pool } = await loadFixture(withShortPositionFixture);
+      const { nft, pool } = await loadFixture(withShortPositionFixture);
       const pos = await nft.getPosition(0n);
 
       expect(pos.isLong).to.equal(false);
       expect(pos.pool).to.equal(pool.address);
-      expect(pos.lockedToken).to.equal(await airUsd.getAddress());
       expect(pos.lockedAmount).to.equal(AIR_USD_LOCKED);
       expect(pos.usdcIn).to.equal(SHORT_USDC_NOTIONAL);
       expect(pos.airUsdMinted).to.equal(0n);
@@ -232,24 +199,14 @@ describe("PositionNFT", function () {
       expect(pos.feesPaid).to.equal(FEES_PAID);
     });
 
-    it("pulls airUsd into the NFT contract custody", async function () {
-      const { nft, airUsd } = await loadFixture(withShortPositionFixture);
-      expect(await airUsd.balanceOf(await nft.getAddress())).to.equal(
-        AIR_USD_LOCKED
-      );
-    });
-
     it("reverts when msg.sender differs from pool argument", async function () {
-      const { nft, airUsd, pool, other, trader } =
-        await loadFixture(baseFixture);
-      await airUsd.connect(pool).mint(pool.address, AIR_USD_LOCKED);
-      await airUsd.connect(pool).approve(await nft.getAddress(), AIR_USD_LOCKED);
+      const { nft, pool, other, trader } = await loadFixture(baseFixture);
 
       await expect(
         nft
           .connect(other)
           .mintShort(
-            trader.address, pool.address, await airUsd.getAddress(),
+            trader.address, pool.address,
             AIR_TOKEN_MINTED, AIR_USD_LOCKED, SHORT_USDC_NOTIONAL, FEES_PAID, 9999999999n
           )
       ).to.be.revertedWithCustomError(nft, "OnlyPool");
@@ -277,14 +234,8 @@ describe("PositionNFT", function () {
       await expect(nft.ownerOf(0n)).to.be.reverted;
     });
 
-    it("returns locked airToken to the pool", async function () {
-      const { nft, airToken, pool } = await loadFixture(withLongPositionFixture);
-      await nft.connect(pool).release(0n);
-      expect(await airToken.balanceOf(pool.address)).to.equal(LOCK_AMOUNT);
-    });
-
     it("returns correct position data for a long", async function () {
-      const { nft, airToken, pool } = await loadFixture(withLongPositionFixture);
+      const { nft, pool } = await loadFixture(withLongPositionFixture);
       const pos = await nft.connect(pool).release.staticCall(0n);
 
       expect(pos.isLong).to.equal(true);
@@ -293,12 +244,10 @@ describe("PositionNFT", function () {
       expect(pos.usdcIn).to.equal(USDC_IN);
     });
 
-    it("burns the short NFT and returns airUsd to the pool", async function () {
-      const { nft, airUsd, pool } = await loadFixture(withShortPositionFixture);
+    it("burns the short NFT", async function () {
+      const { nft, pool } = await loadFixture(withShortPositionFixture);
       await nft.connect(pool).release(0n);
-
       await expect(nft.ownerOf(0n)).to.be.reverted;
-      expect(await airUsd.balanceOf(pool.address)).to.equal(AIR_USD_LOCKED);
     });
 
     it("returns correct position data for a short", async function () {
@@ -365,8 +314,8 @@ describe("PositionNFT", function () {
       expect(await nft.ownerOf(0n)).to.equal(other.address);
     });
 
-    it("new owner receives the locked tokens on release", async function () {
-      const { nft, airToken, pool, trader, other } =
+    it("pool can still release after an ownership transfer", async function () {
+      const { nft, pool, trader, other } =
         await loadFixture(withLongPositionFixture);
 
       // trader transfers position to other
@@ -374,9 +323,7 @@ describe("PositionNFT", function () {
 
       // pool still calls release (pool is always the caller for settlement)
       await nft.connect(pool).release(0n);
-
-      // locked airToken returned to pool; owner change doesn't affect custody
-      expect(await airToken.balanceOf(pool.address)).to.equal(LOCK_AMOUNT);
+      await expect(nft.ownerOf(0n)).to.be.reverted;
     });
   });
 });

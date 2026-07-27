@@ -4,7 +4,7 @@ LPs earn fees from three sources.
 
 ## 1. Position open fees — 3% of notional
 
-Every time a trader opens a long or short, 3% of the USDC notional is added to `lpFeesAccumulated`. The LP can claim these at any time via `claimFees()`.
+Every time a trader opens a long or short, 3% of the USDC notional is added to `lpFeesAccumulated`. Renewals accrue 3% of the position's current mark value (notional + profit) plus the renewal impact slice. The LP can claim these at any time via `claimFees(to)`.
 
 ```
 baseFee = usdcAmount * 5 / 100
@@ -27,7 +27,7 @@ The configurable swap fee (default 1%) stays in the pool on every swap. This imp
 
 ## Claiming fees
 
-Call `claimFees()` on the pool. The accumulated USDC (base LP fee + impact fee) is transferred to the LP NFT holder and `lpFeesAccumulated` resets to zero.
+Call `claimFees(to)` on the pool. The accumulated USDC (base LP fee + impact fee) is transferred to `to` and `lpFeesAccumulated` resets to zero. Fees are pull payments — nothing is ever pushed automatically, so no wallet condition can interfere with pool operations.
 
 Only the current LP NFT holder can claim.
 

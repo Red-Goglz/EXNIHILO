@@ -32,6 +32,6 @@ This ensures the fee is a true percentage of notional value, regardless of trade
 
 Every swap accepts a `minAmountOut` parameter. If the output would be less than this value, the transaction reverts.
 
-## Wrapper tokens
+## Internal accounting
 
-Under the hood, swaps operate on AirTokens (airToken / airUsd). The pool automatically wraps your raw tokens on deposit and unwraps on withdrawal — you interact with the real tokens directly.
+Under the hood, swaps update the pool's internal airToken / airUsd supply counters. You interact with the real tokens directly — no wrapper tokens exist.

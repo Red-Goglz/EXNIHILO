@@ -24,10 +24,9 @@ async function main() {
     const pool = await ethers.getContractAt("EXNIHILOPool", poolAddr);
 
     const [
-      airToken,
-      airUsdToken,
       underlyingToken,
       underlyingUsdc,
+      tokenDecimals,
       positionNFT,
       lpNftContract,
       lpNftId,
@@ -35,11 +34,12 @@ async function main() {
       maxPositionUsd,
       maxPositionBps,
       swapFeeBps,
+      positionDuration,
+      factory,
     ] = await Promise.all([
-      pool.airToken(),
-      pool.airUsdToken(),
       pool.underlyingToken(),
       pool.underlyingUsdc(),
+      pool.tokenDecimals(),
       pool.positionNFT(),
       pool.lpNftContract(),
       pool.lpNftId(),
@@ -47,16 +47,17 @@ async function main() {
       pool.maxPositionUsd(),
       pool.maxPositionBps(),
       pool.swapFeeBps(),
+      pool.positionDuration(),
+      pool.factory(),
     ]);
 
     try {
       await run("verify:verify", {
         address: poolAddr,
         constructorArguments: [
-          airToken,
-          airUsdToken,
           underlyingToken,
           underlyingUsdc,
+          tokenDecimals,
           positionNFT,
           lpNftContract,
           lpNftId,
@@ -64,6 +65,8 @@ async function main() {
           maxPositionUsd,
           maxPositionBps,
           swapFeeBps,
+          positionDuration,
+          factory,
         ],
       });
       console.log(`  ✓ ${symbol} verified`);

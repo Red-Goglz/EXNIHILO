@@ -1,5 +1,5 @@
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
-import { FUJI_CHAIN_ID, ADDRESSES } from "../../contracts/addresses.ts";
+import { useAppChain } from "../../hooks/useAppChain.ts";
 
 const FAUCET_ABI = [
   {
@@ -12,25 +12,24 @@ const FAUCET_ABI = [
 ] as const;
 
 export default function FaucetButtons() {
-  const { isConnected, chainId } = useAccount();
+  const { isConnected } = useAccount();
+  const { chainId, addresses, testnet } = useAppChain();
 
-  const isTestnet = chainId === FUJI_CHAIN_ID || chainId === 31337;
-  if (!isConnected || !isTestnet) return null;
+  if (!isConnected || !testnet) return null;
 
-  const addrs = ADDRESSES[chainId as keyof typeof ADDRESSES];
-  const faucetAddr = addrs && "faucet" in addrs ? addrs.faucet : undefined;
+  const faucetAddr = "faucet" in addresses ? addresses.faucet : undefined;
 
   return (
     <>
       <AvaxFaucetLink />
-      {faucetAddr && <UsdcFaucetClaim faucetAddr={faucetAddr} />}
+      {faucetAddr && <UsdcFaucetClaim faucetAddr={faucetAddr} chainId={chainId} />}
     </>
   );
 }
 
 const faucetButtonStyle: React.CSSProperties = {
   fontFamily: "var(--font-mono)",
-  fontSize: "0.58rem",
+  fontSize: "var(--fs-micro)",
   letterSpacing: "0.12em",
   padding: "4px 10px",
   border: "1px solid var(--green)",
@@ -62,7 +61,7 @@ function AvaxFaucetLink() {
   );
 }
 
-function UsdcFaucetClaim({ faucetAddr }: { faucetAddr: `0x${string}` }) {
+function UsdcFaucetClaim({ faucetAddr, chainId }: { faucetAddr: `0x${string}`; chainId: number }) {
   const { writeContract, data: txHash, isPending, reset } = useWriteContract();
   const { isLoading: isConfirming, isSuccess, isError } = useWaitForTransactionReceipt({ hash: txHash });
 
@@ -87,6 +86,7 @@ function UsdcFaucetClaim({ faucetAddr }: { faucetAddr: `0x${string}` }) {
       address: faucetAddr,
       abi: FAUCET_ABI,
       functionName: "claim",
+      chainId,
     });
   };
 

@@ -10,32 +10,19 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * @dev AirToken interface: an ERC-20 whose mint/burn are restricted to the
- *      pool that owns it. The pool uses mint to wrap raw deposits and burn to
- *      unwrap withdrawals. Synthetic (unbacked) mint/burn is also possible and
- *      is how leveraged positions inflate or deflate the virtual supply.
- */
-interface IAirToken is IERC20 {
-    function mint(address to, uint256 amount) external;
-    function burn(address from, uint256 amount) external;
-    function decimals() external view returns (uint8);
-}
-
-/**
  * @dev Position data structure shared between PositionNFT and the pool.
  *      Declared at file level so both the interface and the pool can reference
  *      it without import gymnastics.
  *
  *      Fields used per side:
- *        Long  — lockedToken = airToken, lockedAmount = airTokenLocked,
+ *        Long  — lockedAmount = airTokenLocked (airToken units),
  *                usdcIn, airUsdMinted, feesPaid
- *        Short — lockedToken = airUsd,  lockedAmount = airUsdLocked,
+ *        Short — lockedAmount = airUsdLocked (airUsd units),
  *                airTokenMinted, feesPaid
  */
 struct Position {
     bool    isLong;
     address pool;
-    address lockedToken;
     uint256 lockedAmount;
     uint256 usdcIn;
     uint256 airUsdMinted;
@@ -52,7 +39,6 @@ interface IPositionNFT {
     function mintLong(
         address to,
         address pool,
-        address airToken,
         uint256 usdcIn,
         uint256 airUsdMinted,
         uint256 airTokenLocked,
@@ -63,7 +49,6 @@ interface IPositionNFT {
     function mintShort(
         address to,
         address pool,
-        address airUsdToken,
         uint256 airTokenMinted,
         uint256 airUsdLocked,
         uint256 usdcIn,
@@ -73,7 +58,15 @@ interface IPositionNFT {
 
     function release(uint256 tokenId) external returns (Position memory);
 
-    function extendDeadline(uint256 tokenId, uint256 newDeadline) external;
+    function applyRenewal(
+        uint256 tokenId,
+        uint256 newLockedAmount,
+        uint256 newAirUsdMinted,
+        uint256 addFeesPaid,
+        uint256 newDeadline
+    ) external;
+
+    function getAutoRenew(uint256 tokenId) external view returns (bool enabled, uint256 maxFee);
 
     function getPosition(uint256 tokenId) external view returns (Position memory);
 
@@ -109,26 +102,37 @@ interface IEXNIHILOFactory {
  *   x and y denote the two pool RESERVES (not trade direction — either side
  *   can be input or output depending on the operation).
  *
- *   SWAP-1  Normal swap          x = backedAirToken,          y = backedAirUsd
- *   SWAP-2  Long-open/Short-close x = backedAirToken,         y = airUsd.totalSupply()
- *   SWAP-3  Short-open/Long-close x = airToken.totalSupply(), y = backedAirUsd
+ *   SWAP-1  Normal swap          x = backedAirToken,     y = backedAirUsd
+ *   SWAP-2  Long-open/Short-close x = backedAirToken,    y = airUsdSupply
+ *   SWAP-3  Short-open/Long-close x = airTokenSupply,    y = backedAirUsd
  *
  *   All three modes use the standard constant-product formula:
  *     amountOut = amountIn * reserveOut / (reserveIn + amountIn)
  *
  * ── Reserve Accounting ───────────────────────────────────────────────────────
  *
+ *   airToken / airUsd are pure accounting units (no ERC-20 exists for them).
+ *   Each side is fully described by two counters:
+ *
+ *   airTokenSupply  Total airToken units in existence (backed + synthetic +
+ *                  locked in positions). The SWAP-3 virtual reserve.
+ *   airUsdSupply   Same for the airUsd side. The SWAP-2 virtual reserve.
+ *
  *   backedAirToken  Tracks the amount of airToken that has real underlying token
  *                  collateral behind it.  Increases on LP deposits and on token
  *                  swaps-in; decreases on token swaps-out and on openLong
- *                  (collateral leaves to PositionNFT custody).
+ *                  (collateral locked against the position).
  *
  *   backedAirUsd   Same for the airUsd / USDC side.  Increases on LP deposits
  *                  and USDC swaps-in; decreases on USDC swaps-out and on
- *                  openShort (collateral leaves to PositionNFT custody).
+ *                  openShort (collateral locked against the position).
  *
  *   Synthetic mints (openLong mints airUsd, openShort mints airToken) do NOT
- *   touch the backed reserves — they inflate totalSupply only.
+ *   touch the backed reserves — they inflate the supply counters only.
+ *
+ *   Collateral locked in a position stays counted in the supply counters
+ *   (it exists, it is just out of circulation); settlement math subtracts
+ *   pos.lockedAmount from the relevant supply where required.
  *
  * ── Fee Structure ────────────────────────────────────────────────────────────
  *
@@ -138,8 +142,13 @@ interface IEXNIHILOFactory {
  *                     This gives a true percentage-of-notional fee regardless of
  *                     trade size. Fee stays in pool as passive LP yield.
  *   Position open:    5 % flat on USDC notional + quadratic impact fee.
- *                       3 % → lpFeesAccumulated (claimable via claimFees)
- *                       2 % → protocolTreasury  (transferred immediately)
+ *                       3 % → accrues to lpFeesAccumulated
+ *                       2 % → accrues to protocolFeesAccumulated
+ *                     All fees are PULL payments: the LP NFT holder claims via
+ *                     claimFees(to), the treasury via claimProtocolFees(to).
+ *                     No pool operation ever pushes USDC to a third party, so
+ *                     no recipient (e.g. a USDC-blacklisted address) can block
+ *                     or grief any pool operation.
  *                       Impact fee = 1500 × N × (2×OI+N) / (2 × backedAirUsd × 10000) → LP
  *                       OI-integral formula: split-proof, scales with cumulative OI.
  *
@@ -147,13 +156,12 @@ interface IEXNIHILOFactory {
  *
  *   - ReentrancyGuard  on every state-changing external function.
  *   - CEI pattern      throughout: state written before any external call.
- *   - Reserve invariant: backedAirToken ≤ airToken.totalSupply() and vice versa,
+ *   - Reserve invariant: backedAirToken ≤ airTokenSupply and vice versa,
  *                        checked after every operation that touches backed reserves.
  *   - Slippage guards  (minAmountOut) on swap, openLong, openShort.
  */
 contract EXNIHILOPool is ReentrancyGuard {
     using SafeERC20 for IERC20;
-    using SafeERC20 for IAirToken;
 
     // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -178,14 +186,17 @@ contract EXNIHILOPool is ReentrancyGuard {
     ///      manipulate price → close) unprofitable. 100 bps (1 %) puts the
     ///      default and the floor at the same value.
     uint256 private constant MIN_SWAP_FEE_BPS = 100;   // 1 %
+    /// @dev Flat USDC bounty (6 dec) paid to whoever calls settleExpired().
+    ///      A flat constant rather than gas-derived: the pool is oracle-free,
+    ///      so it cannot convert gas (native units) to USDC on-chain. 0.05 USDC
+    ///      comfortably exceeds the L2 gas cost of the call, keeping expired
+    ///      positions profitable to clean up or auto-renew permissionlessly.
+    uint256 private constant KEEPER_BOUNTY    = 50_000; // 0.05 USDC
 
     // ── Immutables ────────────────────────────────────────────────────────────
 
-    /// @notice AirToken wrapping the underlying asset (typically 18 decimals).
-    IAirToken public immutable airToken;
-
-    /// @notice AirToken wrapping USDC (6 decimals).
-    IAirToken public immutable airUsdToken;
+    /// @notice Decimals of the underlying token (airToken units use the same scale).
+    uint8 public immutable tokenDecimals;
 
     /// @notice Raw underlying ERC-20 held as collateral by this pool.
     IERC20 public immutable underlyingToken;
@@ -222,14 +233,43 @@ contract EXNIHILOPool is ReentrancyGuard {
 
     // ── Mutable state ─────────────────────────────────────────────────────────
 
+    /// @notice Total airToken units in existence (backed + synthetic + locked).
+    ///         Virtual reserve for SWAP-3. Replaces the former wrapper ERC-20's
+    ///         totalSupply().
+    uint256 public airTokenSupply;
+
+    /// @notice Total airUsd units in existence (backed + synthetic + locked).
+    ///         Virtual reserve for SWAP-2.
+    uint256 public airUsdSupply;
+
     /// @notice airToken backed 1 : 1 by deposited underlying tokens.
     uint256 public backedAirToken;
 
     /// @notice airUsd backed 1 : 1 by deposited underlying USDC.
     uint256 public backedAirUsd;
 
-    /// @notice Accumulated LP fees in USDC (6 dec). Claimed via claimFees().
+    /// @notice Accrued LP fees in USDC (6 dec). Pull payment — the LP NFT
+    ///         holder claims via claimFees(to).
     uint256 public lpFeesAccumulated;
+
+    /// @notice Accrued protocol fees in USDC (6 dec). Pull payment — the
+    ///         treasury claims via claimProtocolFees(to).
+    uint256 public protocolFeesAccumulated;
+
+    /// @notice Cumulative USDC (6 dec) claimed by LP holders. Display only.
+    uint256 public lpFeesPaidTotal;
+
+    /// @notice Cumulative USDC (6 dec) claimed by the treasury. Display only.
+    uint256 public protocolFeesPaidTotal;
+
+    /// @notice USDC payouts (6 dec) credited from third-party-triggered
+    ///         settlements (expired-position closes). Pull payment — the
+    ///         recipient withdraws via claimPayout(to), so no recipient can
+    ///         ever block position cleanup.
+    mapping(address => uint256) public claimable;
+
+    /// @notice Sum of all outstanding claimable payouts (solvency accounting).
+    uint256 public totalClaimable;
 
     /// @notice Total number of open long + short positions.
     uint256 public openPositionCount;
@@ -247,6 +287,17 @@ contract EXNIHILOPool is ReentrancyGuard {
     /// @notice Timestamp after which no new positions can be opened and
     ///         existing positions cannot be renewed past. 0 = pool is open.
     uint256 public closeDate;
+
+    /// @notice Sum of `lockedAmount` across all open SHORT positions (6 dec).
+    ///
+    /// @dev    openShort moves real USDC out of `backedAirUsd` and records it as
+    ///         the position's `lockedAmount`. That USDC is still held by this
+    ///         contract but belongs to the trader, so without this counter the
+    ///         reserve invariant treated it as free surplus and could not tell
+    ///         a healthy pool from one that had leaked short collateral.
+    ///         Appended at the end of storage so existing slot offsets are
+    ///         unchanged.
+    uint256 public totalShortCollateral;
 
     // ── Custom errors ─────────────────────────────────────────────────────────
 
@@ -274,6 +325,9 @@ contract EXNIHILOPool is ReentrancyGuard {
     error PoolAlreadyClosed();
     error RenewalExceedsCloseDate();
     error OnlyLpHolderOrDeployer();
+    error OnlyTreasury();
+    error RenewalFeeExceedsMax();
+    error AutoRenewActive();
 
     // ── Events ────────────────────────────────────────────────────────────────
 
@@ -281,10 +335,20 @@ contract EXNIHILOPool is ReentrancyGuard {
 
 
     event PositionOpened(uint256 indexed nftId, address indexed holder, bool isLong);
+    event PositionRenewed(
+        uint256 indexed nftId,
+        address indexed caller,
+        uint256 feePaid,
+        uint256 newDeadline,
+        bool autoRenewed
+    );
     event PositionClosed(uint256 indexed nftId, address indexed holder, uint256 payout);
     event PositionClosedAfterDeadline(uint256 indexed nftId, address indexed caller, uint256 payout);
-    event PayoutFailed(address indexed recipient, uint256 amount);
+    event PayoutCredited(address indexed recipient, uint256 amount);
+    event PayoutClaimed(address indexed recipient, address indexed to, uint256 amount);
     event PoolClosed(address indexed closedBy, uint256 closeDate);
+    event LpFeesPaid(address indexed to, uint256 amount);
+    event ProtocolFeesPaid(address indexed to, uint256 amount);
 
 
     // ── Modifiers ─────────────────────────────────────────────────────────────
@@ -341,10 +405,9 @@ contract EXNIHILOPool is ReentrancyGuard {
     // ── Constructor ───────────────────────────────────────────────────────────
 
     /**
-     * @param airToken_     AirToken wrapper for the underlying asset.
-     * @param airUsdToken_      AirToken wrapper for USDC.
      * @param underlyingToken_   Raw underlying ERC-20 deposited by LP.
      * @param underlyingUsdc_   USDC ERC-20 (6 dec) deposited by LP.
+     * @param tokenDecimals_    Decimals of the underlying token (airToken scale).
      * @param positionNFT_      Shared PositionNFT contract.
      * @param lpNftContract_    Shared LpNFT contract.
      * @param lpNftId_          Which LP NFT token governs this pool.
@@ -357,10 +420,9 @@ contract EXNIHILOPool is ReentrancyGuard {
      * @param factory_          Factory that deployed this pool (for emergency deployer lookup).
      */
     constructor(
-        address airToken_,
-        address airUsdToken_,
         address underlyingToken_,
         address underlyingUsdc_,
+        uint8   tokenDecimals_,
         address positionNFT_,
         address lpNftContract_,
         uint256 lpNftId_,
@@ -371,8 +433,6 @@ contract EXNIHILOPool is ReentrancyGuard {
         uint256 positionDuration_,
         address factory_
     ) {
-        if (airToken_     == address(0)) revert ZeroAddress();
-        if (airUsdToken_      == address(0)) revert ZeroAddress();
         if (underlyingToken_   == address(0)) revert ZeroAddress();
         if (underlyingUsdc_   == address(0)) revert ZeroAddress();
         if (positionNFT_      == address(0)) revert ZeroAddress();
@@ -384,8 +444,7 @@ contract EXNIHILOPool is ReentrancyGuard {
         }
         if (swapFeeBps_ < MIN_SWAP_FEE_BPS || swapFeeBps_ >= BPS_DENOM) revert InvalidSwapFeeBps();
 
-        airToken     = IAirToken(airToken_);
-        airUsdToken      = IAirToken(airUsdToken_);
+        tokenDecimals    = tokenDecimals_;
         underlyingToken   = IERC20(underlyingToken_);
         underlyingUsdc   = IERC20(underlyingUsdc_);
         positionNFT      = IPositionNFT(positionNFT_);
@@ -456,7 +515,7 @@ contract EXNIHILOPool is ReentrancyGuard {
      *   airToken per USDC than the backed ratio would give — that is the leverage.
      *   The minted airToken leaves the pool's backed reserves and is locked in the
      *   PositionNFT. The synthetic airUsd remains as an outstanding debt in
-     *   totalSupply until the position is closed or realized.
+     *   totalSupply until the position is closed.
      *
      *   State changes
      *   ─────────────
@@ -478,30 +537,17 @@ contract EXNIHILOPool is ReentrancyGuard {
 
         _checkLeverageCap(usdcAmount);
 
-        // ── Fee split (5 % base + quadratic impact fee, minimum 0.05 USDC) ──
-        uint256 protocolFee = (usdcAmount * PROTOCOL_FEE_BPS) / BPS_DENOM;
-        uint256 lpFee       = (usdcAmount * LP_FEE_BPS)       / BPS_DENOM;
-        uint256 totalFee    = protocolFee + lpFee;
-        if (totalFee < MIN_POSITION_FEE) {
-            totalFee    = MIN_POSITION_FEE;
-            protocolFee = (MIN_POSITION_FEE * PROTOCOL_FEE_BPS) / (PROTOCOL_FEE_BPS + LP_FEE_BPS);
-            lpFee       = MIN_POSITION_FEE - protocolFee;
-        }
-        // Impact fee: OI-based integral formula (split-proof).
-        // Fee = integral of marginal rate from current OI to OI+N.
+        // Fee split: 5 % base + OI-integral impact fee, minimum 0.05 USDC.
         // Uses longOpenInterest BEFORE this position is added.
-        //   impactFee = IMPACT_FEE_BPS × N × (2×OI + N) / (2 × backedAirUsd × BPS_DENOM)
-        uint256 impactFee = (IMPACT_FEE_BPS * usdcAmount * (2 * longOpenInterest + usdcAmount))
-                          / (2 * backedAirUsd * BPS_DENOM);
-        lpFee    += impactFee;
-        totalFee += impactFee;
+        (uint256 totalFee, uint256 protocolFee, uint256 lpFee) =
+            _openFees(usdcAmount, longOpenInterest);
 
         // SWAP-2: compute airToken output before any state changes.
-        // reserveIn  = airUsd.totalSupply() before the synthetic mint below.
+        // reserveIn  = airUsdSupply before the synthetic mint below.
         // reserveOut = backedAirToken
         uint256 airTokenOut = _cpAmountOut(
             usdcAmount,
-            airUsdToken.totalSupply(),
+            airUsdSupply,
             backedAirToken
         );
 
@@ -512,37 +558,33 @@ contract EXNIHILOPool is ReentrancyGuard {
         // ── EFFECTS ───────────────────────────────────────────────────────────
         openPositionCount++;
         longOpenInterest += usdcAmount;
-        lpFeesAccumulated += lpFee;
 
-        // Mint synthetic airUsd: inflates totalSupply, no new backing.
+        // Mint synthetic airUsd: inflates the supply counter, no new backing.
         // The full usdcAmount becomes the synthetic debt regardless of fees
         // because the trader's notional position size is usdcAmount.
-        airUsdToken.mint(address(this), usdcAmount);
+        airUsdSupply += usdcAmount;
 
-        // Collateral leaves the pool's backed reserves into PositionNFT custody.
+        // Collateral leaves the backed reserves; it stays counted in
+        // airTokenSupply and is recorded as pos.lockedAmount on the NFT.
         backedAirToken -= airTokenOut;
 
         // ── INTERACTIONS ──────────────────────────────────────────────────────
         // The notional is NOT pulled — it is represented synthetically by the
-        // airUsd minted above.  Only the 5 % fee is collected from the trader.
+        // airUsd minted above.  Only the 5 % fee is collected from the trader
+        // and accrued for the treasury and LP to claim (pull payment).
         _transferIn(underlyingUsdc, msg.sender, totalFee);
-        underlyingUsdc.safeTransfer(protocolTreasury, protocolFee);
-
-        airToken.forceApprove(address(positionNFT), airTokenOut);
+        _accrueProtocolFee(protocolFee);
+        _accrueLpFee(lpFee);
 
         uint256 nftId = positionNFT.mintLong(
             recipient,
             address(this),
-            address(airToken),
             usdcAmount,   // usdcIn
             usdcAmount,   // airUsdMinted — synthetic debt owed
             airTokenOut,   // airTokenLocked
             totalFee,
             block.timestamp + positionDuration
         );
-
-        // Clear any residual approval.
-        airToken.forceApprove(address(positionNFT), 0);
 
         _assertReserveInvariant();
 
@@ -554,21 +596,21 @@ contract EXNIHILOPool is ReentrancyGuard {
      *
      *   Settlement
      *   ──────────
-     *   The locked airToken returns from PositionNFT. SWAP-3 prices it against
-     *   (airToken.totalSupply() − lockedAmount, backedAirUsd). If the resulting
-     *   airUsd ≥ the synthetic debt (airUsdMinted), the surplus is unwrapped and
-     *   sent to the holder as USDC. The synthetic debt is burned; the returned
-     *   airToken stays in the pool as fully-backed LP collateral.
+     *   SWAP-3 prices the locked airToken against
+     *   (airTokenSupply − lockedAmount, backedAirUsd). If the resulting
+     *   airUsd ≥ the synthetic debt (airUsdMinted), the surplus is paid to the
+     *   holder as USDC. The synthetic debt is cancelled; the locked airToken
+     *   re-enters the backed reserves as fully-backed LP collateral.
      *
      *   State changes
      *   ─────────────
      *     backedAirToken  += lockedAmount  (airToken collateral returns to LP reserves)
      *     backedAirUsd   −= surplus       (only the profit USDC exits the pool's backing)
-     *     airUsd supply  −= airUsdMinted  (synthetic debt cancelled)
-     *     airUsd supply  −= surplus       (backed wrappers burned for USDC paid to holder)
+     *     airUsdSupply   −= airUsdMinted  (synthetic debt cancelled)
+     *     airUsdSupply   −= surplus       (backed units burned for USDC paid to holder)
      *
-     *   Note: airToken wrappers are NOT burned. The underlying token never left the
-     *   pool, so the returned airToken wrappers correctly represent LP's restored
+     *   Note: airTokenSupply is unchanged. The underlying token never left the
+     *   pool, so the locked airToken units correctly represent LP's restored
      *   claim on that token. Burning them would orphan the underlying tokens.
      *
      * @param nftId      Position NFT token ID.
@@ -582,95 +624,7 @@ contract EXNIHILOPool is ReentrancyGuard {
         if (pos.pool != address(this)) revert PositionNotFromThisPool();
         if (!pos.isLong) revert PositionNotLong();
 
-        // ── CHECKS (before any interaction) ──────────────────────────────────
-        // release() only transfers airToken; it does not mint or burn, so
-        // totalSupply() is identical before and after — safe to compute here.
-        uint256 airTokenSupply = airToken.totalSupply();
-        if (airTokenSupply < pos.lockedAmount) revert PositionUnderwater();
-        uint256 airUsdOut = _cpAmountOut(
-            pos.lockedAmount,
-            airTokenSupply - pos.lockedAmount,
-            backedAirUsd
-        );
-        if (airUsdOut < pos.airUsdMinted) revert PositionUnderwater();
-        uint256 surplus    = airUsdOut - pos.airUsdMinted;
-        uint256 closeFee   = (surplus * CLOSE_FEE_BPS) / BPS_DENOM;
-        uint256 netSurplus = surplus - closeFee;
-        if (netSurplus < minUsdcOut) revert InsufficientOutput();
-
-        // ── EFFECTS ───────────────────────────────────────────────────────────
-        openPositionCount--;
-        longOpenInterest -= pos.airUsdMinted;
-        // The token collateral returns to LP's backed reserves. The underlying
-        // token never left the pool, so restoring backedAirToken correctly
-        // reconciles the returned airToken wrappers with their real backing.
-        backedAirToken += pos.lockedAmount;
-        // The full surplus exits the pool's backed reserve; it is split between
-        // the holder (netSurplus) and the protocol treasury (closeFee).
-        backedAirUsd  -= surplus;
-
-        // ── INTERACTIONS ──────────────────────────────────────────────────────
-        positionNFT.release(nftId);
-        // Burn the synthetic airUsd debt that was created at openLong.
-        airUsdToken.burn(address(this), pos.airUsdMinted);
-        // Burn backed airUsd wrappers for the full surplus USDC being paid out.
-        airUsdToken.burn(address(this), surplus);
-        underlyingUsdc.safeTransfer(holder, netSurplus);
-        underlyingUsdc.safeTransfer(protocolTreasury, closeFee);
-
-        _assertReserveInvariant();
-
-        emit PositionClosed(nftId, holder, netSurplus);
-    }
-
-    /**
-     * @notice Realize a long position at par — the holder pays the USDC debt
-     *         and receives the locked underlying tokens at whatever price they were
-     *         acquired, regardless of market movements.
-     *
-     *   This is a non-speculative exit path: no profit or loss on token price,
-     *   the trader simply converts their synthetic debt into real USDC and
-     *   receives the raw underlying tokens.
-     *
-     *   State changes
-     *   ─────────────
-     *     backedAirUsd  += usdcPaid   (synthetic airUsd from openLong now has real backing)
-     *     airUsd supply  unchanged    (minted at openLong; stays — now fully backed)
-     *     backedAirToken  unchanged    (was reduced at open; token delivered to holder)
-     *     airToken supply −= locked    (burned on unwrap)
-     *
-     * @param nftId  Position NFT token ID.
-     */
-    function realizeLong(uint256 nftId) external nonReentrant {
-        address holder = positionNFT.ownerOf(nftId);
-        if (holder != msg.sender) revert OnlyPositionHolder();
-
-        Position memory pos = positionNFT.getPosition(nftId);
-        if (pos.pool != address(this)) revert PositionNotFromThisPool();
-        if (!pos.isLong) revert PositionNotLong();
-
-        // EFFECTS — only counters that do not depend on the USDC having arrived.
-        openPositionCount--;
-        longOpenInterest -= pos.airUsdMinted;
-
-        // Pull USDC from caller (== holder, verified above) before updating the
-        // backed reserve — USDC must be in the contract before backedAirUsd reflects it.
-        _transferIn(underlyingUsdc, msg.sender, pos.airUsdMinted);
-
-        // EFFECT — safe to write now that the USDC is confirmed received.
-        backedAirUsd += pos.airUsdMinted;
-
-        // Release NFT: returns lockedAmount of airToken to pool.
-        positionNFT.release(nftId);
-
-        // Burn airToken wrapper and deliver raw underlying token to holder.
-        // backedAirToken was reduced at open; no adjustment needed here because
-        // the delivered token comes from the LP's original collateral pool.
-        airToken.burn(address(this), pos.lockedAmount);
-        underlyingToken.safeTransfer(holder, pos.lockedAmount);
-
-        _assertReserveInvariant();
-
+        _settle(nftId, pos, holder, minUsdcOut, false, 0);
     }
 
     // =========================================================================
@@ -683,14 +637,14 @@ contract EXNIHILOPool is ReentrancyGuard {
      *   How leverage works
      *   ──────────────────
      *   The pool mints synthetic airToken proportional to the USDC notional at
-     *   the current backed rate. This inflates airToken totalSupply.
-     *   The resulting airUsd (real, from backedAirUsd) is locked in
-     *   the PositionNFT. The synthetic airToken remains as outstanding debt in
-     *   totalSupply until the position is closed or realized.
+     *   the current backed rate. This inflates airTokenSupply.
+     *   The resulting airUsd (real, from backedAirUsd) is locked against the
+     *   position. The synthetic airToken remains as outstanding debt in
+     *   airTokenSupply until the position is closed.
      *
      *   State changes
      *   ─────────────
-     *     airToken supply += airTokenMinted  (synthetic debt; NOT backed)
+     *     airTokenSupply += airTokenMinted  (synthetic debt; NOT backed)
      *     backedAirUsd   -= airUsdOut      (real airUsd locked)
      *
      * @param usdcNotional  Notional size in USDC terms (6 dec). A 5 % fee is charged on top.
@@ -708,33 +662,22 @@ contract EXNIHILOPool is ReentrancyGuard {
 
         _checkLeverageCap(usdcNotional);
 
-        // ── Fee split (5 % base + quadratic impact fee, minimum 0.05 USDC) ──
-        uint256 protocolFee = (usdcNotional * PROTOCOL_FEE_BPS) / BPS_DENOM;
-        uint256 lpFee       = (usdcNotional * LP_FEE_BPS)       / BPS_DENOM;
-        uint256 totalFee    = protocolFee + lpFee;
-        if (totalFee < MIN_POSITION_FEE) {
-            totalFee    = MIN_POSITION_FEE;
-            protocolFee = (MIN_POSITION_FEE * PROTOCOL_FEE_BPS) / (PROTOCOL_FEE_BPS + LP_FEE_BPS);
-            lpFee       = MIN_POSITION_FEE - protocolFee;
-        }
-        // Impact fee: OI-based integral formula (split-proof).
+        // Fee split: 5 % base + OI-integral impact fee, minimum 0.05 USDC.
         // Uses shortOpenInterest BEFORE this position is added.
-        uint256 impactFee = (IMPACT_FEE_BPS * usdcNotional * (2 * shortOpenInterest + usdcNotional))
-                          / (2 * backedAirUsd * BPS_DENOM);
-        lpFee    += impactFee;
-        totalFee += impactFee;
+        (uint256 totalFee, uint256 protocolFee, uint256 lpFee) =
+            _openFees(usdcNotional, shortOpenInterest);
 
         // Compute synthetic airToken to mint using the current SWAP-1 reference rate:
-        //   airTokenMinted = usdcNotional * airToken.totalSupply() / backedAirUsd
+        //   airTokenMinted = usdcNotional * airTokenSupply / backedAirUsd
         // This gives the airToken amount that is worth usdcNotional at backed prices.
-        uint256 airTokenSupplyBefore = airToken.totalSupply();
+        uint256 airTokenSupplyBefore = airTokenSupply;
         if (airTokenSupplyBefore == 0) revert InsufficientBackedReserves();
 
         uint256 airTokenMinted = (usdcNotional * airTokenSupplyBefore) / backedAirUsd;
         if (airTokenMinted == 0) revert ZeroAmount();
 
         // SWAP-3: compute airUsd output before any state changes.
-        // reserveIn  = airToken.totalSupply() before the synthetic mint below.
+        // reserveIn  = airTokenSupply before the synthetic mint below.
         // reserveOut = backedAirUsd
         uint256 airUsdOut = _cpAmountOut(airTokenMinted, airTokenSupplyBefore, backedAirUsd);
 
@@ -745,34 +688,34 @@ contract EXNIHILOPool is ReentrancyGuard {
         // ── EFFECTS ──────────────────────────────────────────────────────────
         openPositionCount++;
         shortOpenInterest += usdcNotional;
-        lpFeesAccumulated += lpFee;
 
-        // Mint synthetic airToken: inflates totalSupply, no new token backing.
-        airToken.mint(address(this), airTokenMinted);
+        // Mint synthetic airToken: inflates the supply counter, no new token backing.
+        airTokenSupply += airTokenMinted;
 
-        // Real airUsd leaves the pool's backed reserves into PositionNFT custody.
+        // Real airUsd leaves the backed reserves; it stays counted in
+        // airUsdSupply and is recorded as pos.lockedAmount on the NFT.
         backedAirUsd -= airUsdOut;
+        // Still this contract's USDC, but now owed to the trader — track it so
+        // the reserve invariant keeps covering it.
+        totalShortCollateral += airUsdOut;
 
         // ── INTERACTIONS ──────────────────────────────────────────────────────
         // The notional is NOT pulled — it is represented synthetically by the
-        // airToken minted above.  Only the 5 % fee is collected from the trader.
+        // airToken minted above.  Only the 5 % fee is collected from the trader
+        // and accrued for the treasury and LP to claim (pull payment).
         _transferIn(underlyingUsdc, msg.sender, totalFee);
-        underlyingUsdc.safeTransfer(protocolTreasury, protocolFee);
-
-        airUsdToken.forceApprove(address(positionNFT), airUsdOut);
+        _accrueProtocolFee(protocolFee);
+        _accrueLpFee(lpFee);
 
         uint256 nftId = positionNFT.mintShort(
             recipient,
             address(this),
-            address(airUsdToken),
             airTokenMinted,
             airUsdOut,
             usdcNotional,
             totalFee,
             block.timestamp + positionDuration
         );
-
-        airUsdToken.forceApprove(address(positionNFT), 0);
 
         _assertReserveInvariant();
 
@@ -784,16 +727,16 @@ contract EXNIHILOPool is ReentrancyGuard {
      *
      *   Settlement
      *   ──────────
-     *   The locked airUsd returns from PositionNFT. SWAP-2 (inverse formula)
-     *   computes how much airUsd it costs to buy back exactly airTokenMinted
-     *   airToken. If the locked airUsd covers that cost, the surplus airUsd is
-     *   unwrapped and sent to the holder as USDC.
+     *   SWAP-2 (inverse formula) computes how much of the locked airUsd it
+     *   costs to buy back exactly airTokenMinted airToken. If the locked
+     *   airUsd covers that cost, the surplus is paid to the holder as USDC.
      *
      *   State changes
      *   ─────────────
-     *     airToken supply −= airTokenMinted   (synthetic debt cancelled)
+     *     airTokenSupply −= airTokenMinted   (synthetic debt cancelled)
      *     backedAirUsd   += airUsdCostForDebt (cost of buyback restores backing)
-     *     airUsd supply  −= lockedAmount    (locked airUsd burned in full)
+     *     airUsdSupply   −= surplus         (burned for USDC paid out; the cost
+     *                                        portion stays as backed supply)
      *
      * @param nftId      Position NFT token ID.
      * @param minUsdcOut Slippage guard on USDC profit.
@@ -806,94 +749,7 @@ contract EXNIHILOPool is ReentrancyGuard {
         if (pos.pool != address(this)) revert PositionNotFromThisPool();
         if (pos.isLong) revert PositionNotShort();
 
-        // ── CHECKS (before any interaction) ──────────────────────────────────
-        // Proportion-based cost: how much of lockedAmount is needed to buy back
-        // the debt?  We first compute what ALL of lockedAmount would buy, then
-        // scale proportionally.  Because cpAmountOut is concave, the proportional
-        // estimate overestimates the true cost (conservative; pool never overpays).
-        // Ceil-divide so integer truncation never undercuts the real cost.
-        //
-        // SWAP-2 reserve: airUsd totalSupply MINUS the locked amount (held in
-        // PositionNFT, not in the pool), mirroring closeLong's subtraction of
-        // lockedAmount from airToken totalSupply in its SWAP-3 calculation.
-        uint256 airUsdSupply = airUsdToken.totalSupply();
-        if (airUsdSupply < pos.lockedAmount) revert PositionUnderwater();
-        uint256 totalBuyable = _cpAmountOut(
-            pos.lockedAmount,
-            airUsdSupply - pos.lockedAmount,
-            backedAirToken
-        );
-        if (totalBuyable == 0 || totalBuyable < pos.airTokenMinted) revert PositionUnderwater();
-        uint256 airUsdCostForDebt =
-            (pos.lockedAmount * pos.airTokenMinted + totalBuyable - 1) / totalBuyable;
-        uint256 surplus    = pos.lockedAmount - airUsdCostForDebt;
-        uint256 closeFee   = (surplus * CLOSE_FEE_BPS) / BPS_DENOM;
-        uint256 netSurplus = surplus - closeFee;
-        if (netSurplus < minUsdcOut) revert InsufficientOutput();
-
-        // ── EFFECTS ───────────────────────────────────────────────────────────
-        openPositionCount--;
-        shortOpenInterest -= pos.usdcIn;
-        backedAirUsd += airUsdCostForDebt;
-
-        // ── INTERACTIONS ──────────────────────────────────────────────────────
-        positionNFT.release(nftId);
-        airToken.burn(address(this), pos.airTokenMinted);
-        // Burn the surplus airUsd. The airUsdCostForDebt portion stays as backed
-        // airUsd in the pool (reflected in backedAirUsd += above). The surplus
-        // is split between the holder (netSurplus) and protocol (closeFee).
-        airUsdToken.burn(address(this), surplus);
-        underlyingUsdc.safeTransfer(holder, netSurplus);
-        underlyingUsdc.safeTransfer(protocolTreasury, closeFee);
-
-        _assertReserveInvariant();
-
-        emit PositionClosed(nftId, holder, netSurplus);
-    }
-
-    /**
-     * @notice Realize a short position at par — the holder delivers the underlying
-     *         tokens to cover the synthetic airToken debt and receives the locked
-     *         USDC (unwrapped from airUsd) regardless of current token price.
-     *
-     *   State changes
-     *   ─────────────
-     *     backedAirToken  += tokenPaid  (synthetic airToken from openShort now has real backing)
-     *     airToken supply  unchanged   (minted at openShort; stays — now fully backed)
-     *     backedAirUsd    unchanged   (was reduced at open; USDC delivered to holder)
-     *     airUsd supply  −= locked    (burned on unwrap)
-     *
-     * @param nftId  Position NFT token ID.
-     */
-    function realizeShort(uint256 nftId) external nonReentrant {
-        address holder = positionNFT.ownerOf(nftId);
-        if (holder != msg.sender) revert OnlyPositionHolder();
-
-        Position memory pos = positionNFT.getPosition(nftId);
-        if (pos.pool != address(this)) revert PositionNotFromThisPool();
-        if (pos.isLong) revert PositionNotShort();
-
-        // EFFECTS — only counters that do not depend on the token having arrived.
-        openPositionCount--;
-        shortOpenInterest -= pos.usdcIn;
-
-        // Pull raw token from caller (== holder, verified above) before updating the
-        // backed reserve — token must be in the contract before backedAirToken reflects it.
-        _transferIn(underlyingToken, msg.sender, pos.airTokenMinted);
-
-        // EFFECT — safe to write now that the token is confirmed received.
-        backedAirToken += pos.airTokenMinted;
-
-        // Release NFT: returns lockedAmount of airUsd to pool.
-        positionNFT.release(nftId);
-
-        // Burn airUsd wrapper and deliver USDC to holder.
-        // backedAirUsd was reduced at open (the USDC backing left with the collateral);
-        // sending it back out now correctly zeroes that position's footprint.
-        airUsdToken.burn(address(this), pos.lockedAmount);
-        underlyingUsdc.safeTransfer(holder, pos.lockedAmount);
-
-        _assertReserveInvariant();
+        _settle(nftId, pos, holder, minUsdcOut, false, 0);
     }
 
     // =========================================================================
@@ -925,15 +781,14 @@ contract EXNIHILOPool is ReentrancyGuard {
         }
 
         // ── EFFECTS ───────────────────────────────────────────────────────────
+        airTokenSupply += tokenAmount;
+        airUsdSupply   += usdcAmount;
         backedAirToken += tokenAmount;
         backedAirUsd  += usdcAmount;
 
         // ── INTERACTIONS ──────────────────────────────────────────────────────
         _transferIn(underlyingToken, msg.sender, tokenAmount);
         _transferIn(underlyingUsdc, msg.sender, usdcAmount);
-
-        airToken.mint(address(this), tokenAmount);
-        airUsdToken.mint(address(this), usdcAmount);
 
         _assertReserveInvariant();
 
@@ -955,31 +810,75 @@ contract EXNIHILOPool is ReentrancyGuard {
         uint256 usdcOut = backedAirUsd;
 
         // EFFECTS before interactions.
+        airTokenSupply -= tokenOut;
+        airUsdSupply   -= usdcOut;
         backedAirToken = 0;
         backedAirUsd  = 0;
 
         if (tokenOut > 0) {
-            airToken.burn(address(this), tokenOut);
             underlyingToken.safeTransfer(msg.sender, tokenOut);
         }
 
         if (usdcOut > 0) {
-            airUsdToken.burn(address(this), usdcOut);
             underlyingUsdc.safeTransfer(msg.sender, usdcOut);
         }
 
     }
 
     /**
-     * @notice Claim accumulated LP fees in USDC.
+     * @notice Claim all accrued LP fees. Fees are pull payments — they accrue
+     *         on every position open/renewal and are withdrawn here.
+     *         Sends the full accumulated amount to `to` — pass a different
+     *         address if the holder wallet itself cannot receive USDC
+     *         (e.g. blacklisted).
      */
-    function claimFees() external nonReentrant onlyLpHolder {
+    function claimFees(address to) external nonReentrant onlyLpHolder {
+        if (to == address(0)) revert ZeroAddress();
         uint256 amount = lpFeesAccumulated;
         if (amount == 0) revert ZeroAmount();
 
         lpFeesAccumulated = 0;
+        lpFeesPaidTotal += amount;
 
-        underlyingUsdc.safeTransfer(msg.sender, amount);
+        underlyingUsdc.safeTransfer(to, amount);
+        emit LpFeesPaid(to, amount);
+    }
+
+    /**
+     * @notice Claim all accrued protocol fees. Callable only by the treasury;
+     *         sends the full accumulated amount to `to` (a blacklisted
+     *         treasury can still redirect, since the restriction is on
+     *         receiving USDC, not on calling).
+     */
+    function claimProtocolFees(address to) external nonReentrant {
+        if (msg.sender != protocolTreasury) revert OnlyTreasury();
+        if (to == address(0)) revert ZeroAddress();
+        uint256 amount = protocolFeesAccumulated;
+        if (amount == 0) revert ZeroAmount();
+
+        protocolFeesAccumulated = 0;
+        protocolFeesPaidTotal += amount;
+
+        underlyingUsdc.safeTransfer(to, amount);
+        emit ProtocolFeesPaid(to, amount);
+    }
+
+    /**
+     * @notice Withdraw USDC payouts credited to the caller by third-party
+     *         settlements (expired-position closes). Sends the full amount
+     *         to `to` — pass a different address if the caller wallet itself
+     *         cannot receive USDC (e.g. blacklisted).
+     */
+    function claimPayout(address to) external nonReentrant {
+        if (to == address(0)) revert ZeroAddress();
+        uint256 amount = claimable[msg.sender];
+        if (amount == 0) revert ZeroAmount();
+
+        claimable[msg.sender] = 0;
+        totalClaimable -= amount;
+
+        underlyingUsdc.safeTransfer(to, amount);
+        emit PayoutClaimed(msg.sender, to, amount);
     }
 
     // =========================================================================
@@ -987,27 +886,28 @@ contract EXNIHILOPool is ReentrancyGuard {
     // =========================================================================
 
     /**
-     * @notice Renew a position by paying the base fee (5 % of original notional).
-     *         Extends the deadline by one positionDuration from the current deadline
-     *         (or from now if the position has already expired).
-     *         Anyone can call this — you can renew someone else's position.
+     * @notice Renew a position by paying the dynamic renewal fee, extending the
+     *         deadline by one positionDuration from the current deadline (or
+     *         from now if the position has already expired).
+     *         Only the position holder may renew — this prevents third parties
+     *         from indefinitely extending positions to grief the LP's exit.
      *
-     * @param nftId  Position NFT to renew.
+     *         The fee reprices the position at today's state (see _renewFees):
+     *         base fee on current mark value plus the position's slice of the
+     *         OI-integral impact fee at current open interest and reserves.
+     *
+     * @param nftId   Position NFT to renew.
+     * @param maxFee  Guard against fee movement between quote and execution
+     *                (the fee depends on live reserves, PnL, and OI).
      */
-    function renewPosition(uint256 nftId) external nonReentrant {
+    function renewPosition(uint256 nftId, uint256 maxFee) external nonReentrant {
+        if (positionNFT.ownerOf(nftId) != msg.sender) revert OnlyPositionHolder();
+
         Position memory pos = positionNFT.getPosition(nftId);
         if (pos.pool != address(this)) revert PositionNotFromThisPool();
 
-        // Compute base fee (5 % of original notional).
-        uint256 notional = pos.isLong ? pos.airUsdMinted : pos.usdcIn;
-        uint256 protocolFee = (notional * PROTOCOL_FEE_BPS) / BPS_DENOM;
-        uint256 lpFee       = (notional * LP_FEE_BPS)       / BPS_DENOM;
-        uint256 totalFee    = protocolFee + lpFee;
-        if (totalFee < MIN_POSITION_FEE) {
-            totalFee    = MIN_POSITION_FEE;
-            protocolFee = (MIN_POSITION_FEE * PROTOCOL_FEE_BPS) / (PROTOCOL_FEE_BPS + LP_FEE_BPS);
-            lpFee       = MIN_POSITION_FEE - protocolFee;
-        }
+        (uint256 totalFee, uint256 protocolFee, uint256 lpFee,) = _renewFees(pos);
+        if (totalFee > maxFee) revert RenewalFeeExceedsMax();
 
         // Extend from current deadline (or from now if already expired).
         uint256 base = pos.deadline > block.timestamp ? pos.deadline : block.timestamp;
@@ -1016,29 +916,134 @@ contract EXNIHILOPool is ReentrancyGuard {
         // If pool is closing, the new deadline must not exceed closeDate.
         if (closeDate != 0 && newDeadline > closeDate) revert RenewalExceedsCloseDate();
 
-        // EFFECTS
-        lpFeesAccumulated += lpFee;
-
         // INTERACTIONS
         _transferIn(underlyingUsdc, msg.sender, totalFee);
-        underlyingUsdc.safeTransfer(protocolTreasury, protocolFee);
-        positionNFT.extendDeadline(nftId, newDeadline);
+        _accrueProtocolFee(protocolFee);
+        _accrueLpFee(lpFee);
+        positionNFT.applyRenewal(nftId, pos.lockedAmount, pos.airUsdMinted, totalFee, newDeadline);
 
+        emit PositionRenewed(nftId, msg.sender, totalFee, newDeadline, false);
+    }
 
+    /**
+     * @notice Settle an expired position. Callable by anyone; pays the caller
+     *         a flat KEEPER_BOUNTY so cleanup is always economically viable.
+     *
+     *         If the holder opted into auto-renewal (PositionNFT.setAutoRenew)
+     *         and the position's own equity covers the dynamic renewal fee plus
+     *         the bounty — and the fee is within the holder's cap and the new
+     *         deadline within closeDate — the position is renewed instead of
+     *         closed, with the fee charged against its equity:
+     *
+     *           Long  — synthetic debt (airUsdMinted) grows by fee + bounty.
+     *                   The USDC leaves backedAirUsd now and is recouped at
+     *                   close through the equally-reduced surplus.
+     *           Short — locked airUsd collateral shrinks by fee + bounty.
+     *
+     *         A winning position therefore sustains itself; a position that
+     *         cannot pay is settled exactly like closePositionAfterDeadline
+     *         (profit credited as pull payment, or collateral returned to LP),
+     *         with the bounty carved from the settlement flow.
+     *
+     * @param nftId      Position NFT to settle.
+     * @param minPayout  Slippage guard on the holder's credited payout when the
+     *                   close path runs (0 = accept any outcome).
+     */
+    function settleExpired(uint256 nftId, uint256 minPayout) external nonReentrant {
+        Position memory pos = positionNFT.getPosition(nftId);
+        if (pos.pool != address(this)) revert PositionNotFromThisPool();
+        if (block.timestamp < pos.deadline) revert PositionNotExpired();
+
+        if (_tryAutoRenew(nftId, pos)) return;
+
+        address holder = positionNFT.ownerOf(nftId);
+        _settle(nftId, pos, holder, minPayout, true, KEEPER_BOUNTY);
+    }
+
+    /**
+     * @dev Checks whether the keeper-driven auto-renewal can execute for an
+     *      expired position: holder opted in, dynamic fee within the holder's
+     *      cap, equity covers fee + bounty, new deadline within closeDate.
+     */
+    function _autoRenewQuote(uint256 nftId, Position memory pos)
+        internal
+        view
+        returns (bool ok, uint256 totalFee, uint256 protocolFee, uint256 lpFee)
+    {
+        (bool enabled, uint256 maxFee) = positionNFT.getAutoRenew(nftId);
+        if (!enabled) return (false, 0, 0, 0);
+
+        uint256 surplus;
+        (totalFee, protocolFee, lpFee, surplus) = _renewFees(pos);
+        if (totalFee > maxFee) return (false, 0, 0, 0);
+        if (surplus < totalFee + KEEPER_BOUNTY) return (false, 0, 0, 0);
+
+        // Expired ⇒ the new deadline extends from now.
+        if (closeDate != 0 && block.timestamp + positionDuration > closeDate) {
+            return (false, 0, 0, 0);
+        }
+        ok = true;
+    }
+
+    /**
+     * @dev Execute the auto-renewal if possible. Returns false (no state
+     *      change) when any condition fails, letting the caller fall through
+     *      to the close path.
+     */
+    function _tryAutoRenew(uint256 nftId, Position memory pos) internal returns (bool) {
+        (bool ok, uint256 totalFee, uint256 protocolFee, uint256 lpFee) =
+            _autoRenewQuote(nftId, pos);
+        if (!ok) return false;
+
+        uint256 cost = totalFee + KEEPER_BOUNTY;
+        uint256 newDeadline = block.timestamp + positionDuration;
+
+        // ── EFFECTS — charge the position's own equity ───────────────────────
+        if (pos.isLong) {
+            // Fee + bounty leave the backed reserves now; the position's debt
+            // grows by the same amount, so the surplus paid from backedAirUsd
+            // at close shrinks equally — the LP is made whole over the cycle.
+            // airUsdSupply is net unchanged: −cost (USDC leaving reserve
+            // accounting) +cost (new synthetic debt).
+            backedAirUsd     -= cost;
+            longOpenInterest += cost; // OI tracks airUsdMinted; keep in sync for _settle
+            positionNFT.applyRenewal(
+                nftId, pos.lockedAmount, pos.airUsdMinted + cost, totalFee, newDeadline
+            );
+        } else {
+            // Fee + bounty come out of the locked airUsd collateral, which
+            // leaves pool accounting (it was counted in airUsdSupply only).
+            airUsdSupply         -= cost;
+            totalShortCollateral -= cost; // lockedAmount shrinks by the same cost
+            positionNFT.applyRenewal(
+                nftId, pos.lockedAmount - cost, pos.airUsdMinted, totalFee, newDeadline
+            );
+        }
+        _accrueProtocolFee(protocolFee);
+        _accrueLpFee(lpFee);
+
+        // ── INTERACTIONS ─────────────────────────────────────────────────────
+        underlyingUsdc.safeTransfer(msg.sender, KEEPER_BOUNTY);
+
+        _assertReserveInvariant();
+        emit PositionRenewed(nftId, msg.sender, totalFee, newDeadline, true);
+        return true;
     }
 
     /**
      * @notice Close an expired position. Callable by anyone after the deadline.
      *
-     *         If the position is in profit, the profit goes to the
-     *         holder (minus the 1 % close fee). Behaves exactly like closeLong/closeShort.
+     *         If the position is in profit, the profit (minus the 1 % close
+     *         fee) is CREDITED to the holder's claimable balance — pull
+     *         payment, withdrawable via claimPayout(). No push transfer means
+     *         no recipient can ever block cleanup.
      *
      *         If the position is underwater, the locked collateral returns to the
-     *         LP's backed reserves and the synthetic debt is burned. No payment
+     *         LP's backed reserves and the synthetic debt is cancelled. No payment
      *         to anyone — the position is simply cleaned up.
      *
      * @param nftId      Position NFT to close.
-     * @param minPayout  Slippage guard on the holder's USDC payout (profitable
+     * @param minPayout  Slippage guard on the holder's credited payout (profitable
      *                   branch). Pass 0 to accept any outcome (including underwater
      *                   liquidation with zero payout).
      */
@@ -1047,13 +1052,16 @@ contract EXNIHILOPool is ReentrancyGuard {
         if (pos.pool != address(this)) revert PositionNotFromThisPool();
         if (block.timestamp < pos.deadline) revert PositionNotExpired();
 
+        // A position whose holder opted into auto-renewal (and whose equity can
+        // fund it) must not be closeable through this path — otherwise anyone
+        // could bypass the opt-in and kill the position. settleExpired() will
+        // renew it instead.
+        (bool renewable,,,) = _autoRenewQuote(nftId, pos);
+        if (renewable) revert AutoRenewActive();
+
         address holder = positionNFT.ownerOf(nftId);
 
-        if (pos.isLong) {
-            _closeExpiredLong(nftId, pos, holder, minPayout);
-        } else {
-            _closeExpiredShort(nftId, pos, holder, minPayout);
-        }
+        _settle(nftId, pos, holder, minPayout, true, 0);
     }
 
     // =========================================================================
@@ -1066,26 +1074,67 @@ contract EXNIHILOPool is ReentrancyGuard {
      */
     function spotPrice() external view returns (uint256) {
         if (backedAirToken == 0) return 0;
-        return (backedAirUsd * (10 ** uint256(airToken.decimals()))) / backedAirToken;
+        return (backedAirUsd * (10 ** uint256(tokenDecimals))) / backedAirToken;
     }
 
     /**
-     * @notice Long entry price (SWAP-2 marginal rate): airUsd.totalSupply() / backedAirToken.
+     * @notice Long entry price (SWAP-2 marginal rate): airUsdSupply / backedAirToken.
      *         This is the effective token price when opening a long.
      */
     function longPrice() external view returns (uint256) {
+        return _longPrice();
+    }
+
+    function _longPrice() internal view returns (uint256) {
         if (backedAirToken == 0) return 0;
-        return (airUsdToken.totalSupply() * (10 ** uint256(airToken.decimals()))) / backedAirToken;
+        return (airUsdSupply * (10 ** uint256(tokenDecimals))) / backedAirToken;
     }
 
     /**
-     * @notice Short entry price (SWAP-3 marginal rate): backedAirUsd / airToken.totalSupply().
+     * @notice Short entry price (SWAP-3 marginal rate): backedAirUsd / airTokenSupply.
      *         This is the effective token price when opening a short.
      */
     function shortPrice() external view returns (uint256) {
-        uint256 supply = airToken.totalSupply();
-        if (supply == 0) return 0;
-        return (backedAirUsd * (10 ** uint256(airToken.decimals()))) / supply;
+        return _shortPrice();
+    }
+
+    function _shortPrice() internal view returns (uint256) {
+        if (airTokenSupply == 0) return 0;
+        return (backedAirUsd * (10 ** uint256(tokenDecimals))) / airTokenSupply;
+    }
+
+    /**
+     * @notice Everything an off-chain indexer needs from this pool, in one call.
+     *
+     * @dev Indexers read all of these together on every pool event. Fetching
+     *      them as eight separate eth_calls made RPC volume — not the database —
+     *      the dominant cost of a sync, and it is the first thing a rate-limited
+     *      provider punishes. Bundling is chain-independent, unlike relying on
+     *      Multicall3 being deployed.
+     *
+     *      Fees are returned as LIFETIME totals (accrued + already withdrawn)
+     *      because that is the only monotonic form: collecting fees zeroes the
+     *      accumulator and adds the same amount to the paid total, so the sum
+     *      never decreases and a consumer can safely diff it between events.
+     */
+    function indexerState()
+        external
+        view
+        returns (
+            uint256 backedAirToken_,
+            uint256 backedAirUsd_,
+            uint256 longPrice_,
+            uint256 shortPrice_,
+            uint256 lpFeesLifetime,
+            uint256 protocolFeesLifetime
+        )
+    {
+        backedAirToken_      = backedAirToken;
+        backedAirUsd_        = backedAirUsd;
+        longPrice_           = _longPrice();
+        shortPrice_          = _shortPrice();
+        lpFeesLifetime       = lpFeesAccumulated + lpFeesPaidTotal;
+        protocolFeesLifetime = protocolFeesAccumulated + protocolFeesPaidTotal;
     }
 
     /**
@@ -1110,6 +1159,50 @@ contract EXNIHILOPool is ReentrancyGuard {
         return closeDate != 0;
     }
 
+    /**
+     * @notice Total USDC fee charged to open a position of `notional` right now
+     *         (5 % base with 0.05 USDC minimum + OI-integral impact fee).
+     *         This is the single source of truth for the fee — the Router and
+     *         frontends must quote here instead of replicating the formula.
+     */
+    function quoteOpenFee(uint256 notional, bool isLong) external view returns (uint256 totalFee) {
+        (totalFee,,) = _openFees(notional, isLong ? longOpenInterest : shortOpenInterest);
+    }
+
+    /**
+     * @notice Total USDC fee charged to renew position `nftId` right now.
+     *         Dynamic — repriced at current mark value, OI, and reserves (see
+     *         _renewFees). This is the single source of truth for the fee —
+     *         frontends must quote here instead of replicating the formula.
+     */
+    function quoteRenewFee(uint256 nftId) external view returns (uint256 totalFee) {
+        Position memory pos = positionNFT.getPosition(nftId);
+        if (pos.pool != address(this)) revert PositionNotFromThisPool();
+        (totalFee,,,) = _renewFees(pos);
+    }
+
+    /**
+     * @notice Live close quote for position `nftId`, mirroring the exact
+     *         settlement math of closeLong / closeShort.
+     *
+     *         `ready` is false when current reserves cannot price the position
+     *         (locked collateral exceeds active supply, or the synthetic debt
+     *         cannot be bought back).
+     *
+     *         `pnl` is in USDC (6 dec): positive = profit the holder would
+     *         receive on close (net of the 1 % close fee); negative = current
+     *         shortfall below break-even.
+     */
+    function quoteClose(uint256 nftId) external view returns (bool ready, int256 pnl) {
+        Position memory pos = positionNFT.getPosition(nftId);
+        if (pos.pool != address(this)) revert PositionNotFromThisPool();
+
+        (bool priceable, uint256 surplus, uint256 deficit,) = _priceClose(pos);
+        if (!priceable) return (false, 0);
+        if (deficit > 0) return (true, -int256(deficit));
+        return (true, int256(surplus - (surplus * CLOSE_FEE_BPS) / BPS_DENOM));
+    }
+
     // =========================================================================
     // INTERNAL — swap helpers
     // =========================================================================
@@ -1121,17 +1214,21 @@ contract EXNIHILOPool is ReentrancyGuard {
     function _swapTokenToUsdc(uint256 amountIn, uint256 minAmountOut, address recipient) internal {
         // ── CHECK (against pre-swap reserves) ─────────────────────────────────
         uint256 netOut = _cpAmountOut(amountIn, backedAirToken, backedAirUsd);
+        // A trade large enough that the fee exceeds the raw output yields zero;
+        // without this, a caller passing minAmountOut == 0 pays amountIn for nothing.
+        if (netOut == 0) revert InsufficientOutput();
         if (netOut < minAmountOut) revert InsufficientOutput();
 
         // ── EFFECTS ───────────────────────────────────────────────────────────
+        // Wrap the inbound token (supply grows), unwrap the outbound airUsd
+        // (supply shrinks by the USDC leaving the pool).
+        airTokenSupply += amountIn;
+        airUsdSupply   -= netOut;
         backedAirToken += amountIn;
         backedAirUsd  -= netOut;
 
         // ── INTERACTIONS ──────────────────────────────────────────────────────
-        // Pull raw token from caller; wrap to airToken; unwrap output airUsd → USDC; deliver.
         _transferIn(underlyingToken, msg.sender, amountIn);
-        airToken.mint(address(this), amountIn);
-        airUsdToken.burn(address(this), netOut);
         underlyingUsdc.safeTransfer(recipient, netOut);
 
         _assertReserveInvariant();
@@ -1144,17 +1241,21 @@ contract EXNIHILOPool is ReentrancyGuard {
     function _swapUsdcToToken(uint256 amountIn, uint256 minAmountOut, address recipient) internal {
         // ── CHECK (against pre-swap reserves) ─────────────────────────────────
         uint256 netOut = _cpAmountOut(amountIn, backedAirUsd, backedAirToken);
+        // A trade large enough that the fee exceeds the raw output yields zero;
+        // without this, a caller passing minAmountOut == 0 pays amountIn for nothing.
+        if (netOut == 0) revert InsufficientOutput();
         if (netOut < minAmountOut) revert InsufficientOutput();
 
         // ── EFFECTS ───────────────────────────────────────────────────────────
+        // Wrap the inbound USDC (supply grows), unwrap the outbound airToken
+        // (supply shrinks by the token leaving the pool).
+        airUsdSupply   += amountIn;
+        airTokenSupply -= netOut;
         backedAirUsd  += amountIn;
         backedAirToken -= netOut;
 
         // ── INTERACTIONS ──────────────────────────────────────────────────────
-        // Pull USDC from caller; wrap to airUsd; unwrap output airToken → raw token; deliver.
         _transferIn(underlyingUsdc, msg.sender, amountIn);
-        airUsdToken.mint(address(this), amountIn);
-        airToken.burn(address(this), netOut);
         underlyingToken.safeTransfer(recipient, netOut);
 
         _assertReserveInvariant();
@@ -1162,119 +1263,163 @@ contract EXNIHILOPool is ReentrancyGuard {
     }
 
     // =========================================================================
-    // INTERNAL — expired position liquidation
+    // INTERNAL — settlement (single path for voluntary and expiry closes)
     // =========================================================================
 
-    function _closeExpiredLong(uint256 nftId, Position memory pos, address holder, uint256 minPayout) internal {
-        bool underwater = _longIsUnderwater(pos);
-
-        openPositionCount--;
-        longOpenInterest -= pos.airUsdMinted;
-
-        if (!underwater) {
-            // Profitable: close like normal closeLong.
-            uint256 airTokenSupply = airToken.totalSupply();
+    /**
+     * @dev Single source of truth for close pricing — used by closeLong,
+     *      closeShort, closePositionAfterDeadline, and quoteClose.
+     *
+     *      Long:  values the locked airToken through SWAP-3
+     *             (reserveIn = airTokenSupply − locked, reserveOut = backedAirUsd)
+     *             and compares against the synthetic airUsd debt.
+     *      Short: computes the proportional airUsd cost of buying back the
+     *             synthetic airToken debt through SWAP-2. Ceil-divide so
+     *             integer truncation never undercuts the real cost; concavity
+     *             of the CP curve makes the estimate conservative (the pool
+     *             never overpays).
+     *
+     * @return priceable false when current reserves cannot price the position
+     *                   (locked collateral ≥ active supply, or the debt cannot
+     *                   be bought back). Unpriceable ⇒ underwater.
+     * @return surplus   USDC profit before the close fee (0 when in deficit).
+     * @return deficit   USDC shortfall below break-even (0 when in surplus).
+     * @return restore   Short only: airUsd cost of the debt buyback, which
+     *                   returns to backedAirUsd on settlement.
+     */
+    function _priceClose(Position memory pos)
+        internal
+        view
+        returns (bool priceable, uint256 surplus, uint256 deficit, uint256 restore)
+    {
+        if (pos.isLong) {
+            if (airTokenSupply <= pos.lockedAmount) return (false, 0, 0, 0);
             uint256 airUsdOut = _cpAmountOut(
                 pos.lockedAmount,
                 airTokenSupply - pos.lockedAmount,
                 backedAirUsd
             );
-            uint256 surplus    = airUsdOut - pos.airUsdMinted;
-            uint256 closeFee   = (surplus * CLOSE_FEE_BPS) / BPS_DENOM;
-            uint256 netSurplus = surplus - closeFee;
-            if (netSurplus < minPayout) revert InsufficientOutput();
-
-            backedAirToken += pos.lockedAmount;
-            backedAirUsd  -= surplus;
-
-            positionNFT.release(nftId);
-            airUsdToken.burn(address(this), pos.airUsdMinted);
-            airUsdToken.burn(address(this), surplus);
-            _trySendUsdc(holder, netSurplus);
-            _trySendUsdc(protocolTreasury, closeFee);
-
-            emit PositionClosedAfterDeadline(nftId, msg.sender, netSurplus);
-        } else {
-            // Underwater: return collateral to LP, burn synthetic debt.
-            backedAirToken += pos.lockedAmount;
-
-            positionNFT.release(nftId);
-            airUsdToken.burn(address(this), pos.airUsdMinted);
-
-            emit PositionClosedAfterDeadline(nftId, msg.sender, 0);
+            if (airUsdOut >= pos.airUsdMinted) {
+                return (true, airUsdOut - pos.airUsdMinted, 0, 0);
+            }
+            return (true, 0, pos.airUsdMinted - airUsdOut, 0);
         }
 
-        _assertReserveInvariant();
-    }
-
-    function _closeExpiredShort(uint256 nftId, Position memory pos, address holder, uint256 minPayout) internal {
-        bool underwater = _shortIsUnderwater(pos);
-
-        openPositionCount--;
-        shortOpenInterest -= pos.usdcIn;
-
-        if (!underwater) {
-            // Profitable: close like normal closeShort.
-            // Subtract lockedAmount from airUsd supply (held in PositionNFT, not pool).
-            uint256 totalBuyable = _cpAmountOut(
-                pos.lockedAmount,
-                airUsdToken.totalSupply() - pos.lockedAmount,
-                backedAirToken
-            );
-            uint256 airUsdCostForDebt =
-                (pos.lockedAmount * pos.airTokenMinted + totalBuyable - 1) / totalBuyable;
-            uint256 surplus    = pos.lockedAmount - airUsdCostForDebt;
-            uint256 closeFee   = (surplus * CLOSE_FEE_BPS) / BPS_DENOM;
-            uint256 netSurplus = surplus - closeFee;
-            if (netSurplus < minPayout) revert InsufficientOutput();
-
-            backedAirUsd += airUsdCostForDebt;
-
-            positionNFT.release(nftId);
-            airToken.burn(address(this), pos.airTokenMinted);
-            airUsdToken.burn(address(this), surplus);
-            _trySendUsdc(holder, netSurplus);
-            _trySendUsdc(protocolTreasury, closeFee);
-
-            emit PositionClosedAfterDeadline(nftId, msg.sender, netSurplus);
-        } else {
-            // Underwater: return collateral to LP, burn synthetic debt.
-            backedAirUsd += pos.lockedAmount;
-
-            positionNFT.release(nftId);
-            airToken.burn(address(this), pos.airTokenMinted);
-
-            emit PositionClosedAfterDeadline(nftId, msg.sender, 0);
-        }
-
-        _assertReserveInvariant();
-    }
-
-    // =========================================================================
-    // INTERNAL — underwater checks
-    // =========================================================================
-
-    function _longIsUnderwater(Position memory pos) internal view returns (bool) {
-        uint256 airTokenSupply = airToken.totalSupply();
-        if (airTokenSupply < pos.lockedAmount) return true;
-        uint256 airUsdOut = _cpAmountOut(
-            pos.lockedAmount,
-            airTokenSupply - pos.lockedAmount,
-            backedAirUsd
-        );
-        return airUsdOut < pos.airUsdMinted;
-    }
-
-    function _shortIsUnderwater(Position memory pos) internal view returns (bool) {
-        // A short is underwater when the locked USDC can no longer buy back the synthetic airToken debt.
-        // Subtract lockedAmount from airUsd supply — the locked airUsd is in PositionNFT, not in the pool.
-        uint256 airUsdSupply = airUsdToken.totalSupply();
-        if (airUsdSupply < pos.lockedAmount) return true;
-        return _cpAmountOut(
+        // Short: locked airUsd is out of circulation — subtract it from the
+        // SWAP-2 reserve, mirroring the long side's supply subtraction.
+        if (airUsdSupply < pos.lockedAmount) return (false, 0, 0, 0);
+        uint256 totalBuyable = _cpAmountOut(
             pos.lockedAmount,
             airUsdSupply - pos.lockedAmount,
             backedAirToken
-        ) < pos.airTokenMinted;
+        );
+        if (totalBuyable == 0 || totalBuyable < pos.airTokenMinted) return (false, 0, 0, 0);
+        uint256 cost =
+            (pos.lockedAmount * pos.airTokenMinted + totalBuyable - 1) / totalBuyable;
+        if (pos.lockedAmount >= cost) {
+            return (true, pos.lockedAmount - cost, 0, cost);
+        }
+        return (true, 0, cost - pos.lockedAmount, cost);
+    }
+
+    /**
+     * @dev Shared settlement for voluntary and expired-position closes.
+     *
+     *      Voluntary (viaExpiry = false): caller is the verified holder;
+     *      reverts if the position is underwater; pays the holder directly
+     *      (they are msg.sender and chose to receive).
+     *
+     *      Expiry (viaExpiry = true): callable by anyone; a profitable
+     *      position CREDITS the holder's claimable balance (pull payment —
+     *      no recipient can block cleanup); an underwater position returns
+     *      its collateral to the LP reserves and cancels the synthetic debt.
+     *
+     *      State changes on profitable settlement:
+     *        Long:  backedAirToken += locked; backedAirUsd −= surplus;
+     *               airUsdSupply −= debt + surplus
+     *        Short: backedAirUsd += buyback cost; airTokenSupply −= debt;
+     *               airUsdSupply −= surplus
+     */
+    function _settle(
+        uint256 nftId,
+        Position memory pos,
+        address holder,
+        uint256 minPayout,
+        bool viaExpiry,
+        uint256 bounty
+    ) internal {
+        (bool priceable, uint256 surplus, uint256 deficit, uint256 restore) = _priceClose(pos);
+        bool underwater = !priceable || deficit > 0;
+
+        if (!viaExpiry && underwater) revert PositionUnderwater();
+
+        // ── EFFECTS ───────────────────────────────────────────────────────────
+        openPositionCount--;
+        if (pos.isLong) {
+            longOpenInterest -= pos.airUsdMinted;
+        } else {
+            shortOpenInterest -= pos.usdcIn;
+        }
+
+        uint256 bountyPaid;
+
+        if (underwater) {
+            // Expiry only: return collateral to LP, cancel synthetic debt.
+            // The keeper bounty is carved from the LP side — the LP is the
+            // beneficiary of the cleanup — capped by what is available.
+            if (pos.isLong) {
+                backedAirToken += pos.lockedAmount;
+                airUsdSupply   -= pos.airUsdMinted;
+                bountyPaid = bounty > backedAirUsd ? backedAirUsd : bounty;
+                backedAirUsd -= bountyPaid;
+                airUsdSupply -= bountyPaid;
+            } else {
+                bountyPaid = bounty > pos.lockedAmount ? pos.lockedAmount : bounty;
+                backedAirUsd   += pos.lockedAmount - bountyPaid;
+                airUsdSupply   -= bountyPaid;
+                airTokenSupply -= pos.airTokenMinted;
+                // Whole collateral leaves short custody: part to the keeper,
+                // the remainder back into backedAirUsd above.
+                totalShortCollateral -= pos.lockedAmount;
+            }
+
+            // ── INTERACTIONS ──────────────────────────────────────────────────
+            positionNFT.release(nftId);
+            if (bountyPaid > 0) underlyingUsdc.safeTransfer(msg.sender, bountyPaid);
+            emit PositionClosedAfterDeadline(nftId, msg.sender, 0);
+        } else {
+            uint256 closeFee = (surplus * CLOSE_FEE_BPS) / BPS_DENOM;
+            bountyPaid = bounty > surplus - closeFee ? surplus - closeFee : bounty;
+            uint256 netSurplus = surplus - closeFee - bountyPaid;
+            if (netSurplus < minPayout) revert InsufficientOutput();
+
+            if (pos.isLong) {
+                backedAirToken += pos.lockedAmount;
+                backedAirUsd  -= surplus;
+                airUsdSupply  -= pos.airUsdMinted + surplus;
+            } else {
+                backedAirUsd   += restore;
+                airTokenSupply -= pos.airTokenMinted;
+                airUsdSupply   -= surplus;
+                // restore + surplus == lockedAmount exactly (see _priceClose):
+                // the buyback cost returns to the LP, the surplus is paid out.
+                totalShortCollateral -= pos.lockedAmount;
+            }
+            _accrueProtocolFee(closeFee);
+
+            // ── INTERACTIONS ──────────────────────────────────────────────────
+            positionNFT.release(nftId);
+            if (bountyPaid > 0) underlyingUsdc.safeTransfer(msg.sender, bountyPaid);
+            if (viaExpiry) {
+                _creditPayout(holder, netSurplus);
+                emit PositionClosedAfterDeadline(nftId, msg.sender, netSurplus);
+            } else {
+                underlyingUsdc.safeTransfer(holder, netSurplus);
+                emit PositionClosed(nftId, holder, netSurplus);
+            }
+        }
+
+        _assertReserveInvariant();
     }
 
     // =========================================================================
@@ -1309,6 +1454,100 @@ contract EXNIHILOPool is ReentrancyGuard {
     }
 
 
+
+    // =========================================================================
+    // INTERNAL — fee computation (single source of truth for position fees)
+    // =========================================================================
+
+    /**
+     * @dev Base position fee: 5 % of notional (3 % LP + 2 % protocol) with a
+     *      MIN_POSITION_FEE floor split in the same 3:2 ratio.
+     */
+    function _baseFees(uint256 notional)
+        internal
+        pure
+        returns (uint256 totalFee, uint256 protocolFee, uint256 lpFee)
+    {
+        protocolFee = (notional * PROTOCOL_FEE_BPS) / BPS_DENOM;
+        lpFee       = (notional * LP_FEE_BPS)       / BPS_DENOM;
+        totalFee    = protocolFee + lpFee;
+        if (totalFee < MIN_POSITION_FEE) {
+            totalFee    = MIN_POSITION_FEE;
+            protocolFee = (MIN_POSITION_FEE * PROTOCOL_FEE_BPS) / (PROTOCOL_FEE_BPS + LP_FEE_BPS);
+            lpFee       = MIN_POSITION_FEE - protocolFee;
+        }
+    }
+
+    /**
+     * @dev Dynamic renewal fee: renewal re-buys the position's optionality and
+     *      its open-interest slot at TODAY's prices instead of entry prices.
+     *
+     *        mark      = N + surplus       (current gross value, floored at N)
+     *        baseFee   = _baseFees(mark)   (5 % of mark, 3/2 LP/protocol split)
+     *        impactFee = IMPACT_FEE_BPS × N × (2×(OI−N) + N)
+     *                    ────────────────────────────────────  → LP
+     *                        2 × backedAirUsd × BPS_DENOM
+     *
+     *      where N is the position's original notional (its OI contribution)
+     *      and OI the current same-side open interest (which includes N). The
+     *      impact term is the position's own slice of the OI integral — what a
+     *      new entrant would pay for that slot at current crowding and depth —
+     *      not the full integral again, which would double-charge vs. opens.
+     *
+     *      The mark is floored at N (losers pay full size): a losing position's
+     *      synthetic debt stays full-size and keeps distorting SWAP-2/3 for all
+     *      traders, and the floor makes the fee manipulation-bounded below at
+     *      the flat fee — curve manipulation can suppress the surplus term to
+     *      zero but never below it.
+     *
+     * @return totalFee    Total USDC renewal fee (base + impact slice).
+     * @return protocolFee Protocol share of the base fee.
+     * @return lpFee       LP share of the base fee plus the full impact slice.
+     * @return surplus     The position's current profit (0 if underwater or
+     *                     unpriceable) — reused by the auto-renew equity check.
+     */
+    function _renewFees(Position memory pos)
+        internal
+        view
+        returns (uint256 totalFee, uint256 protocolFee, uint256 lpFee, uint256 surplus)
+    {
+        uint256 n = pos.isLong ? pos.airUsdMinted : pos.usdcIn;
+
+        (bool priceable, uint256 s,,) = _priceClose(pos);
+        surplus = priceable ? s : 0;
+
+        (totalFee, protocolFee, lpFee) = _baseFees(n + surplus);
+
+        if (backedAirUsd != 0) {
+            uint256 oi = pos.isLong ? longOpenInterest : shortOpenInterest;
+            uint256 offset = oi > n ? oi - n : 0;
+            uint256 impactFee = (IMPACT_FEE_BPS * n * (2 * offset + n))
+                              / (2 * backedAirUsd * BPS_DENOM);
+            lpFee    += impactFee;
+            totalFee += impactFee;
+        }
+    }
+
+    /**
+     * @dev Full open fee: base fee + OI-based integral impact fee (split-proof).
+     *        impactFee = IMPACT_FEE_BPS × N × (2×OI + N) / (2 × backedAirUsd × BPS_DENOM)
+     *      where OI is the same-side open interest BEFORE this position.
+     *      The impact fee goes entirely to the LP. Returns base fee only when
+     *      backedAirUsd == 0 (open paths revert on that separately; the quote
+     *      view must not divide by zero).
+     */
+    function _openFees(uint256 notional, uint256 oi)
+        internal
+        view
+        returns (uint256 totalFee, uint256 protocolFee, uint256 lpFee)
+    {
+        (totalFee, protocolFee, lpFee) = _baseFees(notional);
+        if (backedAirUsd == 0) return (totalFee, protocolFee, lpFee);
+        uint256 impactFee = (IMPACT_FEE_BPS * notional * (2 * oi + notional))
+                          / (2 * backedAirUsd * BPS_DENOM);
+        lpFee    += impactFee;
+        totalFee += impactFee;
+    }
 
     // =========================================================================
     // INTERNAL — leverage cap
@@ -1346,35 +1585,36 @@ contract EXNIHILOPool is ReentrancyGuard {
     }
 
     // =========================================================================
-    // INTERNAL — best-effort USDC send (expired position cleanup)
+    // INTERNAL — fee accrual and payout crediting (pull payments)
     // =========================================================================
 
     /**
-     * @dev Attempt to send USDC to `to`. If the transfer fails (e.g. the
-     *      recipient is USDC-blacklisted, or the token reverts), the failed
-     *      amount is credited to lpFeesAccumulated so it remains claimable
-     *      by LPs via claimFees() rather than being permanently stranded.
-     *      A PayoutFailed event is emitted for observability.
-     *
-     *      Uses a low-level call with explicit returndata handling to tolerate
-     *      tokens that return no data (USDT-style). Without this, the typed
-     *      `try IERC20(...).transfer(...) returns (bool)` pattern would
-     *      spuriously fall into catch for zero-returndata tokens even when
-     *      the transfer succeeded.
-     *
-     *      Used ONLY by _closeExpired* paths — voluntary closes still use
-     *      safeTransfer (holder is msg.sender and can handle their own issues).
+     * @dev Accrue an LP fee. Claimable by the LP NFT holder via claimFees(to).
      */
-    function _trySendUsdc(address to, uint256 amount) internal {
+    function _accrueLpFee(uint256 amount) internal {
         if (amount == 0) return;
-        (bool ok, bytes memory ret) = address(underlyingUsdc).call(
-            abi.encodeWithSelector(IERC20.transfer.selector, to, amount)
-        );
-        bool success = ok && (ret.length == 0 || abi.decode(ret, (bool)));
-        if (!success) {
-            lpFeesAccumulated += amount;
-            emit PayoutFailed(to, amount);
-        }
+        lpFeesAccumulated += amount;
+    }
+
+    /**
+     * @dev Accrue a protocol fee. Claimable by the treasury via
+     *      claimProtocolFees(to).
+     */
+    function _accrueProtocolFee(uint256 amount) internal {
+        if (amount == 0) return;
+        protocolFeesAccumulated += amount;
+    }
+
+    /**
+     * @dev Credit a settlement payout to `recipient`'s claimable balance.
+     *      Withdrawable via claimPayout(to). Pure state write — cannot fail,
+     *      so no recipient can block the settlement that credits it.
+     */
+    function _creditPayout(address recipient, uint256 amount) internal {
+        if (amount == 0) return;
+        claimable[recipient] += amount;
+        totalClaimable += amount;
+        emit PayoutCredited(recipient, amount);
     }
 
     // =========================================================================
@@ -1382,12 +1622,37 @@ contract EXNIHILOPool is ReentrancyGuard {
     // =========================================================================
 
     /**
-     * @dev Backed reserves must never exceed the corresponding airToken's total
-     *      supply. Violation would mean the pool claims to hold more airToken
-     *      than exists, which is impossible and signals an accounting bug.
+     * @dev Two families of solvency checks, run after every value-moving op:
+     *
+     *      1. Backed reserves must never exceed the corresponding supply
+     *         counter — the pool cannot claim more units than exist.
+     *
+     *      2. The pool's REAL token balances must cover its accounted
+     *         obligations: the underlying token balance must cover
+     *         backedAirToken, and the USDC balance must cover backedAirUsd
+     *         plus all accrued (unclaimed) LP fees, protocol fees, and
+     *         credited payouts. The balances may legitimately exceed the
+     *         accounted amounts (locked position collateral backing,
+     *         donations) — never fall below.
      */
     function _assertReserveInvariant() internal view {
-        if (backedAirToken > airToken.totalSupply()) revert ReserveInvariantViolated();
-        if (backedAirUsd  > airUsdToken.totalSupply())  revert ReserveInvariantViolated();
+        if (backedAirToken > airTokenSupply) revert ReserveInvariantViolated();
+        if (backedAirUsd  > airUsdSupply)  revert ReserveInvariantViolated();
+        if (underlyingToken.balanceOf(address(this)) < backedAirToken) {
+            revert ReserveInvariantViolated();
+        }
+        // Every USDC liability this contract carries: LP-backed reserves, short
+        // collateral held for traders, unclaimed fees, and credited payouts.
+        // Short collateral used to be omitted, which left it as untracked
+        // surplus — the check passed whether or not that collateral was still
+        // there, so it could not detect a leak of it.
+        if (underlyingUsdc.balanceOf(address(this))
+            < backedAirUsd
+            + totalShortCollateral
+            + lpFeesAccumulated
+            + protocolFeesAccumulated
+            + totalClaimable) {
+            revert ReserveInvariantViolated();
+        }
     }
 }

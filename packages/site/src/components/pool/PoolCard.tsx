@@ -1,97 +1,46 @@
-import { useState, useEffect } from "react";
+import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useReadContracts } from "wagmi";
 import { exnihiloPoolAbi, erc20Abi } from "@exnihilio/abis";
-import { formatUsdc, formatUsdcCompact, decodeSpotPrice } from "../../lib/format.ts";
+import { formatPrice, formatUsdcCompact, decodeSpotPrice } from "../../lib/format.ts";
 import { usePoolApr } from "../../hooks/usePoolApr.ts";
+import { useAppChain } from "../../hooks/useAppChain.ts";
 
-const STAR_LEVELS = [
-  { stars: 5, label: "DEEP LIQUIDITY", threshold: "> $1M" },
-  { stars: 4, label: "ESTABLISHED",    threshold: "$100K – $1M" },
-  { stars: 3, label: "GROWING",        threshold: "$10K – $100K" },
-  { stars: 2, label: "LOW LIQUIDITY",  threshold: "$1K – $10K" },
-  { stars: 1, label: "NO LIQUIDITY",   threshold: "< $1K" },
-];
-
-function starRating(tvlRaw: bigint | undefined): 1 | 2 | 3 | 4 | 5 {
-  if (tvlRaw === undefined) return 1;
-  const tvl = Number(tvlRaw) / 1_000_000;
-  if (tvl >= 1_000_000) return 5;
-  if (tvl >= 100_000)   return 4;
-  if (tvl >= 10_000)    return 3;
-  if (tvl >= 1_000)     return 2;
-  return 1;
-}
-
-function StarsWithTooltip({ count }: { count: 1 | 2 | 3 | 4 | 5 }) {
-  const [pos, setPos] = useState<{ x: number; y: number; above: boolean } | null>(null);
-
-  const handleEnter = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const above = rect.top > 200;
-    setPos({
-      x: rect.right,
-      y: above ? rect.top - 4 : rect.bottom + 4,
-      above,
-    });
-  };
-
+/**
+ * Open-interest cell: total OI in $ plus a long/short split bar.
+ * Green = long share, red = short share of the combined open interest.
+ */
+function OiCell({ longOi, shortOi }: { longOi: bigint; shortOi: bigint }) {
+  const total = longOi + shortOi;
+  if (total === 0n) {
+    return <span style={{ color: "var(--dim)" }}>—</span>;
+  }
+  const longPct = Number((longOi * 1000n) / total) / 10;
   return (
-    <div
-      style={{ display: "inline-block", cursor: "help" }}
-      onMouseEnter={handleEnter}
-      onMouseLeave={() => setPos(null)}
-      // Stop row click from navigating when clicking the tooltip area
-      onClick={(e) => e.stopPropagation()}
-    >
-      <span style={{ letterSpacing: "0.05em", fontSize: "0.9rem" }}>
-        {([1, 2, 3, 4, 5] as const).map((i) => (
-          <span key={i} style={{ color: i <= count ? "var(--cyan)" : "var(--dim)" }}>★</span>
-        ))}
-      </span>
-
-      {pos && (
-        <div
-          style={{
-            position: "fixed",
-            ...(pos.above
-              ? { bottom: `${window.innerHeight - pos.y}px` }
-              : { top: `${pos.y}px` }),
-            right: `${window.innerWidth - pos.x}px`,
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            padding: "10px 14px",
-            zIndex: 9999,
-            whiteSpace: "nowrap",
-            display: "flex",
-            flexDirection: "column",
-            gap: 7,
-            boxShadow: "0 4px 24px rgba(0,0,0,0.6)",
-            pointerEvents: "none",
-          }}
-        >
-          <span style={{ position: "absolute", top: -1, left: -1, width: 8, height: 8, borderTop: "1px solid var(--cyan)", borderLeft: "1px solid var(--cyan)" }} />
-          <span style={{ position: "absolute", bottom: -1, right: -1, width: 8, height: 8, borderBottom: "1px solid var(--cyan)", borderRight: "1px solid var(--cyan)" }} />
-
-          {STAR_LEVELS.map(({ stars, label, threshold }) => (
-            <div key={stars} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ fontSize: "0.72rem", letterSpacing: "0.04em" }}>
-                {([1, 2, 3, 4, 5] as const).map((i) => (
-                  <span key={i} style={{ color: i <= stars ? "var(--cyan)" : "var(--dim)" }}>★</span>
-                ))}
-              </span>
-              <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.6rem", letterSpacing: "0.06em", color: "var(--muted)", minWidth: 110 }}>
-                {label}
-              </span>
-              <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.65rem", color: "var(--cyan)", fontWeight: 500 }}>
-                {threshold}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
+    <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+      <span style={{ fontWeight: 500 }}>{formatUsdcCompact(total)}</span>
+      <div
+        style={{
+          display: "flex",
+          width: 52,
+          height: 3,
+          background: "var(--dim)",
+        }}
+        title={`Long ${formatUsdcCompact(longOi)} / Short ${formatUsdcCompact(shortOi)}`}
+      >
+        <span style={{ width: `${longPct}%`, background: "var(--green)" }} />
+        <span style={{ flex: 1, background: "var(--magenta)" }} />
+      </div>
     </div>
   );
+}
+
+/** Signed % gap between an entry price and spot, e.g. "+2.3%". */
+export function premiumPct(entryRaw: bigint | undefined, spotRaw: bigint | undefined): number | undefined {
+  if (entryRaw === undefined || spotRaw === undefined || spotRaw === 0n || entryRaw === 0n) {
+    return undefined;
+  }
+  return Number(((entryRaw - spotRaw) * 10_000n) / spotRaw) / 100;
 }
 
 function formatPct(pct: number): string {
@@ -108,7 +57,7 @@ function pctColor(pct: number): string {
 
 export interface PoolMeta {
   symbol: string;
-  rating: number;
+  oiRaw: bigint;
   spotRaw: bigint;
   longRaw: bigint;
   shortRaw: bigint;
@@ -126,7 +75,8 @@ interface PoolCardProps {
 
 export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
   const navigate = useNavigate();
-  const poolContract = { address: poolAddress, abi: exnihiloPoolAbi } as const;
+  const { chainId, path } = useAppChain();
+  const poolContract = { address: poolAddress, abi: exnihiloPoolAbi, chainId } as const;
 
   const { data } = useReadContracts({
     contracts: [
@@ -161,8 +111,8 @@ export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
   const { data: metaData } = useReadContracts({
     contracts: underlyingToken
       ? [
-          { address: underlyingToken, abi: erc20Abi, functionName: "symbol" },
-          { address: underlyingToken, abi: erc20Abi, functionName: "decimals" },
+          { address: underlyingToken, abi: erc20Abi, functionName: "symbol", chainId },
+          { address: underlyingToken, abi: erc20Abi, functionName: "decimals", chainId },
         ]
       : [],
     query: { enabled: !!underlyingToken },
@@ -178,7 +128,7 @@ export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
       ? (backedAirUsd * 10n ** BigInt(decimals)) / backedAirToken
       : undefined;
 
-  const price = priceRaw !== undefined ? formatUsdc(priceRaw) : "—";
+  const price = priceRaw !== undefined ? formatPrice(priceRaw) : "—";
 
   const longPrice  = longPriceRaw !== undefined && longPriceRaw > 0n
     ? decodeSpotPrice(longPriceRaw, decimals) : "—";
@@ -206,10 +156,14 @@ export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
       : 0;
 
   const hasOiData = longOpenInterest !== undefined && shortOpenInterest !== undefined;
-  const rating = starRating(totalTvlRaw);
+  const totalOiRaw = hasOiData ? longOpenInterest! + shortOpenInterest! : undefined;
+
+  // Entry-price gap vs spot: how far synthetic supply has pushed each curve.
+  const longPremium  = premiumPct(longPriceRaw, priceRaw);
+  const shortPremium = premiumPct(shortPriceRaw, priceRaw);
 
   // Fetch APR from indexer
-  const { data: aprData } = usePoolApr(poolAddress);
+  const { data: aprData } = usePoolApr(poolAddress, chainId);
   const apr7d = aprData?.["7d"]?.apr ?? 0;
   const apr1d = aprData?.["1d"]?.apr ?? 0;
 
@@ -218,7 +172,7 @@ export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
     if (symbol !== "…" && onData) {
       onData({
         symbol,
-        rating,
+        oiRaw: totalOiRaw ?? 0n,
         spotRaw: priceRaw ?? 0n,
         longRaw: longPriceRaw ?? 0n,
         shortRaw: shortPriceRaw ?? 0n,
@@ -229,11 +183,11 @@ export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
         apr7d,
       });
     }
-  }, [symbol, rating, priceRaw, longPriceRaw, shortPriceRaw, totalTvlRaw, openPositionCount, pctLong, pctShort, apr7d, onData]);
+  }, [symbol, totalOiRaw, priceRaw, longPriceRaw, shortPriceRaw, totalTvlRaw, openPositionCount, pctLong, pctShort, apr7d, onData]);
 
   return (
     <tr
-      onClick={() => navigate(`/app/markets/${poolAddress}`)}
+      onClick={() => navigate(path(`markets/${poolAddress}`))}
       style={isClosed || isInactive ? { opacity: 0.55 } : undefined}
     >
       <td>
@@ -245,7 +199,7 @@ export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
               marginLeft: 8,
               padding: "1px 6px",
               fontFamily: "var(--font-mono)",
-              fontSize: "0.52rem",
+              fontSize: "var(--fs-nano)",
               letterSpacing: "0.1em",
               color: "var(--red)",
               border: "1px solid rgba(255,59,48,0.4)",
@@ -258,13 +212,27 @@ export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
         )}
       </td>
       <td style={{ color: "var(--cyan)", fontWeight: 500 }}>{price}</td>
-      <td style={{ color: "var(--green)" }}>{longPrice}</td>
-      <td style={{ color: "var(--red)" }}>{shortPrice}</td>
+      <td style={{ color: "var(--green)" }}>
+        {longPrice}
+        {longPremium !== undefined && (
+          <span style={{ fontSize: "var(--fs-micro)", color: "var(--dim)", marginLeft: 4 }}>
+            {longPremium >= 0 ? "+" : ""}{longPremium.toFixed(1)}%
+          </span>
+        )}
+      </td>
+      <td style={{ color: "var(--magenta)" }}>
+        {shortPrice}
+        {shortPremium !== undefined && (
+          <span style={{ fontSize: "var(--fs-micro)", color: "var(--dim)", marginLeft: 4 }}>
+            {shortPremium >= 0 ? "+" : ""}{shortPremium.toFixed(1)}%
+          </span>
+        )}
+      </td>
       <td>{totalTvl}</td>
       <td style={{ color: apr7d > 0 ? "var(--green)" : "var(--muted)", fontWeight: apr7d > 0 ? 600 : 400 }}>
         {aprData ? `${apr7d.toFixed(1)}%` : "—"}
         {apr1d > 0 && aprData && (
-          <span style={{ fontSize: "0.55rem", color: "var(--dim)", marginLeft: 4 }}>
+          <span style={{ fontSize: "var(--fs-micro)", color: "var(--dim)", marginLeft: 4 }}>
             ({apr1d.toFixed(0)}% 24h)
           </span>
         )}
@@ -277,7 +245,11 @@ export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
         {hasOiData ? formatPct(pctShort) : "—"}
       </td>
       <td>
-        <StarsWithTooltip count={rating} />
+        {hasOiData ? (
+          <OiCell longOi={longOpenInterest!} shortOi={shortOpenInterest!} />
+        ) : (
+          <span style={{ color: "var(--dim)" }}>—</span>
+        )}
       </td>
     </tr>
   );

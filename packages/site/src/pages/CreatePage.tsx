@@ -1,12 +1,14 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAccount, useChainId, useReadContracts, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { useAccount, useReadContracts } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
 import { useFormo } from "@formo/analytics";
 import { decodeEventLog, isAddress } from "viem";
 import { exnihiloFactoryAbi, erc20Abi } from "@exnihilio/abis";
-import { getAddresses, FUJI_CHAIN_ID, HARDHAT_CHAIN_ID } from "../contracts/addresses.ts";
+import { HARDHAT_CHAIN_ID } from "../contracts/addresses.ts";
+import { useAppChain } from "../hooks/useAppChain.ts";
 import { parseUnits, formatUsdc } from "../lib/format.ts";
+import { useTx } from "../hooks/useTx.ts";
 import TokenInput from "../components/shared/TokenInput.tsx";
 import TxButton from "../components/shared/TxButton.tsx";
 
@@ -16,17 +18,18 @@ export default function CreatePage() {
 
 function CreateContent() {
   const { address, isConnected } = useAccount();
-  const chainId = useChainId();
+  const { chainId, addresses: addrs, path } = useAppChain();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const analytics = useFormo();
-  const addrs = getAddresses(chainId || FUJI_CHAIN_ID);
 
   const [tokenAddress, setTokenAddress] = useState("");
   const [seedUsdc, setSeedUsdc] = useState("");
   const [seedToken, setSeedToken] = useState("");
   const [maxPositionUsd, setMaxPositionUsd] = useState("");
-  const [maxPositionBps, setMaxPositionBps] = useState("");
+  // Default position cap: 1% of pool reserves — protects a fresh LP from
+  // single whale positions. Creator can raise/clear it here or later on-chain.
+  const [maxPositionBps, setMaxPositionBps] = useState("100");
   const [positionDurationDays, setPositionDurationDays] = useState("");
 
   const tokenAddr = (isAddress(tokenAddress) ? tokenAddress : undefined) as
@@ -36,8 +39,8 @@ function CreateContent() {
   const { data: tokenMeta } = useReadContracts({
     contracts: tokenAddr
       ? [
-          { address: tokenAddr, abi: erc20Abi, functionName: "symbol" },
-          { address: tokenAddr, abi: erc20Abi, functionName: "decimals" },
+          { address: tokenAddr, abi: erc20Abi, functionName: "symbol", chainId },
+          { address: tokenAddr, abi: erc20Abi, functionName: "decimals", chainId },
         ]
       : [],
     query: { enabled: !!tokenAddr },
@@ -63,12 +66,14 @@ function CreateContent() {
               abi: erc20Abi,
               functionName: "allowance",
               args: [address, factoryAddr],
+              chainId,
             },
             {
               address: tokenAddr,
               abi: erc20Abi,
               functionName: "allowance",
               args: [address, factoryAddr],
+              chainId,
             },
           ]
         : [],
@@ -82,13 +87,17 @@ function CreateContent() {
   const needsUsdcApproval = allowancesLoaded && seedUsdcRaw > usdcAllowance!;
   const needsTokenApproval = allowancesLoaded && seedTokenRaw > tokenAllowance!;
 
-  const { writeContract: writeUsdcApprove, data: usdcApproveHash, isPending: usdcApprovePending } = useWriteContract();
-  const { isLoading: usdcApproveConfirming, isSuccess: usdcApproveSuccess } =
-    useWaitForTransactionReceipt({ hash: usdcApproveHash });
+  const {
+    writeContract: writeUsdcApprove,
+    status: usdcApproveStatus,
+    isSuccess: usdcApproveSuccess,
+  } = useTx("USDC APPROVAL");
 
-  const { writeContract: writeTokenApprove, data: tokenApproveHash, isPending: tokenApprovePending } = useWriteContract();
-  const { isLoading: tokenApproveConfirming, isSuccess: tokenApproveSuccess } =
-    useWaitForTransactionReceipt({ hash: tokenApproveHash });
+  const {
+    writeContract: writeTokenApprove,
+    status: tokenApproveStatus,
+    isSuccess: tokenApproveSuccess,
+  } = useTx("TOKEN APPROVAL");
 
   useEffect(() => {
     if (usdcApproveSuccess) refetchAllowances();
@@ -100,14 +109,10 @@ function CreateContent() {
 
   const {
     writeContract: writeCreate,
-    data: createHash,
-    isPending: createPending,
-  } = useWriteContract();
-  const {
-    isLoading: createConfirming,
+    status: createStatus,
     isSuccess: createSuccess,
-    data: createReceipt,
-  } = useWaitForTransactionReceipt({ hash: createHash });
+    receipt: createReceipt,
+  } = useTx("MARKET CREATION");
 
   useEffect(() => {
     if (!createSuccess || !createReceipt) return;
@@ -127,7 +132,7 @@ function CreateContent() {
             tokenSymbol,
             seedUsdc: seedUsdcRaw.toString(),
           });
-          navigate(`/app/markets/${decoded.args.pool}`);
+          navigate(path(`markets/${decoded.args.pool}`));
           break;
         }
       } catch {
@@ -135,30 +140,6 @@ function CreateContent() {
       }
     }
   }, [createSuccess, createReceipt]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const usdcApproveStatus = usdcApprovePending
-    ? "pending"
-    : usdcApproveConfirming
-    ? "confirming"
-    : usdcApproveSuccess
-    ? "success"
-    : "idle";
-
-  const tokenApproveStatus = tokenApprovePending
-    ? "pending"
-    : tokenApproveConfirming
-    ? "confirming"
-    : tokenApproveSuccess
-    ? "success"
-    : "idle";
-
-  const createStatus = createPending
-    ? "pending"
-    : createConfirming
-    ? "confirming"
-    : createSuccess
-    ? "success"
-    : "idle";
 
   const isValid = tokenAddr !== undefined && seedUsdcRaw > 0n && seedTokenRaw > 0n;
 
@@ -198,7 +179,7 @@ function CreateContent() {
       <p
         style={{
           fontFamily: "var(--font-mono)",
-          fontSize: "0.65rem",
+          fontSize: "var(--fs-body-s)",
           color: "var(--muted)",
           letterSpacing: "0.06em",
           marginBottom: 24,
@@ -221,7 +202,7 @@ function CreateContent() {
         >
           <p
             style={{
-              fontSize: "0.58rem",
+              fontSize: "var(--fs-micro)",
               letterSpacing: "0.15em",
               color: "var(--red)",
               marginBottom: 6,
@@ -231,7 +212,7 @@ function CreateContent() {
           </p>
           <p
             style={{
-              fontSize: "0.68rem",
+              fontSize: "var(--fs-body-s)",
               color: "var(--body)",
               wordBreak: "break-all",
               marginBottom: 8,
@@ -243,7 +224,7 @@ function CreateContent() {
             onClick={() => setTokenAddress(testTokenAddr)}
             style={{
               fontFamily: "var(--font-mono)",
-              fontSize: "0.6rem",
+              fontSize: "var(--fs-label)",
               letterSpacing: "0.1em",
               color: "var(--cyan)",
               background: "transparent",
@@ -301,7 +282,7 @@ function CreateContent() {
           <label
             style={{
               fontFamily: "var(--font-mono)",
-              fontSize: "0.6rem",
+              fontSize: "var(--fs-label)",
               letterSpacing: "0.15em",
               color: "var(--muted)",
               textTransform: "uppercase",
@@ -321,7 +302,7 @@ function CreateContent() {
             <p
               style={{
                 fontFamily: "var(--font-mono)",
-                fontSize: "0.65rem",
+                fontSize: "var(--fs-body-s)",
                 color: "var(--green)",
                 letterSpacing: "0.05em",
               }}
@@ -333,7 +314,7 @@ function CreateContent() {
             <p
               style={{
                 fontFamily: "var(--font-mono)",
-                fontSize: "0.65rem",
+                fontSize: "var(--fs-body-s)",
                 color: "var(--red)",
                 letterSpacing: "0.05em",
               }}
@@ -378,7 +359,7 @@ function CreateContent() {
             <span
               style={{
                 fontFamily: "var(--font-mono)",
-                fontSize: "0.62rem",
+                fontSize: "var(--fs-label)",
                 letterSpacing: "0.1em",
                 color: "var(--muted)",
               }}
@@ -395,7 +376,7 @@ function CreateContent() {
             >
               ${impliedPrice}{" "}
               <span
-                style={{ color: "var(--muted)", fontSize: "0.65rem" }}
+                style={{ color: "var(--muted)", fontSize: "var(--fs-body-s)" }}
               >
                 per {tokenSymbol}
               </span>
@@ -403,33 +384,66 @@ function CreateContent() {
           </div>
         )}
 
-        {/* Advanced position caps */}
-        <details style={{ fontFamily: "var(--font-mono)" }}>
-          <summary
+        {/* Market parameters — always visible: these shape the market's risk profile */}
+        <div style={{ fontFamily: "var(--font-mono)" }}>
+          <div
             style={{
-              fontSize: "0.62rem",
+              fontSize: "var(--fs-label)",
               letterSpacing: "0.1em",
-              color: "var(--muted)",
-              cursor: "pointer",
-              userSelect: "none",
+              color: "var(--cyan)",
+              marginBottom: 4,
             }}
           >
-            ▸ ADVANCED: POSITION CAPS (optional)
-          </summary>
-          <div
-            className="flex flex-col gap-3"
-            style={{ marginTop: 12 }}
+            MARKET PARAMETERS
+          </div>
+          <p
+            style={{
+              fontSize: "var(--fs-micro)",
+              color: "var(--muted)",
+              letterSpacing: "0.04em",
+              lineHeight: 1.6,
+              marginBottom: 12,
+            }}
           >
+            These protect your liquidity and define the trading rhythm. Caps can
+            be changed later by the LP NFT holder; the duration is permanent.
+          </p>
+          <div className="flex flex-col gap-3">
             <div className="flex flex-col gap-1">
               <label
                 style={{
-                  fontSize: "0.6rem",
+                  fontSize: "var(--fs-label)",
                   letterSpacing: "0.12em",
                   color: "var(--muted)",
                   textTransform: "uppercase",
                 }}
               >
-                Max Position USDC (0 = disabled)
+                Max Position — % of pool
+              </label>
+              <input
+                type="text"
+                value={maxPositionBps}
+                onChange={(e) => setMaxPositionBps(e.target.value)}
+                placeholder="100"
+                className="input-terminal"
+              />
+              <p style={{ fontSize: "var(--fs-nano)", color: "var(--dim)", letterSpacing: "0.04em", lineHeight: 1.6 }}>
+                In basis points of the pool's USDC reserves: 100 = each position
+                capped at 1% of the pool. Allowed range 10–9900 (0.1%–99%);
+                0 disables the cap. Default 100 keeps any single trader from
+                dominating your liquidity.
+              </p>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label
+                style={{
+                  fontSize: "var(--fs-label)",
+                  letterSpacing: "0.12em",
+                  color: "var(--muted)",
+                  textTransform: "uppercase",
+                }}
+              >
+                Max Position — absolute USDC
               </label>
               <input
                 type="text"
@@ -438,47 +452,38 @@ function CreateContent() {
                 placeholder="0"
                 className="input-terminal"
               />
+              <p style={{ fontSize: "var(--fs-nano)", color: "var(--dim)", letterSpacing: "0.04em", lineHeight: 1.6 }}>
+                Hard dollar ceiling per position, applied on top of the % cap
+                (the stricter one wins). 0 = no absolute cap.
+              </p>
             </div>
             <div className="flex flex-col gap-1">
               <label
                 style={{
-                  fontSize: "0.6rem",
+                  fontSize: "var(--fs-label)",
                   letterSpacing: "0.12em",
                   color: "var(--muted)",
                   textTransform: "uppercase",
                 }}
               >
-                Max Position BPS (10–9900, 0 = disabled)
-              </label>
-              <input
-                type="text"
-                value={maxPositionBps}
-                onChange={(e) => setMaxPositionBps(e.target.value)}
-                placeholder="0"
-                className="input-terminal"
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label
-                style={{
-                  fontSize: "0.6rem",
-                  letterSpacing: "0.12em",
-                  color: "var(--muted)",
-                  textTransform: "uppercase",
-                }}
-              >
-                Position Duration in days (0 = default 7 days)
+                Position duration (days)
               </label>
               <input
                 type="text"
                 value={positionDurationDays}
                 onChange={(e) => setPositionDurationDays(e.target.value)}
-                placeholder="0"
+                placeholder="7"
                 className="input-terminal"
               />
+              <p style={{ fontSize: "var(--fs-nano)", color: "var(--dim)", letterSpacing: "0.04em", lineHeight: 1.6 }}>
+                How long each position period lasts before it must be extended
+                (paying the fee again) or it settles. Shorter = more frequent
+                fee income for you as LP; longer = more convenient for traders.
+                Range 1 hour – 365 days; 0 = default 7 days. Permanent.
+              </p>
             </div>
           </div>
-        </details>
+        </div>
 
         {/* Action buttons */}
         {!isConnected && (
@@ -522,6 +527,7 @@ function CreateContent() {
                 abi: erc20Abi,
                 functionName: "approve",
                 args: [factoryAddr, seedUsdcRaw],
+                chainId,
               })
             }
             style={{ width: "100%", justifyContent: "center" }}
@@ -538,6 +544,7 @@ function CreateContent() {
                 abi: erc20Abi,
                 functionName: "approve",
                 args: [factoryAddr, seedTokenRaw],
+                chainId,
               })
             }
             style={{ width: "100%", justifyContent: "center" }}
@@ -554,7 +561,8 @@ function CreateContent() {
                 address: factoryAddr,
                 abi: exnihiloFactoryAbi,
                 functionName: "createMarket",
-                args: [tokenAddr!, seedUsdcRaw, seedTokenRaw, maxPosUsdRaw, maxPosBpsRaw, positionDurationRaw, `air${tokenSymbol}`, `air${tokenSymbol}Usd`, tokenDecimals],
+                args: [tokenAddr!, seedUsdcRaw, seedTokenRaw, maxPosUsdRaw, maxPosBpsRaw, positionDurationRaw],
+                chainId,
               })
             }
             style={{ width: "100%", justifyContent: "center" }}

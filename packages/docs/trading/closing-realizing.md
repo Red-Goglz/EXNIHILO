@@ -1,6 +1,6 @@
-# Closing & Realizing Positions
+# Closing Positions
 
-There are two ways to settle a position: **close** and **realize**.
+A position is settled by **closing** it — the position's value is realized in USDC against the pool's curves.
 
 ## Close
 
@@ -8,39 +8,33 @@ Closing fully settles your position and returns USDC. Only possible when in prof
 
 ### Closing a Long
 
-1. The airToken locked in your NFT is released
-2. It's swapped through SWAP-3 for airUsd
-3. The synthetic airUsd debt (`airUsdMinted`) is burned
-4. Any surplus airUsd is your profit — converted to USDC and sent to you
-5. A 1% fee on profit is sent to the protocol treasury
+1. The locked airToken collateral re-enters the pool's backed reserves
+2. It is valued through SWAP-3
+3. The synthetic airUsd debt (`airUsdMinted`) is cancelled
+4. Any surplus is your profit — paid to you in USDC
+5. A 1% fee on profit accrues to the protocol treasury
 6. The Position NFT is burned
 
 ### Closing a Short
 
-1. The airUsd locked in your NFT is released
+1. The locked airUsd collateral is released
 2. The synthetic airToken debt is bought back through SWAP-2
-3. Remaining airUsd is your profit — converted to USDC and sent to you
-4. A 1% fee on profit is sent to the protocol treasury
+3. Remaining airUsd is your profit — paid to you in USDC
+4. A 1% fee on profit accrues to the protocol treasury
 5. The Position NFT is burned
-
-## Realize
-
-Realize releases the locked airTokens instead of swapping to USDC. The synthetic airUsd has to be paid to clear the pool imbalance. The position is still fully settled and the NFT is burned.
-
-This is useful for situations where the trader wants to exit and receive the tokens (for staking or governance).
 
 ## Position expiry
 
-Every position has a **deadline**. After the deadline, anyone can call `closePositionAfterDeadline(nftId)`:
+Every position has a **deadline**. After the deadline, anyone can call `closePositionAfterDeadline(nftId, minPayout)`:
 
-- **Profitable**: closed like normal — holder receives USDC profit minus 1% fee
-- **Underwater**: collateral returns to LP, synthetic debt burned, no payout
+- **Profitable**: settled like a normal close, but the payout (minus the 1% fee) is **credited to your claimable balance** rather than pushed to your wallet — withdraw it any time with `claimPayout(to)`. This pull-payment design means no wallet condition (e.g. a USDC blacklist) can ever block position cleanup.
+- **Underwater**: collateral returns to the LP, synthetic debt is cancelled, no payout
 
-To avoid expiry, call `renewPosition(nftId)` before the deadline. This pays 5% of notional and extends the deadline by one position duration. See [Expiry & Renewal](/positions/expiry).
+To avoid expiry, call `renewPosition(nftId, maxFee)` before the deadline (or opt into auto-renewal via `PositionNFT.setAutoRenew`). The fee is dynamic — quote it with `quoteRenewFee(nftId)` — and extends the deadline by one position duration. See [Expiry & Renewal](/positions/expiry).
 
-## Who can close / realize / close after deadline?
+## Who can do what?
 
-- **Close** — only the NFT owner (the trader), at any time
-- **Realize** — only the NFT owner
+- **Close** — only the NFT owner (the trader), at any time while in profit
 - **closePositionAfterDeadline** — anyone, but only after the deadline
-- **renewPosition** — anyone, at any time (pay fee to extend deadline)
+- **renewPosition** — only the NFT owner (pay fee to extend deadline)
+- **claimPayout** — the credited holder, any time after an expiry settlement

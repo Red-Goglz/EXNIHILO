@@ -2,25 +2,28 @@ import { useState, useEffect } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAccount, useSwitchChain } from "wagmi";
 import { useFormo } from "@formo/analytics";
-import { avalancheFuji, hardhat } from "viem/chains";
 import ConnectButton from "../wallet/ConnectButton.tsx";
 import FaucetButtons from "../wallet/FaucetButton.tsx";
+import ToastHost from "../shared/Toast.tsx";
+import RouterApprovalModal from "../wallet/RouterApprovalModal.tsx";
 import { PositionAlertContext, usePositionAlertState, usePositionAlerts } from "../../hooks/usePositionAlerts.ts";
+import { useAppChain } from "../../hooks/useAppChain.ts";
+import { APP_CHAINS, appPath, type ChainSlug } from "../../lib/chains.ts";
 
+// Nav sections, resolved against the active chain slug (/app/<slug>/<sub>)
 const NAV_LINKS = [
-  { to: "/app",          label: "FEED",      exact: true  },
-  { to: "/app/markets",   label: "MARKETS",   exact: false },
-  { to: "/app/portfolio", label: "PORTFOLIO", exact: false },
-  { to: "/app/create",    label: "CREATE",    exact: false },
-  { to: "/app/analytics", label: "ANALYTICS", exact: false },
+  { sub: "",          label: "FEED",      exact: true  },
+  { sub: "markets",   label: "MARKETS",   exact: false },
+  { sub: "portfolio", label: "PORTFOLIO", exact: false },
+  { sub: "create",    label: "CREATE",    exact: false },
+  { sub: "analytics", label: "ANALYTICS", exact: false },
 ] as const;
 
-const MAX_WIDTH = 1280;
+// Sections preserved when switching chains (pool addresses are chain-specific,
+// so /markets/:poolAddr falls back to /markets)
+const CHAIN_SWITCH_SECTIONS = ["markets", "portfolio", "create", "analytics"];
 
-const CHAIN_LABELS: Record<number, string> = {
-  [avalancheFuji.id]: "FUJI TESTNET",
-  [hardhat.id]: "HARDHAT LOCAL",
-};
+const MAX_WIDTH = 1280;
 
 export default function Layout() {
   const { pathname } = useLocation();
@@ -28,6 +31,7 @@ export default function Layout() {
   const { address, chainId, isConnected } = useAccount();
   const { switchChain } = useSwitchChain();
   const analytics = useFormo();
+  const { chainId: urlChainId, path } = useAppChain();
 
   // Identify wallet on connect / page load
   useEffect(() => {
@@ -39,21 +43,22 @@ export default function Layout() {
   // Close mobile menu on route change
   useEffect(() => { setMenuOpen(false); }, [pathname]);
 
-  // Prompt wallet to switch to Fuji if connected to an unsupported chain
+  // The URL decides the active chain — prompt the wallet to follow it
   useEffect(() => {
-    if (isConnected && chainId && !CHAIN_LABELS[chainId]) {
-      switchChain({ chainId: avalancheFuji.id });
+    if (isConnected && chainId && chainId !== urlChainId) {
+      switchChain({ chainId: urlChainId });
     }
-  }, [isConnected, chainId, switchChain]);
+  }, [isConnected, chainId, urlChainId, switchChain]);
 
-  const chainLabel = chainId && CHAIN_LABELS[chainId]
-    ? CHAIN_LABELS[chainId]
-    : isConnected ? "WRONG NETWORK" : "FUJI TESTNET";
+  const walletMismatch = isConnected && !!chainId && chainId !== urlChainId;
 
   const alertState = usePositionAlertState();
 
   return (
     <PositionAlertContext.Provider value={alertState}>
+    {/* Global so the pre-approval offer can appear wherever a per-trade
+        approval is about to be required, not only on the feed. */}
+    <RouterApprovalModal />
     <div style={{ minHeight: "100vh", fontFamily: "var(--font-mono)", width: "100%", display: "flex", flexDirection: "column" }}>
       {/* ── Navbar ─────────────────────────────────────────────────────── */}
       <nav
@@ -79,7 +84,7 @@ export default function Layout() {
           }}
         >
           {/* Left: Logo */}
-          <Link to="/app" style={{ textDecoration: "none", flexShrink: 0 }}>
+          <Link to={path()} style={{ textDecoration: "none", flexShrink: 0 }}>
             <span
               className="logo-glitch"
               data-text="EXNIHILO"
@@ -91,7 +96,8 @@ export default function Layout() {
 
           {/* Desktop nav links */}
           <div className="desktop-nav" style={{ display: "flex", alignItems: "center", gap: 24, marginLeft: 36 }}>
-            {NAV_LINKS.map(({ to, label, exact }) => {
+            {NAV_LINKS.map(({ sub, label, exact }) => {
+              const to = path(sub);
               const isActive = exact ? pathname === to : pathname.startsWith(to);
               return <NavLink key={to} to={to} label={label} isActive={isActive} />;
             })}
@@ -103,16 +109,7 @@ export default function Layout() {
           {/* Desktop right side */}
           <div className="desktop-nav" style={{ display: "flex", alignItems: "center", gap: 16 }}>
             <FaucetButtons />
-            <span
-              style={{
-                fontSize: "0.58rem",
-                letterSpacing: "0.15em",
-                color: chainLabel === "WRONG NETWORK" ? "var(--red)" : "var(--orange)",
-                fontFamily: "var(--font-mono)",
-              }}
-            >
-              ⬡ {chainLabel}
-            </span>
+            <ChainSelect mismatch={walletMismatch} />
             <ConnectButton />
           </div>
 
@@ -150,7 +147,8 @@ export default function Layout() {
               gap: 6,
             }}
           >
-            {NAV_LINKS.map(({ to, label, exact }) => {
+            {NAV_LINKS.map(({ sub, label, exact }) => {
+              const to = path(sub);
               const isActive = exact ? pathname === to : pathname.startsWith(to);
               return (
                 <Link
@@ -173,16 +171,7 @@ export default function Layout() {
             })}
 
             <div style={{ display: "flex", alignItems: "center", gap: 12, paddingTop: 10, flexWrap: "wrap" }}>
-              <span
-                style={{
-                  fontSize: "0.58rem",
-                  letterSpacing: "0.15em",
-                  color: chainLabel === "WRONG NETWORK" ? "var(--red)" : "var(--orange)",
-                  fontFamily: "var(--font-mono)",
-                }}
-              >
-                ⬡ {chainLabel}
-              </span>
+              <ChainSelect mismatch={walletMismatch} />
               <FaucetButtons />
             </div>
 
@@ -205,6 +194,8 @@ export default function Layout() {
       >
         <Outlet />
       </main>
+
+      <ToastHost />
 
       {/* ── Footer ──────────────────────────────────────────────────────── */}
       <footer style={{ borderTop: "1px solid var(--border)" }}>
@@ -230,7 +221,7 @@ export default function Layout() {
             <FooterLink href="https://github.com/Red-Goglz/EXNIHILO">GitHub</FooterLink>
             <FooterLink href="https://x.com/exnihiloFinance">X</FooterLink>
           </div>
-          <span style={{ fontSize: "0.6rem", color: "var(--dim)", letterSpacing: "0.08em" }}>
+          <span style={{ fontSize: "var(--fs-label)", color: "var(--dim)", letterSpacing: "0.08em" }}>
             &copy; 2026 EXNIHILO
           </span>
         </div>
@@ -243,9 +234,67 @@ export default function Layout() {
   );
 }
 
+/**
+ * Chain switcher — changes the :chainSlug segment of the URL. The wallet
+ * follows via the switchChain effect in Layout. Chain-specific params
+ * (pool addresses) are dropped; the top-level section is preserved.
+ */
+function ChainSelect({ mismatch }: { mismatch: boolean }) {
+  const { slug, path } = useAppChain();
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+
+  const handleSwitch = (nextSlug: ChainSlug) => {
+    if (nextSlug === slug) return;
+    const section = pathname.slice(path().length).split("/").filter(Boolean)[0] ?? "";
+    const keep = CHAIN_SWITCH_SECTIONS.includes(section) ? section : "";
+    navigate(appPath(nextSlug, keep));
+  };
+
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        fontSize: "var(--fs-micro)",
+        letterSpacing: "0.15em",
+        color: mismatch ? "var(--red)" : "var(--orange)",
+        fontFamily: "var(--font-mono)",
+      }}
+    >
+      ⬡
+      <select
+        value={slug}
+        onChange={(e) => handleSwitch(e.target.value as ChainSlug)}
+        aria-label="Select network"
+        style={{
+          background: "transparent",
+          border: "none",
+          color: "inherit",
+          fontFamily: "inherit",
+          fontSize: "inherit",
+          letterSpacing: "inherit",
+          cursor: "pointer",
+          appearance: "none",
+          paddingRight: 2,
+        }}
+      >
+        {APP_CHAINS.map((c) => (
+          <option key={c.slug} value={c.slug} style={{ background: "#000", color: "var(--orange)" }}>
+            {c.label}
+          </option>
+        ))}
+      </select>
+      {mismatch && <span style={{ color: "var(--red)" }}>!</span>}
+    </span>
+  );
+}
+
 function PositionAlertStack() {
   const { alerts, removeAlert } = usePositionAlerts();
   const navigate = useNavigate();
+  const { path } = useAppChain();
 
   if (alerts.length === 0) return null;
 
@@ -270,7 +319,7 @@ function PositionAlertStack() {
             key={alert.id}
             onClick={() => {
               removeAlert(alert.id);
-              navigate("/app/portfolio");
+              navigate(path("portfolio"));
             }}
             style={{
               display: "flex",
@@ -281,7 +330,7 @@ function PositionAlertStack() {
               border: `1px solid ${borderColor}`,
               cursor: "pointer",
               fontFamily: "var(--font-mono)",
-              fontSize: "0.6rem",
+              fontSize: "var(--fs-label)",
               letterSpacing: "0.08em",
               color: "var(--body)",
               textAlign: "left",
@@ -310,7 +359,7 @@ function FooterLink({ href, children }: { href: string; children: React.ReactNod
     <a
       href={href}
       style={{
-        fontSize: "0.62rem",
+        fontSize: "var(--fs-label)",
         letterSpacing: "0.12em",
         color: "var(--muted)",
         textDecoration: "none",
@@ -339,7 +388,7 @@ function NavLink({
       to={to}
       style={{
         fontFamily: "var(--font-mono)",
-        fontSize: "0.65rem",
+        fontSize: "var(--fs-body-s)",
         letterSpacing: "0.15em",
         color: isActive ? "var(--cyan)" : "var(--muted)",
         textDecoration: "none",

@@ -5,8 +5,10 @@
   "main": "index.js",
   "scripts": {
     "dev": "npm run dev -w packages/site",
+    "dev:indexer": "npm run dev -w packages/indexer",
     "build": "npm run build -w packages/docs && npm run build -w packages/site",
     "start": "cd packages/site && npx vite preview --host --port 3000",
+    "start:indexer": "npm run start -w packages/indexer",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -17,11 +19,13 @@
     "packages/blockchain",
     "packages/site",
     "packages/abis",
-    "packages/docs"
+    "packages/docs",
+    "packages/indexer"
   ],
   "overrides": {
     "react": "$react",
-    "react-dom": "$react-dom"
+    "react-dom": "$react-dom",
+    "@hono/node-server": "^1.19.0"
   },
   "dependencies": {
     "react": "^19.2.0",

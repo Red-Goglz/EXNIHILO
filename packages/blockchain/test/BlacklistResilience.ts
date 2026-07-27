@@ -102,11 +102,7 @@ async function deployBlacklistPoolFixture() {
     INITIAL_TOKEN,
     MAX_POS_USD,
     MAX_POS_BPS,
-    0n, // 7-day default
-    "airPEPE",
-    "airPEPEUsd",
-    18,
-  );
+    0n); // 7-day default
   const receipt = await tx.wait();
 
   const iface = factory.interface;
@@ -157,17 +153,24 @@ async function openShort(pool: EXNIHILOPool, trader: HardhatEthersSigner, amount
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
+//
+// Pull-payment model: the pool never pushes USDC to third parties.
+//   - Fees accrue and are claimed (claimFees / claimProtocolFees).
+//   - Expired-position payouts are credited to `claimable` and withdrawn via
+//     claimPayout(to).
+// A blacklisted recipient therefore can never block any pool operation —
+// blacklist DoS is structurally impossible, not merely handled.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("Blacklist Resilience (DoS-2 fix)", function () {
+describe("Blacklist Resilience (pull payments)", function () {
 
   // ═════════════════════════════════════════════════════════════════════════════
-  // 1. Baseline: expired position close works normally without blacklist
+  // 1. Baseline: expired close credits payout, holder claims
   // ═════════════════════════════════════════════════════════════════════════════
 
-  describe("Baseline: normal expired close still works", function () {
+  describe("Baseline: expired close credits claimable payout", function () {
 
-    it("profitable expired long pays holder normally", async function () {
+    it("profitable expired long: payout credited, holder claims it", async function () {
       const { pool, usdc, trader1, trader2, other } = await loadFixture(deployBlacklistPoolFixture);
 
       const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
@@ -177,15 +180,18 @@ describe("Blacklist Resilience (DoS-2 fix)", function () {
 
       await time.increase(Number(SEVEN_DAYS) + 1);
 
-      const holderBefore = await usdc.balanceOf(trader1.address);
       await pool.connect(other).closePositionAfterDeadline(nftId, 0n);
-      const holderAfter = await usdc.balanceOf(trader1.address);
-
-      expect(holderAfter).to.be.gt(holderBefore);
       expect(await pool.openPositionCount()).to.equal(0n);
+
+      const credited = await pool.claimable(trader1.address);
+      expect(credited).to.be.gt(0n);
+
+      const holderBefore = await usdc.balanceOf(trader1.address);
+      await pool.connect(trader1).claimPayout(trader1.address);
+      expect(await usdc.balanceOf(trader1.address)).to.equal(holderBefore + credited);
     });
 
-    it("profitable expired short pays holder normally", async function () {
+    it("profitable expired short: payout credited, holder claims it", async function () {
       const { pool, usdc, baseToken, trader1, trader2, other } = await loadFixture(deployBlacklistPoolFixture);
 
       const nftId = await openShort(pool, trader1, ethers.parseUnits("100", 6));
@@ -196,22 +202,25 @@ describe("Blacklist Resilience (DoS-2 fix)", function () {
 
       await time.increase(Number(SEVEN_DAYS) + 1);
 
-      const holderBefore = await usdc.balanceOf(trader1.address);
       await pool.connect(other).closePositionAfterDeadline(nftId, 0n);
-      const holderAfter = await usdc.balanceOf(trader1.address);
-
-      expect(holderAfter).to.be.gt(holderBefore);
       expect(await pool.openPositionCount()).to.equal(0n);
+
+      const credited = await pool.claimable(trader1.address);
+      expect(credited).to.be.gt(0n);
+
+      const holderBefore = await usdc.balanceOf(trader1.address);
+      await pool.connect(trader1).claimPayout(trader1.address);
+      expect(await usdc.balanceOf(trader1.address)).to.equal(holderBefore + credited);
     });
   });
 
   // ═════════════════════════════════════════════════════════════════════════════
-  // 2. Blacklisted holder: position cleanup still succeeds
+  // 2. Blacklisted holder: cleanup succeeds, payout stays claimable
   // ═════════════════════════════════════════════════════════════════════════════
 
-  describe("Blacklisted holder: cleanup succeeds with PayoutFailed", function () {
+  describe("Blacklisted holder: cleanup succeeds, payout redirectable", function () {
 
-    it("profitable expired long: position cleaned up, emits PayoutFailed for holder", async function () {
+    it("profitable expired long: cleanup succeeds, payout credited despite blacklist", async function () {
       const { pool, usdc, trader1, trader2, other } = await loadFixture(deployBlacklistPoolFixture);
 
       const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
@@ -224,44 +233,49 @@ describe("Blacklist Resilience (DoS-2 fix)", function () {
 
       await time.increase(Number(SEVEN_DAYS) + 1);
 
-      // Should NOT revert — the try/catch catches the blacklist failure
-      const tx = await pool.connect(other).closePositionAfterDeadline(nftId, 0n);
+      // Crediting is a pure state write — the blacklist cannot interfere.
+      await expect(pool.connect(other).closePositionAfterDeadline(nftId, 0n))
+        .to.emit(pool, "PayoutCredited");
 
-      // PayoutFailed emitted for the holder
-      await expect(tx).to.emit(pool, "PayoutFailed").withArgs(
-        trader1.address,
-        (v: bigint) => v > 0n,
-      );
-
-      // Position cleaned up
       expect(await pool.openPositionCount()).to.equal(0n);
-
-      // Holder did NOT receive USDC (blacklisted)
-      // The USDC stays in the pool
+      expect(await pool.claimable(trader1.address)).to.be.gt(0n);
     });
 
-    it("profitable expired short: position cleaned up, emits PayoutFailed for holder", async function () {
-      const { pool, usdc, baseToken, trader1, trader2, other } = await loadFixture(deployBlacklistPoolFixture);
+    it("blacklisted holder redirects the claim to a clean address", async function () {
+      const { pool, usdc, trader1, trader2, other } = await loadFixture(deployBlacklistPoolFixture);
 
-      const nftId = await openShort(pool, trader1, ethers.parseUnits("100", 6));
-
-      // Dump price to make short profitable
-      await baseToken.mint(trader2.address, ethers.parseEther("500000"));
-      await pool.connect(trader2).swap(ethers.parseEther("500000"), 0n, true, trader2.address);
-
-      // Blacklist the holder
+      const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
+      await pool.connect(trader2).swap(ethers.parseUnits("2000", 6), 0n, false, trader2.address);
       await usdc.blacklist(trader1.address);
-
       await time.increase(Number(SEVEN_DAYS) + 1);
 
-      const tx = await pool.connect(other).closePositionAfterDeadline(nftId, 0n);
+      await pool.connect(other).closePositionAfterDeadline(nftId, 0n);
+      const credited = await pool.claimable(trader1.address);
 
-      await expect(tx).to.emit(pool, "PayoutFailed").withArgs(
-        trader1.address,
-        (v: bigint) => v > 0n,
-      );
+      // Claiming to self reverts (blacklisted recipient)...
+      await expect(pool.connect(trader1).claimPayout(trader1.address)).to.be.reverted;
 
-      expect(await pool.openPositionCount()).to.equal(0n);
+      // ...but redirecting to a clean address works.
+      const otherBefore = await usdc.balanceOf(other.address);
+      await pool.connect(trader1).claimPayout(other.address);
+      expect(await usdc.balanceOf(other.address)).to.equal(otherBefore + credited);
+      expect(await pool.claimable(trader1.address)).to.equal(0n);
+    });
+
+    it("blacklisted holder: voluntary close reverts (push to self), expiry path still works", async function () {
+      const { pool, usdc, trader1, trader2, other } = await loadFixture(deployBlacklistPoolFixture);
+
+      const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
+      await pool.connect(trader2).swap(ethers.parseUnits("2000", 6), 0n, false, trader2.address);
+      await usdc.blacklist(trader1.address);
+
+      // Voluntary close pays the holder directly — blocked by the blacklist.
+      await expect(pool.connect(trader1).closeLong(nftId, 0n)).to.be.reverted;
+
+      // The expiry path credits instead of pushing — always succeeds.
+      await time.increase(Number(SEVEN_DAYS) + 1);
+      await pool.connect(other).closePositionAfterDeadline(nftId, 0n);
+      expect(await pool.claimable(trader1.address)).to.be.gt(0n);
     });
   });
 
@@ -272,7 +286,7 @@ describe("Blacklist Resilience (DoS-2 fix)", function () {
   describe("LP exit unblocked after blacklisted position cleanup", function () {
 
     it("LP can removeLiquidity after cleaning up blacklisted holder's expired long", async function () {
-      const { pool, usdc, baseToken, trader1, trader2, other, creator, lpNftId } =
+      const { pool, usdc, baseToken, trader1, trader2, other, creator } =
         await loadFixture(deployBlacklistPoolFixture);
 
       const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
@@ -299,157 +313,7 @@ describe("Blacklist Resilience (DoS-2 fix)", function () {
       expect(await baseToken.balanceOf(creator.address)).to.be.gt(lpTokenBefore);
     });
 
-    it("LP can removeLiquidity after cleaning up blacklisted holder's expired short", async function () {
-      const { pool, usdc, baseToken, trader1, trader2, other, creator } =
-        await loadFixture(deployBlacklistPoolFixture);
-
-      const nftId = await openShort(pool, trader1, ethers.parseUnits("100", 6));
-
-      // Dump to make short profitable
-      await baseToken.mint(trader2.address, ethers.parseEther("500000"));
-      await pool.connect(trader2).swap(ethers.parseEther("500000"), 0n, true, trader2.address);
-
-      await usdc.blacklist(trader1.address);
-      await time.increase(Number(SEVEN_DAYS) + 1);
-
-      await pool.connect(other).closePositionAfterDeadline(nftId, 0n);
-      expect(await pool.openPositionCount()).to.equal(0n);
-
-      await pool.connect(creator).removeLiquidity();
-
-      // LP successfully withdrew — no revert
-    });
-  });
-
-  // ═════════════════════════════════════════════════════════════════════════════
-  // 4. Blacklisted treasury: position cleanup still succeeds
-  // ═════════════════════════════════════════════════════════════════════════════
-
-  describe("Blacklisted treasury: cleanup succeeds", function () {
-
-    it("profitable expired long: emits PayoutFailed for treasury, holder still paid", async function () {
-      const { pool, usdc, treasury, trader1, trader2, other } =
-        await loadFixture(deployBlacklistPoolFixture);
-
-      const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
-
-      await pool.connect(trader2).swap(ethers.parseUnits("2000", 6), 0n, false, trader2.address);
-
-      // Blacklist the treasury
-      await usdc.blacklist(treasury.address);
-
-      await time.increase(Number(SEVEN_DAYS) + 1);
-
-      const holderBefore = await usdc.balanceOf(trader1.address);
-      const tx = await pool.connect(other).closePositionAfterDeadline(nftId, 0n);
-
-      // Treasury payout failed
-      await expect(tx).to.emit(pool, "PayoutFailed").withArgs(
-        treasury.address,
-        (v: bigint) => v > 0n,
-      );
-
-      // Holder STILL received their payout (they are not blacklisted)
-      expect(await usdc.balanceOf(trader1.address)).to.be.gt(holderBefore);
-
-      expect(await pool.openPositionCount()).to.equal(0n);
-    });
-  });
-
-  // ═════════════════════════════════════════════════════════════════════════════
-  // 5. Both holder and treasury blacklisted: still cleans up
-  // ═════════════════════════════════════════════════════════════════════════════
-
-  describe("Both holder and treasury blacklisted", function () {
-
-    it("position still cleans up, two PayoutFailed events emitted", async function () {
-      const { pool, usdc, treasury, trader1, trader2, other } =
-        await loadFixture(deployBlacklistPoolFixture);
-
-      const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
-
-      await pool.connect(trader2).swap(ethers.parseUnits("2000", 6), 0n, false, trader2.address);
-
-      // Blacklist both
-      await usdc.blacklist(trader1.address);
-      await usdc.blacklist(treasury.address);
-
-      await time.increase(Number(SEVEN_DAYS) + 1);
-
-      const tx = await pool.connect(other).closePositionAfterDeadline(nftId, 0n);
-
-      // Two PayoutFailed events
-      const receipt = await tx.wait();
-      const payoutFailedEvents = receipt!.logs
-        .map((l) => { try { return pool.interface.parseLog(l); } catch { return null; } })
-        .filter((l) => l?.name === "PayoutFailed");
-
-      expect(payoutFailedEvents.length).to.equal(2);
-
-      // Position cleaned up
-      expect(await pool.openPositionCount()).to.equal(0n);
-    });
-  });
-
-  // ═════════════════════════════════════════════════════════════════════════════
-  // 5b. Failed payouts are socialized into lpFeesAccumulated and recoverable
-  //     via claimFees (fix for the _trySendUsdc strand bug).
-  // ═════════════════════════════════════════════════════════════════════════════
-
-  describe("Failed payouts socialize to LP fees", function () {
-
-    it("blacklisted holder: failed netSurplus is added to lpFeesAccumulated", async function () {
-      const { pool, usdc, trader1, trader2, other } = await loadFixture(deployBlacklistPoolFixture);
-
-      const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
-      await pool.connect(trader2).swap(ethers.parseUnits("2000", 6), 0n, false, trader2.address);
-      await usdc.blacklist(trader1.address);
-      await time.increase(Number(SEVEN_DAYS) + 1);
-
-      const feesBefore = await pool.lpFeesAccumulated();
-
-      const tx = await pool.connect(other).closePositionAfterDeadline(nftId, 0n);
-      const receipt = await tx.wait();
-
-      // Extract the PayoutFailed amount for the holder
-      const failedEvent = receipt!.logs
-        .map((l) => { try { return pool.interface.parseLog(l); } catch { return null; } })
-        .find((l) => l?.name === "PayoutFailed" && l.args.recipient === trader1.address)!;
-      const failedAmount = failedEvent.args.amount as bigint;
-
-      expect(failedAmount).to.be.gt(0n);
-
-      const feesAfter = await pool.lpFeesAccumulated();
-      expect(feesAfter - feesBefore).to.equal(failedAmount);
-    });
-
-    it("both holder and treasury blacklisted: both amounts socialized", async function () {
-      const { pool, usdc, treasury, trader1, trader2, other } =
-        await loadFixture(deployBlacklistPoolFixture);
-
-      const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
-      await pool.connect(trader2).swap(ethers.parseUnits("2000", 6), 0n, false, trader2.address);
-      await usdc.blacklist(trader1.address);
-      await usdc.blacklist(treasury.address);
-      await time.increase(Number(SEVEN_DAYS) + 1);
-
-      const feesBefore = await pool.lpFeesAccumulated();
-      const tx = await pool.connect(other).closePositionAfterDeadline(nftId, 0n);
-      const receipt = await tx.wait();
-
-      const failedEvents = receipt!.logs
-        .map((l) => { try { return pool.interface.parseLog(l); } catch { return null; } })
-        .filter((l) => l?.name === "PayoutFailed");
-      const totalFailed = failedEvents.reduce(
-        (sum, ev) => sum + (ev!.args.amount as bigint),
-        0n,
-      );
-
-      expect(failedEvents.length).to.equal(2);
-      expect(await pool.lpFeesAccumulated() - feesBefore).to.equal(totalFailed);
-    });
-
-    it("LP can claim socialized amount via claimFees", async function () {
+    it("removeLiquidity leaves the credited payout claimable (solvency held back)", async function () {
       const { pool, usdc, trader1, trader2, other, creator } =
         await loadFixture(deployBlacklistPoolFixture);
 
@@ -459,43 +323,100 @@ describe("Blacklist Resilience (DoS-2 fix)", function () {
       await time.increase(Number(SEVEN_DAYS) + 1);
 
       await pool.connect(other).closePositionAfterDeadline(nftId, 0n);
+      const credited = await pool.claimable(trader1.address);
 
-      const claimable = await pool.lpFeesAccumulated();
-      expect(claimable).to.be.gt(0n);
+      await pool.connect(creator).removeLiquidity();
 
-      const lpBefore = await usdc.balanceOf(creator.address);
-      await pool.connect(creator).claimFees();
-      const lpAfter  = await usdc.balanceOf(creator.address);
-
-      expect(lpAfter - lpBefore).to.equal(claimable);
-      expect(await pool.lpFeesAccumulated()).to.equal(0n);
-    });
-
-    it("successful payout does NOT socialize (only failures do)", async function () {
-      const { pool, usdc, trader1, trader2, other } = await loadFixture(deployBlacklistPoolFixture);
-
-      const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
-      await pool.connect(trader2).swap(ethers.parseUnits("2000", 6), 0n, false, trader2.address);
-      // NOT blacklisted
-      await time.increase(Number(SEVEN_DAYS) + 1);
-
-      const feesBefore = await pool.lpFeesAccumulated();
-      await pool.connect(other).closePositionAfterDeadline(nftId, 0n);
-      const feesAfter  = await pool.lpFeesAccumulated();
-
-      // Only the open-time LP fee portion moves; no socialization delta.
-      // The close-time payout went to holder + treasury successfully.
-      expect(feesAfter).to.equal(feesBefore);
+      // The credited payout is still fully backed by pool USDC after LP exit.
+      expect(await usdc.balanceOf(await pool.getAddress())).to.be.gte(credited);
+      const otherBefore = await usdc.balanceOf(other.address);
+      await pool.connect(trader1).claimPayout(other.address);
+      expect(await usdc.balanceOf(other.address)).to.equal(otherBefore + credited);
     });
   });
 
   // ═════════════════════════════════════════════════════════════════════════════
-  // 6. Underwater expired positions are unaffected (no transfer to holder)
+  // 4. Blacklisted LP holder / treasury: fees accrue regardless, claims redirect
+  // ═════════════════════════════════════════════════════════════════════════════
+
+  describe("Fee accrual is blacklist-proof", function () {
+
+    it("blacklisted LP holder: open succeeds, lpFee accrues, claimable to custom address", async function () {
+      const { pool, usdc, creator, trader1, other } =
+        await loadFixture(deployBlacklistPoolFixture);
+
+      await usdc.blacklist(creator.address);
+
+      // Opens never transfer to the LP — nothing to fail.
+      await pool.connect(trader1).openLong(ethers.parseUnits("100", 6), 0n, trader1.address);
+
+      const accrued = await pool.lpFeesAccumulated();
+      expect(accrued).to.be.gt(0n);
+      expect(await pool.lpFeesPaidTotal()).to.equal(0n);
+
+      // Blacklisted LP redirects the claim to a clean address.
+      const otherBefore = await usdc.balanceOf(other.address);
+      await pool.connect(creator).claimFees(other.address);
+      expect(await usdc.balanceOf(other.address)).to.equal(otherBefore + accrued);
+      expect(await pool.lpFeesAccumulated()).to.equal(0n);
+      expect(await pool.lpFeesPaidTotal()).to.equal(accrued);
+    });
+
+    it("blacklisted treasury: open succeeds, protocolFee accrues, claimable to custom address", async function () {
+      const { pool, usdc, treasury, trader1, other } =
+        await loadFixture(deployBlacklistPoolFixture);
+
+      await usdc.blacklist(treasury.address);
+
+      await pool.connect(trader1).openLong(ethers.parseUnits("100", 6), 0n, trader1.address);
+
+      const accrued = await pool.protocolFeesAccumulated();
+      expect(accrued).to.be.gt(0n);
+
+      // Blacklisted treasury redirects the claim to another address.
+      const otherBefore = await usdc.balanceOf(other.address);
+      await pool.connect(treasury).claimProtocolFees(other.address);
+      expect(await usdc.balanceOf(other.address)).to.equal(otherBefore + accrued);
+      expect(await pool.protocolFeesAccumulated()).to.equal(0n);
+      expect(await pool.protocolFeesPaidTotal()).to.equal(accrued);
+    });
+
+    it("blacklisted treasury: voluntary closeLong still succeeds, closeFee accrues", async function () {
+      const { pool, usdc, treasury, trader1, trader2 } =
+        await loadFixture(deployBlacklistPoolFixture);
+
+      const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
+      await pool.connect(trader2).swap(ethers.parseUnits("2000", 6), 0n, false, trader2.address);
+      await usdc.blacklist(treasury.address);
+
+      const protoBefore = await pool.protocolFeesAccumulated();
+      await pool.connect(trader1).closeLong(nftId, 0n);
+      expect(await pool.protocolFeesAccumulated()).to.be.gt(protoBefore);
+    });
+
+    it("expired close with blacklisted treasury: closeFee accrues, cleanup succeeds", async function () {
+      const { pool, usdc, treasury, trader1, trader2, other } =
+        await loadFixture(deployBlacklistPoolFixture);
+
+      const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
+      await pool.connect(trader2).swap(ethers.parseUnits("2000", 6), 0n, false, trader2.address);
+      await usdc.blacklist(treasury.address);
+      await time.increase(Number(SEVEN_DAYS) + 1);
+
+      const protoBefore = await pool.protocolFeesAccumulated();
+      await pool.connect(other).closePositionAfterDeadline(nftId, 0n);
+      expect(await pool.protocolFeesAccumulated()).to.be.gt(protoBefore);
+      expect(await pool.openPositionCount()).to.equal(0n);
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════════
+  // 5. Underwater expired positions: nothing credited, cleanup unaffected
   // ═════════════════════════════════════════════════════════════════════════════
 
   describe("Underwater positions: unaffected by blacklist", function () {
 
-    it("underwater expired long with blacklisted holder: same as before (no payout path)", async function () {
+    it("underwater expired long with blacklisted holder: cleanup succeeds, nothing credited", async function () {
       const { pool, usdc, baseToken, trader1, trader2, other } =
         await loadFixture(deployBlacklistPoolFixture);
 
@@ -508,14 +429,10 @@ describe("Blacklist Resilience (DoS-2 fix)", function () {
       await usdc.blacklist(trader1.address);
       await time.increase(Number(SEVEN_DAYS) + 1);
 
-      // No PayoutFailed — underwater path doesn't transfer to holder at all
-      const tx = await pool.connect(other).closePositionAfterDeadline(nftId, 0n);
-      const receipt = await tx.wait();
-      const payoutFailedEvents = receipt!.logs
-        .map((l) => { try { return pool.interface.parseLog(l); } catch { return null; } })
-        .filter((l) => l?.name === "PayoutFailed");
+      await pool.connect(other).closePositionAfterDeadline(nftId, 0n);
 
-      expect(payoutFailedEvents.length).to.equal(0);
+      expect(await pool.claimable(trader1.address)).to.equal(0n);
+      expect(await pool.totalClaimable()).to.equal(0n);
       expect(await pool.openPositionCount()).to.equal(0n);
     });
   });

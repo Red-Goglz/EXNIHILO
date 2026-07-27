@@ -1,6 +1,6 @@
 # Architecture Overview
 
-EXNIHILO consists of five smart contracts working together.
+EXNIHILO consists of four smart contracts working together.
 
 ## Contract hierarchy
 
@@ -8,9 +8,8 @@ EXNIHILO consists of five smart contracts working together.
 EXNIHILOFactory (singleton, immutable, no owner)
   │
   ├── Per market deployment:
-  │   ├── AirToken (airToken — wraps underlying ERC-20)
-  │   ├── AirToken (airUsd — wraps USDC)
-  │   └── EXNIHILOPool (AMM + trading engine)
+  │   └── EXNIHILOPool (AMM + trading engine; airToken/airUsd
+  │       accounting lives in the pool as supply counters)
   │
   ├── LpNFT (singleton — one token per pool)
   └── PositionNFT (singleton — all positions across all pools)
@@ -22,14 +21,14 @@ EXNIHILOFactory (singleton, immutable, no owner)
 
 The entry point for market creation. Fully permissionless — anyone can call `createMarket()`. No admin functions, no owner, all parameters are immutable after deployment.
 
-Deploys AirTokens + Pool, mints LP NFT, seeds initial liquidity — all in one atomic transaction.
+Deploys the Pool, mints the LP NFT, seeds initial liquidity — all in one atomic transaction.
 
 ### EXNIHILOPool
 
 The core contract. Handles:
 - Token swaps (SWAP-1)
 - Long/short position opens (SWAP-2, SWAP-3)
-- Position closes and realizes
+- Position closes and expiry settlements
 - Position renewal and expiry closure
 - Liquidity management (add/withdraw)
 - Fee accounting and claims
@@ -37,13 +36,9 @@ The core contract. Handles:
 
 All state-changing functions are protected by ReentrancyGuard and follow the CEI pattern.
 
-### AirToken
-
-Minimal ERC-20 wrapper. Deployed twice per market. Only the owning pool can mint/burn. The factory wires it to the pool via `initPool()` (one-shot, irreversible).
-
 ### PositionNFT
 
-Shared ERC-721 Enumerable contract. Custodies locked wrapper tokens for all positions across all pools. Renders fully on-chain SVG metadata with live P&L.
+Shared ERC-721 Enumerable contract. A pure position registry — locked collateral never leaves the pool; the Position struct records everything settlement needs. Renders fully on-chain SVG metadata with live P&L.
 
 ### LpNFT
 
@@ -55,12 +50,12 @@ ERC-721 contract. One token per pool, minted at market creation. The holder has 
 Trader                          LP NFT Holder
   │                                  │
   ├── openLong/openShort ───►  EXNIHILOPool
-  │                               │    │
-  │                    mint ──► AirTokens   ──► PositionNFT (custody)
-  │                               │
+  │                               │    (supply counters += synthetic mint)
+  │                               └──► PositionNFT (mint position record)
+  │
   ├── closeLong/closeShort ──►  EXNIHILOPool
-  │                               │
-  │                    burn ──► AirTokens   ──► PositionNFT (release)
+  │                               │    (supply counters -= burned debt)
+  │                               └──► PositionNFT (burn position record)
   │                               │
   │                          USDC ──► Trader
   │

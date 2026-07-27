@@ -6,7 +6,7 @@ interface TxButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   status?: TxStatus;
   idleLabel: string;
   errorLabel?: string;
-  variant?: "cyan" | "red" | "green" | "default";
+  variant?: "cyan" | "red" | "green" | "magenta" | "default";
 }
 
 export default function TxButton({
@@ -47,6 +47,8 @@ export default function TxButton({
           ? "btn-terminal btn-red"
           : variant === "green"
           ? "btn-terminal btn-green"
+          : variant === "magenta"
+          ? "btn-terminal btn-magenta"
           : variant === "cyan"
           ? "btn-terminal btn-cyan"
           : "btn-terminal";

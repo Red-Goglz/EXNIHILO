@@ -2,7 +2,6 @@ import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { Link } from "react-router-dom";
 import {
   useAccount,
-  useChainId,
   useReadContract,
   useReadContracts,
   useWriteContract,
@@ -16,14 +15,15 @@ import {
   exnihiloRouterAbi,
   erc20Abi,
 } from "@exnihilio/abis";
-import { getAddresses } from "../contracts/addresses.ts";
+import { useAppChain } from "../hooks/useAppChain.ts";
 import { formatUsdc, formatUsdcCompact, parseUnits, formatToken, decodeSpotPrice } from "../lib/format.ts";
 import { quoteLong, quoteShort } from "../lib/amm.ts";
 import { useRouterApproval } from "../hooks/useRouterApproval.ts";
 import { usePositionAlerts } from "../hooks/usePositionAlerts.ts";
 import { usePriceHistory } from "../hooks/usePriceHistory.ts";
+import { useOpenFee } from "../hooks/useOpenFee.ts";
+import { useNeedsPerTradeApproval } from "../hooks/useRouterApprovalPrompt.ts";
 import PriceChart from "../components/pool/PriceChart.tsx";
-import RouterApprovalModal from "../components/wallet/RouterApprovalModal.tsx";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -195,7 +195,7 @@ function TronScene({
           right: 0,
           textAlign: "center",
           fontFamily: "var(--font-mono)",
-          fontSize: "0.62rem",
+          fontSize: "var(--fs-label)",
           letterSpacing: "0.2em",
           color,
           textShadow: `0 0 10px ${color}`,
@@ -260,6 +260,7 @@ function FeedCard({
   onAdvance,
 }: FeedCardProps) {
   const { address } = useAccount();
+  const { chainId, path } = useAppChain();
   const queryClient = useQueryClient();
   const analytics = useFormo();
   const { addAlert } = usePositionAlerts();
@@ -279,7 +280,6 @@ function FeedCard({
   const isCustomShort = direction === "short" && preset === null && customShort !== "";
   const amountStr = isCustomLong ? customLong : isCustomShort ? customShort : preset !== null ? String(preset) : "";
   const usdcRaw   = parseUnits(amountStr, 6);
-  const feePulled = (usdcRaw * POSITION_FEE_BPS) / 10_000n;
 
   // Price / TVL
   const priceRaw =
@@ -299,16 +299,16 @@ function FeedCard({
   const tvlDisplay   = totalTvlRaw !== undefined ? formatUsdcCompact(totalTvlRaw) : "—";
 
   // Fetch real price history from indexer (falls back to fake data if unavailable)
-  const { data: priceHistory } = usePriceHistory(poolAddress);
+  const { data: priceHistory } = usePriceHistory(poolAddress, chainId);
 
   // Always load pool trading data for hover previews
-  const poolContract = { address: poolAddress, abi: exnihiloPoolAbi } as const;
+  const poolContract = { address: poolAddress, abi: exnihiloPoolAbi, chainId } as const;
 
   const { data: poolData } = useReadContracts({
     contracts: [
       { ...poolContract, functionName: "swapFeeBps" },
-      { ...poolContract, functionName: "airToken" },
-      { ...poolContract, functionName: "airUsdToken" },
+      { ...poolContract, functionName: "airTokenSupply" },
+      { ...poolContract, functionName: "airUsdSupply" },
       { ...poolContract, functionName: "longPrice" },
       { ...poolContract, functionName: "shortPrice" },
       { ...poolContract, functionName: "effectiveLeverageCap" },
@@ -316,8 +316,8 @@ function FeedCard({
   });
 
   const swapFeeBps   = poolData?.[0]?.result as bigint | undefined;
-  const airTokenAddr = poolData?.[1]?.result as `0x${string}` | undefined;
-  const airUsdAddr   = poolData?.[2]?.result as `0x${string}` | undefined;
+  const airTokenTotalSupply = poolData?.[1]?.result as bigint | undefined;
+  const airUsdTotalSupply   = poolData?.[2]?.result as bigint | undefined;
   const longPriceRaw  = poolData?.[3]?.result as bigint | undefined;
   const shortPriceRaw = poolData?.[4]?.result as bigint | undefined;
   const leverageCap   = poolData?.[5]?.result as bigint | undefined;
@@ -339,25 +339,12 @@ function FeedCard({
         abi: erc20Abi,
         functionName: "allowance" as const,
         args: [address ?? "0x0000000000000000000000000000000000000000", poolAddress] as const,
+        chainId,
       },
     ],
     query: { enabled: !!direction && !!address },
   });
   const allowance = allowanceData?.[0]?.result as bigint | undefined;
-
-  const { data: supplyData } = useReadContracts({
-    contracts:
-      airTokenAddr && airUsdAddr
-        ? [
-            { address: airTokenAddr, abi: erc20Abi, functionName: "totalSupply" as const },
-            { address: airUsdAddr,  abi: erc20Abi, functionName: "totalSupply" as const },
-          ]
-        : [],
-    query: { enabled: !!airTokenAddr && !!airUsdAddr },
-  });
-
-  const airTokenTotalSupply = supplyData?.[0]?.result as bigint | undefined;
-  const airUsdTotalSupply  = supplyData?.[1]?.result as bigint | undefined;
 
   // Preview helper: compute estimated output for any direction + USDC amount
   const canPreview =
@@ -379,8 +366,16 @@ function FeedCard({
   // Display values: use hover data as preview, selected data as committed
   const showDir   = direction ?? hoverPreview?.dir ?? null;
   const showUsdc  = direction !== null && usdcRaw > 0n ? usdcRaw : hoverPreview ? parseUnits(String(hoverPreview.amount), 6) : 0n;
-  const showFee   = (showUsdc * POSITION_FEE_BPS) / 10_000n;
   const showOut   = showDir && showUsdc > 0n ? computePreview(showDir, showUsdc) : undefined;
+
+  // Fee comes from the pool, not a local 5% guess: quoteOpenFee includes the
+  // OI-integral impact fee and the MIN_POSITION_FEE floor. `showUsdc` equals
+  // `usdcRaw` once a direction is committed, so this one quote drives both the
+  // hover preview and the approval.
+  const { fee: quotedFee, feeMax: quotedFeeMax } =
+    useOpenFee(poolAddress, chainId, showUsdc, showDir === null ? null : showDir === "long");
+  // Fall back to the base rate for display only, while the quote is in flight.
+  const showFee = quotedFee ?? (showUsdc * POSITION_FEE_BPS) / 10_000n;
   const isHoverOnly = direction === null && hoverPreview !== null;
   const showConfirm = showDir !== null; // show section whenever a direction is known (selected or hovered)
 
@@ -407,10 +402,18 @@ function FeedCard({
 
   // Router: skip per-trade approval when router has sufficient allowance
   const { routerAddress, routerAllowance } = useRouterApproval(underlyingUsdc);
-  const canUseRouter = !!routerAddress && routerAllowance !== undefined && routerAllowance >= feePulled && usdcRaw > 0n;
+  const canUseRouter = !!routerAddress && routerAllowance !== undefined
+    && quotedFeeMax !== undefined && routerAllowance >= quotedFeeMax && usdcRaw > 0n;
 
-  const allowanceLoaded = canUseRouter || allowance !== undefined;
-  const needsApproval   = !canUseRouter && allowance !== undefined && usdcRaw > 0n && feePulled > allowance!;
+  // The quote must be in before we can say whether an approval is needed —
+  // treating a missing quote as "no approval needed" sends the user straight to
+  // an open that reverts.
+  const allowanceLoaded = canUseRouter || (allowance !== undefined && quotedFeeMax !== undefined);
+  const needsApproval   = !canUseRouter && allowance !== undefined && usdcRaw > 0n
+    && quotedFeeMax !== undefined && quotedFeeMax > allowance;
+
+  // Offer the router pre-approval instead of making the user sign per trade.
+  useNeedsPerTradeApproval(needsApproval && !!address && !isHoverOnly);
 
   const { writeContract: writeApprove, data: approveHash, isPending: approvePending } =
     useWriteContract();
@@ -445,10 +448,10 @@ function FeedCard({
       tokenSymbol: symbol,
       source: "feed",
       usdcNotional: usdcRaw.toString(),
-      fee: feePulled.toString(),
+      fee: (quotedFee ?? 0n).toString(),
       volume: Number(usdcRaw) / 1_000_000,
       revenue: Number(protocolFeeRaw) / 1_000_000,
-      points: Number(feePulled) / 1_000_000,
+      points: Number(quotedFee ?? 0n) / 1_000_000,
     });
     if (submittedReady.current) {
       setTxPhase("mined");
@@ -517,7 +520,7 @@ function FeedCard({
             transformStyle: "preserve-3d",
           }}
         >
-          <PriceChart poolAddress={poolAddress} height={CHART_HEIGHT} highlightLine={hoverSide} priceData={priceHistory} spotLabel={priceDisplay} longLabel={longPriceDisplay} shortLabel={shortPriceDisplay} />
+          <PriceChart height={CHART_HEIGHT} highlightLine={hoverSide} priceData={priceHistory} spotLabel={priceDisplay} longLabel={longPriceDisplay} shortLabel={shortPriceDisplay} />
 
           {/* Top gradient for readability */}
           <div
@@ -574,7 +577,7 @@ function FeedCard({
               top: 18, right: 18,
               zIndex: 5,
               fontFamily: "var(--font-mono)",
-              fontSize: "0.62rem",
+              fontSize: "var(--fs-label)",
               color: "var(--muted)",
               letterSpacing: "0.1em",
               textShadow: "0 1px 8px rgba(0,0,0,0.8)",
@@ -620,7 +623,7 @@ function FeedCard({
               padding: "5px 0",
               textAlign: "center",
               fontFamily: "var(--font-mono)",
-              fontSize: "0.58rem",
+              fontSize: "var(--fs-micro)",
               letterSpacing: "0.15em",
               fontWeight: 700,
               color: "var(--green)",
@@ -644,7 +647,7 @@ function FeedCard({
                   style={{
                     padding: "10px 4px",
                     fontFamily: "var(--font-mono)",
-                    fontSize: "0.68rem",
+                    fontSize: "var(--fs-body-s)",
                     letterSpacing: "0.04em",
                     fontWeight: 600,
                     background: exceedsCap ? "transparent" : active ? "rgba(0,255,136,0.22)" : "transparent",
@@ -670,7 +673,7 @@ function FeedCard({
               style={{
                 padding: "10px 6px",
                 fontFamily: "var(--font-mono)",
-                fontSize: "0.68rem",
+                fontSize: "var(--fs-body-s)",
                 letterSpacing: "0.04em",
                 fontWeight: 600,
                 background: isCustomLong ? "rgba(0,255,136,0.22)" : "transparent",
@@ -701,7 +704,7 @@ function FeedCard({
               padding: "5px 0",
               textAlign: "center",
               fontFamily: "var(--font-mono)",
-              fontSize: "0.58rem",
+              fontSize: "var(--fs-micro)",
               letterSpacing: "0.15em",
               fontWeight: 700,
               color: "var(--red)",
@@ -725,7 +728,7 @@ function FeedCard({
                   style={{
                     padding: "10px 4px",
                     fontFamily: "var(--font-mono)",
-                    fontSize: "0.68rem",
+                    fontSize: "var(--fs-body-s)",
                     letterSpacing: "0.04em",
                     fontWeight: 600,
                     background: exceedsCap ? "transparent" : active ? "rgba(255,59,48,0.22)" : "transparent",
@@ -751,7 +754,7 @@ function FeedCard({
               style={{
                 padding: "10px 6px",
                 fontFamily: "var(--font-mono)",
-                fontSize: "0.68rem",
+                fontSize: "var(--fs-body-s)",
                 letterSpacing: "0.04em",
                 fontWeight: 600,
                 background: isCustomShort ? "rgba(255,59,48,0.22)" : "transparent",
@@ -768,7 +771,7 @@ function FeedCard({
 
       {/* Cap indicator */}
       {hasLeverageCap && (
-        <div style={{ padding: "0 14px 4px", fontFamily: "var(--font-mono)", fontSize: "0.54rem", letterSpacing: "0.06em", color: "var(--orange)" }}>
+        <div style={{ padding: "0 14px 4px", fontFamily: "var(--font-mono)", fontSize: "var(--fs-nano)", letterSpacing: "0.06em", color: "var(--orange)" }}>
           POSITION CAP: ${formatUsdc(leverageCap!)}
         </div>
       )}
@@ -792,7 +795,7 @@ function FeedCard({
               display: "flex",
               justifyContent: "space-between",
               fontFamily: "var(--font-mono)",
-              fontSize: "0.6rem",
+              fontSize: "var(--fs-label)",
               color: "var(--muted)",
               letterSpacing: "0.04em",
             }}
@@ -806,7 +809,7 @@ function FeedCard({
               display: "flex",
               justifyContent: "space-between",
               fontFamily: "var(--font-mono)",
-              fontSize: "0.6rem",
+              fontSize: "var(--fs-label)",
               color: "var(--muted)",
               letterSpacing: "0.04em",
             }}
@@ -824,7 +827,7 @@ function FeedCard({
             <div
               style={{
                 fontFamily: "var(--font-mono)",
-                fontSize: "0.58rem",
+                fontSize: "var(--fs-micro)",
                 letterSpacing: "0.05em",
                 color: "var(--red)",
                 background: "rgba(239,68,68,0.08)",
@@ -841,25 +844,36 @@ function FeedCard({
           {!isHoverOnly && !overCap && (
             <>
               {!address && hasAmount && (
-                <p style={{ fontFamily: "var(--font-mono)", fontSize: "0.63rem", color: "var(--muted)", letterSpacing: "0.08em", textAlign: "center" }}>
+                <p style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-label)", color: "var(--muted)", letterSpacing: "0.08em", textAlign: "center" }}>
                   Connect wallet to open a position
                 </p>
               )}
 
-              {address && hasAmount && !allowanceLoaded && (
+              {/* Success is terminal and must not depend on the allowance:
+                  opening consumes the approval, so re-deriving the button from
+                  the refetched allowance would swap this back to "APPROVE USDC"
+                  the moment the open succeeds. */}
+              {address && hasAmount && openSuccess && (
+                <button disabled className="btn-terminal btn-green" style={{ width: "100%", justifyContent: "center" }}>
+                  ✓ POSITION OPENED
+                </button>
+              )}
+
+              {address && hasAmount && !openSuccess && !allowanceLoaded && (
                 <button disabled className="btn-terminal" style={{ width: "100%", justifyContent: "center" }}>
                   <span className="spinner">⟳</span> CHECKING ALLOWANCE<span className="cursor-blink">_</span>
                 </button>
               )}
 
-              {address && hasAmount && allowanceLoaded && needsApproval && (
+              {address && hasAmount && !openSuccess && allowanceLoaded && needsApproval && (
                 <button
                   onClick={() =>
                     writeApprove({
                       address: underlyingUsdc,
                       abi: erc20Abi,
                       functionName: "approve",
-                      args: [poolAddress, feePulled],
+                      args: [poolAddress, quotedFeeMax!],
+                      chainId,
                     })
                   }
                   disabled={approveBusy}
@@ -872,7 +886,7 @@ function FeedCard({
                 </button>
               )}
 
-              {address && hasAmount && allowanceLoaded && !needsApproval && (
+              {address && hasAmount && !openSuccess && allowanceLoaded && !needsApproval && (
                 <button
                   onClick={() => {
                     if (canUseRouter) {
@@ -881,21 +895,22 @@ function FeedCard({
                         abi: exnihiloRouterAbi,
                         functionName: direction === "long" ? "openLong" : "openShort",
                         args: [poolAddress, usdcRaw, minOut],
+                        chainId,
                       });
                     } else {
                       const args = [usdcRaw, minOut, address!] as const;
                       if (direction === "long") {
-                        writeOpen({ address: poolAddress, abi: exnihiloPoolAbi, functionName: "openLong", args });
+                        writeOpen({ address: poolAddress, abi: exnihiloPoolAbi, functionName: "openLong", args, chainId });
                       } else {
-                        writeOpen({ address: poolAddress, abi: exnihiloPoolAbi, functionName: "openShort", args });
+                        writeOpen({ address: poolAddress, abi: exnihiloPoolAbi, functionName: "openShort", args, chainId });
                       }
                     }
                   }}
-                  disabled={openBusy || minOut === 0n || openSuccess}
+                  disabled={openBusy || minOut === 0n}
                   className={`btn-terminal ${direction === "long" ? "btn-green" : "btn-red"}`}
                   style={{ width: "100%", justifyContent: "center" }}
                 >
-                  {openSuccess ? "✓ POSITION OPENED" : openBusy ? (
+                  {openBusy ? (
                     <><span className="spinner">⟳</span> {openPending ? "SIGNING" : "CONFIRMING"}<span className="cursor-blink">_</span></>
                   ) : `OPEN ${direction === "long" ? "LONG" : "SHORT"}`}
                 </button>
@@ -916,8 +931,8 @@ function FeedCard({
         }}
       >
         <Link
-          to={`/app/markets/${poolAddress}`}
-          style={{ fontFamily: "var(--font-mono)", fontSize: "0.58rem", letterSpacing: "0.1em", color: "var(--muted)", textDecoration: "none" }}
+          to={path(`markets/${poolAddress}`)}
+          style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-micro)", letterSpacing: "0.1em", color: "var(--muted)", textDecoration: "none" }}
           onMouseEnter={(e) => ((e.currentTarget as HTMLAnchorElement).style.color = "var(--body)")}
           onMouseLeave={(e) => ((e.currentTarget as HTMLAnchorElement).style.color = "var(--muted)")}
         >
@@ -932,12 +947,11 @@ function FeedCard({
 // ─── Feed Page ────────────────────────────────────────────────────────────────
 
 export default function FeedPage() {
-  const chainId = useChainId();
-  const addrs   = getAddresses(chainId);
+  const { chainId, addresses: addrs, path } = useAppChain();
 
   const [currentIndex, setCurrentIndex] = useState(0);
 
-  const factoryContract = { address: addrs.factory, abi: exnihiloFactoryAbi } as const;
+  const factoryContract = { address: addrs.factory, abi: exnihiloFactoryAbi, chainId } as const;
 
   const { data: poolLength, isLoading: lengthLoading } = useReadContract({
     ...factoryContract,
@@ -964,10 +978,10 @@ export default function FeedPage() {
 
   const { data: poolMetaResults, isLoading: metaLoading } = useReadContracts({
     contracts: allPoolAddresses.flatMap((addr) => [
-      { address: addr, abi: exnihiloPoolAbi, functionName: "backedAirToken" as const },
-      { address: addr, abi: exnihiloPoolAbi, functionName: "backedAirUsd"  as const },
-      { address: addr, abi: exnihiloPoolAbi, functionName: "underlyingToken" as const },
-      { address: addr, abi: exnihiloPoolAbi, functionName: "closeDate"      as const },
+      { address: addr, abi: exnihiloPoolAbi, functionName: "backedAirToken" as const, chainId },
+      { address: addr, abi: exnihiloPoolAbi, functionName: "backedAirUsd"  as const, chainId },
+      { address: addr, abi: exnihiloPoolAbi, functionName: "underlyingToken" as const, chainId },
+      { address: addr, abi: exnihiloPoolAbi, functionName: "closeDate"      as const, chainId },
     ]),
     query: { enabled: allPoolAddresses.length > 0 },
   });
@@ -1009,8 +1023,8 @@ export default function FeedPage() {
 
   const { data: tokenMetaResults } = useReadContracts({
     contracts: uniqueTokenAddrs.flatMap((addr) => [
-      { address: addr, abi: erc20Abi, functionName: "symbol"   as const },
-      { address: addr, abi: erc20Abi, functionName: "decimals" as const },
+      { address: addr, abi: erc20Abi, functionName: "symbol"   as const, chainId },
+      { address: addr, abi: erc20Abi, functionName: "decimals" as const, chainId },
     ]),
     query: { enabled: uniqueTokenAddrs.length > 0 },
   });
@@ -1097,16 +1111,14 @@ export default function FeedPage() {
     return (
       <div style={{ maxWidth: 480, margin: "0 auto", textAlign: "center", paddingTop: 56, display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
         <span className="logo-glitch" data-text="EXNIHILO" style={{ fontSize: "clamp(2.5rem, 8vw, 5rem)" }}>EXNIHILO</span>
-        <p style={{ fontFamily: "var(--font-mono)", fontSize: "0.65rem", color: "var(--muted)", letterSpacing: "0.12em" }}>NO MARKETS YET</p>
-        <Link to="/app/create" className="btn-terminal btn-cyan">CREATE FIRST MARKET</Link>
+        <p style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-body-s)", color: "var(--muted)", letterSpacing: "0.12em" }}>NO MARKETS YET</p>
+        <Link to={path("create")} className="btn-terminal btn-cyan">CREATE FIRST MARKET</Link>
       </div>
     );
   }
 
   return (
     <div style={{ maxWidth: 480, margin: "0 auto" }}>
-      <RouterApprovalModal />
-
       {currentPool && (
         <FeedCard
           key={currentPool.addr}
@@ -1136,7 +1148,7 @@ export default function FeedPage() {
             onClick={handleBack}
             className="btn-terminal"
             style={{
-              fontSize: "0.62rem",
+              fontSize: "var(--fs-label)",
               letterSpacing: "0.1em",
               padding: "8px 18px",
             }}
@@ -1147,7 +1159,7 @@ export default function FeedPage() {
           <span
             style={{
               fontFamily: "var(--font-mono)",
-              fontSize: "0.58rem",
+              fontSize: "var(--fs-micro)",
               letterSpacing: "0.1em",
               color: "var(--muted)",
             }}
@@ -1159,7 +1171,7 @@ export default function FeedPage() {
             onClick={handleNext}
             className="btn-terminal"
             style={{
-              fontSize: "0.62rem",
+              fontSize: "var(--fs-label)",
               letterSpacing: "0.1em",
               padding: "8px 18px",
             }}

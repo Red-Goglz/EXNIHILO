@@ -1,17 +1,22 @@
-import { useState, useEffect, useCallback } from "react";
-import { useAccount, useReadContracts, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { useState, useEffect } from "react";
+import { useAccount, useReadContracts } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
 import { useFormo } from "@formo/analytics";
 import { exnihiloPoolAbi, exnihiloRouterAbi, erc20Abi } from "@exnihilio/abis";
-import { parseUnits, formatToken, formatUsdc } from "../../lib/format.ts";
+import { parseUnits, formatToken, formatUsdc, formatDuration } from "../../lib/format.ts";
 import { quoteLong, quoteShort } from "../../lib/amm.ts";
 import { useRouterApproval } from "../../hooks/useRouterApproval.ts";
+import { useOpenFee } from "../../hooks/useOpenFee.ts";
+import { useNeedsPerTradeApproval } from "../../hooks/useRouterApprovalPrompt.ts";
+import { useTx } from "../../hooks/useTx.ts";
+import { useAppChain } from "../../hooks/useAppChain.ts";
 import TokenInput from "../shared/TokenInput.tsx";
 import TxButton from "../shared/TxButton.tsx";
 
+// Display-only fallbacks while quoteOpenFee is in flight. The authoritative
+// fee (base + floor + OI-integral impact) comes from the pool via useOpenFee.
 const POSITION_FEE_BPS = 500n;
 const PROTOCOL_FEE_BPS = 200n;
-const IMPACT_FEE_BPS = 1500n;
 const MIN_POSITION_FEE = 50_000n; // 0.05 USDC (6 dec)
 
 interface LongShortPanelProps {
@@ -28,6 +33,7 @@ export default function LongShortPanel({
   tokenDecimals,
 }: LongShortPanelProps) {
   const { address } = useAccount();
+  const { chainId } = useAppChain();
   const queryClient = useQueryClient();
   const analytics = useFormo();
 
@@ -38,7 +44,7 @@ export default function LongShortPanel({
 
   const usdcRaw = parseUnits(usdcInput, 6);
 
-  const poolContract = { address: poolAddress, abi: exnihiloPoolAbi } as const;
+  const poolContract = { address: poolAddress, abi: exnihiloPoolAbi, chainId } as const;
 
   const { data } = useReadContracts({
     contracts: [
@@ -47,15 +53,14 @@ export default function LongShortPanel({
       { ...poolContract, functionName: "spotPrice" },
       { ...poolContract, functionName: "effectiveLeverageCap" },
       { ...poolContract, functionName: "swapFeeBps" },
-      { ...poolContract, functionName: "airToken" },
-      { ...poolContract, functionName: "airUsdToken" },
-      { ...poolContract, functionName: "longOpenInterest" },
-      { ...poolContract, functionName: "shortOpenInterest" },
+      { ...poolContract, functionName: "airTokenSupply" },
+      { ...poolContract, functionName: "airUsdSupply" },
       {
         address: underlyingUsdc,
         abi: erc20Abi,
         functionName: "allowance",
         args: [address ?? "0x0000000000000000000000000000000000000000", poolAddress],
+        chainId,
       },
       { ...poolContract, functionName: "maxPositionUsd" },
       { ...poolContract, functionName: "maxPositionBps" },
@@ -68,15 +73,13 @@ export default function LongShortPanel({
   const backedAirUsd = data?.[1]?.result as bigint | undefined;
   const leverageCap = data?.[3]?.result as bigint | undefined;
   const swapFeeBps = data?.[4]?.result as bigint | undefined;
-  const airTokenAddress = data?.[5]?.result as `0x${string}` | undefined;
-  const airUsdAddress = data?.[6]?.result as `0x${string}` | undefined;
-  const longOI = data?.[7]?.result as bigint | undefined;
-  const shortOI = data?.[8]?.result as bigint | undefined;
-  const allowance = data?.[9]?.result as bigint | undefined;
-  const maxPositionUsd = data?.[10]?.result as bigint | undefined;
-  const maxPositionBps = data?.[11]?.result as bigint | undefined;
-  const closeDate = data?.[12]?.result as bigint | undefined;
-  const positionDuration = data?.[13]?.result as bigint | undefined;
+  const airTokenTotalSupply = data?.[5]?.result as bigint | undefined;
+  const airUsdTotalSupply = data?.[6]?.result as bigint | undefined;
+  const allowance = data?.[7]?.result as bigint | undefined;
+  const maxPositionUsd = data?.[8]?.result as bigint | undefined;
+  const maxPositionBps = data?.[9]?.result as bigint | undefined;
+  const closeDate = data?.[10]?.result as bigint | undefined;
+  const positionDuration = data?.[11]?.result as bigint | undefined;
   const isClosed = closeDate !== undefined && closeDate > 0n;
   const isInactive =
     !isClosed &&
@@ -90,20 +93,6 @@ export default function LongShortPanel({
     isClosed && closeDate !== undefined && positionDuration !== undefined
       ? closeDate - positionDuration
       : undefined;
-
-  const { data: supplyData } = useReadContracts({
-    contracts:
-      airTokenAddress && airUsdAddress
-        ? [
-            { address: airTokenAddress, abi: erc20Abi, functionName: "totalSupply" as const },
-            { address: airUsdAddress,  abi: erc20Abi, functionName: "totalSupply" as const },
-          ]
-        : [],
-    query: { enabled: !!airTokenAddress && !!airUsdAddress },
-  });
-
-  const airTokenTotalSupply = supplyData?.[0]?.result as bigint | undefined;
-  const airUsdTotalSupply = supplyData?.[1]?.result as bigint | undefined;
 
   let previewOut: bigint | undefined;
   if (
@@ -154,13 +143,17 @@ export default function LongShortPanel({
       ? (previewOut * (10_000n - slippageBps)) / 10_000n
       : 0n;
 
+  // Fee comes from the pool. quoteOpenFee is the contract's documented single
+  // source of truth (base + MIN_POSITION_FEE floor + OI-integral impact); the
+  // formula used to be replicated here, which drifts the moment the contract
+  // changes and silently under-approves in the meantime.
+  const { fee: quotedFee, feeMax: quotedFeeMax } =
+    useOpenFee(poolAddress, chainId, usdcRaw, isLong);
+
   const baseFeeRaw = (usdcRaw * POSITION_FEE_BPS) / 10_000n;
-  const baseFee = baseFeeRaw < MIN_POSITION_FEE ? MIN_POSITION_FEE : baseFeeRaw;
-  const oi = (isLong ? longOI : shortOI) ?? 0n;
-  const impactFee = backedAirUsd && backedAirUsd > 0n
-    ? (IMPACT_FEE_BPS * usdcRaw * (2n * oi + usdcRaw)) / (2n * backedAirUsd * 10_000n)
-    : 0n;
-  const feePulled = baseFee + impactFee;
+  // Display only, while the quote is in flight.
+  const feePulled = quotedFee ?? (baseFeeRaw < MIN_POSITION_FEE ? MIN_POSITION_FEE : baseFeeRaw);
+  const hasImpactFee = quotedFee !== undefined && quotedFee > baseFeeRaw && baseFeeRaw >= MIN_POSITION_FEE;
 
   const MAX_UINT256 = 2n ** 256n - 1n;
   const hasLeverageCap = leverageCap !== undefined && leverageCap !== MAX_UINT256;
@@ -179,51 +172,43 @@ export default function LongShortPanel({
 
   // Router: skip per-trade approval when router has sufficient allowance
   const { routerAddress, routerAllowance } = useRouterApproval(underlyingUsdc);
-  const useRouter = !!routerAddress && routerAllowance !== undefined && routerAllowance >= feePulled && usdcRaw > 0n;
+  const useRouter = !!routerAddress && routerAllowance !== undefined
+    && quotedFeeMax !== undefined && routerAllowance >= quotedFeeMax && usdcRaw > 0n;
 
-  const { writeContract: writeApprove, data: approveHash, isPending: approvePending, isError: approveRejected } = useWriteContract();
-  const { isLoading: approveConfirming, isSuccess: approveSuccess, isError: approveFailed } = useWaitForTransactionReceipt({ hash: approveHash });
-
-  const needsApproval = !useRouter && !approveSuccess && allowance !== undefined && feePulled > allowance;
+  const {
+    writeContract: writeApprove,
+    status: approveStatus,
+    isSuccess: approveSuccess,
+  } = useTx("APPROVAL");
 
   useEffect(() => {
     if (approveSuccess) queryClient.invalidateQueries();
   }, [approveSuccess, queryClient]);
 
-  const { writeContract: writeOpen, data: openHash, isPending: openPending, isError: openRejected, reset: resetOpen } = useWriteContract();
-  const { isLoading: openConfirming, isSuccess: openSuccess, isError: openFailed } = useWaitForTransactionReceipt({ hash: openHash });
+  const {
+    writeContract: writeOpen,
+    status: openStatus,
+    isSuccess: openSuccess,
+    errorLabel: openErrorLabel,
+    reset: resetOpen,
+  } = useTx("TRANSACTION");
 
-  // 8-second timeout for mining
-  const [openTimedOut, setOpenTimedOut] = useState(false);
-  useEffect(() => {
-    if (!openHash || openSuccess || openFailed) { setOpenTimedOut(false); return; }
-    const timer = setTimeout(() => setOpenTimedOut(true), 8_000);
-    return () => clearTimeout(timer);
-  }, [openHash, openSuccess, openFailed]);
+  // Compared against the live allowance rather than latching on `approveSuccess`:
+  // latching meant that raising the amount after approving skipped straight to
+  // an open that reverts.
+  //
+  // `!openSuccess` is what keeps the success state terminal — opening spends the
+  // approval, so the refetched allowance would otherwise drop back below the fee
+  // and swap this component back to the "Approve USDC" button on success.
+  const needsApproval = !openSuccess && !useRouter && allowance !== undefined
+    && quotedFeeMax !== undefined && quotedFeeMax > allowance;
 
-  // Toast notifications (bottom-right)
-  const [toast, setToast] = useState<{ message: string; key: number } | null>(null);
-  const showToast = useCallback((message: string) => {
-    setToast({ message, key: Date.now() });
-  }, []);
-
-  // Auto-dismiss toast after 5s
-  useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(null), 5_000);
-    return () => clearTimeout(t);
-  }, [toast]);
-
-  // Show toast on error/timeout
-  useEffect(() => { if (openRejected) showToast("TRANSACTION REJECTED"); }, [openRejected, showToast]);
-  useEffect(() => { if (openFailed) showToast("TRANSACTION FAILED"); }, [openFailed, showToast]);
-  useEffect(() => { if (openTimedOut) showToast("CONFIRMATION TIMED OUT"); }, [openTimedOut, showToast]);
-  useEffect(() => { if (approveRejected) showToast("APPROVAL REJECTED"); }, [approveRejected, showToast]);
-  useEffect(() => { if (approveFailed) showToast("APPROVAL FAILED"); }, [approveFailed, showToast]);
+  // Offer the router pre-approval instead of making the user sign per trade.
+  useNeedsPerTradeApproval(needsApproval && !!address);
 
   // Reset error state when user changes input so they can retry
   useEffect(() => {
-    if (openRejected || openTimedOut) resetOpen();
+    if (openStatus === "error") resetOpen();
   }, [usdcInput, isLong]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Refresh all data once the tx is actually mined (not just submitted)
@@ -244,10 +229,6 @@ export default function LongShortPanel({
     }
   }, [openSuccess, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const approveStatus = approvePending ? "pending" : approveConfirming ? "confirming" : approveSuccess ? "success" : (approveRejected || approveFailed) ? "error" : "idle";
-  const openStatus = openPending ? "pending" : openConfirming ? "confirming" : openSuccess ? "success" : (openRejected || openFailed || openTimedOut) ? "error" : "idle";
-  const openErrorLabel = openTimedOut ? "TIMED OUT" : openRejected ? "REJECTED" : "FAILED";
-
   return (
     <div className="flex flex-col gap-4">
       {/* Long / Short toggle */}
@@ -258,7 +239,7 @@ export default function LongShortPanel({
             flex: 1,
             padding: "9px 12px",
             fontFamily: "var(--font-mono)",
-            fontSize: "0.65rem",
+            fontSize: "var(--fs-body-s)",
             letterSpacing: "0.1em",
             fontWeight: 600,
             border: "none",
@@ -277,12 +258,12 @@ export default function LongShortPanel({
             flex: 1,
             padding: "9px 12px",
             fontFamily: "var(--font-mono)",
-            fontSize: "0.65rem",
+            fontSize: "var(--fs-body-s)",
             letterSpacing: "0.1em",
             fontWeight: 600,
             border: "none",
-            background: !isLong ? "var(--red-glow)" : "transparent",
-            color: !isLong ? "var(--red)" : "var(--muted)",
+            background: !isLong ? "var(--magenta-glow)" : "transparent",
+            color: !isLong ? "var(--magenta)" : "var(--muted)",
             cursor: "pointer",
             transition: "all 0.15s",
           }}
@@ -299,7 +280,7 @@ export default function LongShortPanel({
             {leverageCap === undefined ? "—" : !hasLeverageCap ? "NONE" : `$${formatUsdc(leverageCap!)}`}
           </div>
           {capDescription && (
-            <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.55rem", color: "var(--muted)", marginTop: 2 }}>
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-micro)", color: "var(--muted)", marginTop: 2 }}>
               {capDescription}
             </div>
           )}
@@ -340,7 +321,7 @@ export default function LongShortPanel({
         <span
           style={{
             fontFamily: "var(--font-mono)",
-            fontSize: "0.6rem",
+            fontSize: "var(--fs-label)",
             letterSpacing: "0.1em",
             color: isHighImpact ? "var(--orange)" : "var(--muted)",
           }}
@@ -361,7 +342,7 @@ export default function LongShortPanel({
                 }}
                 style={{
                   fontFamily: "var(--font-mono)",
-                  fontSize: "0.58rem",
+                  fontSize: "var(--fs-micro)",
                   letterSpacing: "0.05em",
                   color: "var(--muted)",
                   background: "transparent",
@@ -410,7 +391,7 @@ export default function LongShortPanel({
                 onClick={() => setSlippageMode("auto")}
                 style={{
                   fontFamily: "var(--font-mono)",
-                  fontSize: "0.58rem",
+                  fontSize: "var(--fs-micro)",
                   letterSpacing: "0.05em",
                   color: "var(--cyan)",
                   background: "transparent",
@@ -438,7 +419,7 @@ export default function LongShortPanel({
         <div
           style={{
             fontFamily: "var(--font-mono)",
-            fontSize: "0.62rem",
+            fontSize: "var(--fs-label)",
             letterSpacing: "0.05em",
             color: "var(--red)",
             background: "rgba(239,68,68,0.08)",
@@ -461,7 +442,7 @@ export default function LongShortPanel({
         <div
           style={{
             fontFamily: "var(--font-mono)",
-            fontSize: "0.62rem",
+            fontSize: "var(--fs-label)",
             letterSpacing: "0.05em",
             color: "var(--red)",
             background: "rgba(239,68,68,0.08)",
@@ -473,11 +454,33 @@ export default function LongShortPanel({
         </div>
       )}
 
-      {/* Fee note */}
-      {usdcRaw > 0n && !overCap && (
-        <p style={{ fontFamily: "var(--font-mono)", fontSize: "0.62rem", color: "var(--muted)", letterSpacing: "0.05em" }}>
-          Fee from wallet: {formatUsdc(feePulled)} {baseFeeRaw < MIN_POSITION_FEE ? "(min $0.05 + impact)" : `(5% base${impactFee > 0n ? " + impact" : ""})`}
-        </p>
+      {/* The deal — max loss + lifetime. This is the product's core promise. */}
+      {usdcRaw > 0n && !overCap && !isMarketClosed && (
+        <div
+          style={{
+            border: "1px solid rgba(0,229,255,0.15)",
+            background: "rgba(0,229,255,0.03)",
+            padding: "10px 12px",
+            fontFamily: "var(--font-mono)",
+            fontSize: "0.72rem",
+            color: "var(--body)",
+            letterSpacing: "0.04em",
+            lineHeight: 1.8,
+          }}
+        >
+          <div>
+            MAX LOSS{" "}
+            <span style={{ color: "var(--cyan)", fontWeight: 600 }}>{formatUsdc(feePulled)}</span>
+            <span style={{ color: "var(--muted)" }}>
+              {" "}— your fee{baseFeeRaw < MIN_POSITION_FEE ? " (min $0.05 + impact)" : ` (5% base${hasImpactFee ? " + impact" : ""})`}. No margin, no liquidation.
+            </span>
+          </div>
+          <div>
+            LIVES{" "}
+            <span style={{ color: "var(--cyan)", fontWeight: 600 }}>{formatDuration(positionDuration)}</span>
+            <span style={{ color: "var(--muted)" }}> — then extend it (dynamic fee) or it settles at market.</span>
+          </div>
+        </div>
       )}
 
       {/* Preview */}
@@ -493,15 +496,15 @@ export default function LongShortPanel({
           }}
         >
           <div className="flex justify-between">
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.62rem", color: "var(--muted)", letterSpacing: "0.1em" }}>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-label)", color: "var(--muted)", letterSpacing: "0.1em" }}>
               {isLong ? `EST. ${tokenSymbol} LOCKED` : "EST. USDC LOCKED"}
             </span>
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.78rem", color: isLong ? "var(--green)" : "var(--red)" }}>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.78rem", color: isLong ? "var(--green)" : "var(--magenta)" }}>
               {formatToken(previewOut, isLong ? tokenDecimals : 6)} {isLong ? tokenSymbol : "USDC"}
             </span>
           </div>
           <div className="flex justify-between">
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.62rem", color: "var(--muted)", letterSpacing: "0.1em" }}>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-label)", color: "var(--muted)", letterSpacing: "0.1em" }}>
               MIN ({slippagePctDisplay} SLIP)
             </span>
             <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.78rem", color: "#f59e0b" }}>
@@ -520,7 +523,8 @@ export default function LongShortPanel({
               address: underlyingUsdc,
               abi: erc20Abi,
               functionName: "approve",
-              args: [poolAddress, feePulled],
+              args: [poolAddress, quotedFeeMax!],
+              chainId,
             })
           }
           disabled={usdcRaw === 0n}
@@ -531,7 +535,7 @@ export default function LongShortPanel({
           idleLabel={isLong ? `Open Long ${tokenSymbol}` : `Open Short ${tokenSymbol}`}
           status={openStatus}
           errorLabel={openErrorLabel}
-          variant={isLong ? "green" : "red"}
+          variant={isLong ? "green" : "magenta"}
           onClick={() => {
             if (useRouter) {
               writeOpen({
@@ -539,6 +543,7 @@ export default function LongShortPanel({
                 abi: exnihiloRouterAbi,
                 functionName: isLong ? "openLong" : "openShort",
                 args: [poolAddress, usdcRaw, minOut],
+                chainId,
               });
             } else if (isLong) {
               writeOpen({
@@ -546,6 +551,7 @@ export default function LongShortPanel({
                 abi: exnihiloPoolAbi,
                 functionName: "openLong",
                 args: [usdcRaw, minOut, address!],
+                chainId,
               });
             } else {
               writeOpen({
@@ -553,6 +559,7 @@ export default function LongShortPanel({
                 abi: exnihiloPoolAbi,
                 functionName: "openShort",
                 args: [usdcRaw, minOut, address!],
+                chainId,
               });
             }
           }}
@@ -561,31 +568,6 @@ export default function LongShortPanel({
         />
       )}
 
-      {/* Error / timeout toast — bottom-right */}
-      {toast && (
-        <div
-          key={toast.key}
-          style={{
-            position: "fixed",
-            bottom: 24,
-            right: 24,
-            zIndex: 9999,
-            background: "var(--surface)",
-            border: "1px solid var(--red)",
-            padding: "12px 20px",
-            fontFamily: "var(--font-mono)",
-            fontSize: "0.65rem",
-            letterSpacing: "0.08em",
-            color: "var(--red)",
-            boxShadow: "0 4px 24px rgba(239,68,68,0.25)",
-            animation: "toast-in 0.2s ease-out",
-            cursor: "pointer",
-          }}
-          onClick={() => setToast(null)}
-        >
-          {toast.message}
-        </div>
-      )}
     </div>
   );
 }

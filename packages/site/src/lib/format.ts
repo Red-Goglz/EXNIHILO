@@ -45,6 +45,50 @@ export function formatToken(raw: bigint, decimals: number): string {
   return `${whole.toLocaleString()}.${fracStr}`;
 }
 
+const SUBSCRIPTS = "₀₁₂₃₄₅₆₇₈₉";
+
+/**
+ * Format a raw USDC price (6 decimals) for display, DEX-style:
+ *   ≥ $1        → 2 decimals            ($25.00)
+ *   $0.01–$1    → 4 significant digits  ($0.1234)
+ *   < $0.01     → subscript-zero count  ($0.0₃42 = 0.00042)
+ * Token prices need more resolution than balances — meme-token markets
+ * live entirely below one cent.
+ */
+export function formatPrice(raw: bigint): string {
+  if (raw >= 1_000_000n) {
+    const whole = raw / 1_000_000n;
+    const frac = ((raw % 1_000_000n) / 10_000n).toString().padStart(2, "0");
+    return `$${whole.toLocaleString()}.${frac}`;
+  }
+  const frac = raw.toString().padStart(6, "0"); // 6 fractional digits
+  if (raw >= 10_000n) {
+    // $0.01–$1: four significant digits
+    return `$0.${frac.slice(0, 4)}`;
+  }
+  // Sub-cent: count leading zeros, subscript them, show 2 significant digits
+  const zeros = frac.length - raw.toString().length;
+  const sig = raw.toString().slice(0, 2);
+  if (raw === 0n) return "$0.00";
+  const zeroCount = zeros
+    .toString()
+    .split("")
+    .map((d) => SUBSCRIPTS[Number(d)])
+    .join("");
+  return `$0.0${zeroCount}${sig}`;
+}
+
+/**
+ * Compact duration for buttons/labels: 604800 → "7D", 3600 → "1H".
+ */
+export function formatDuration(sec: bigint | undefined): string {
+  if (!sec || sec <= 0n) return "PERIOD";
+  const s = Number(sec);
+  if (s % 86400 === 0) return `${s / 86400}D`;
+  if (s >= 86400) return `${(s / 86400).toFixed(1)}D`;
+  return `${Math.round(s / 3600)}H`;
+}
+
 /**
  * Format the pool's spotPrice return value to a USD/token string.
  *
@@ -69,7 +113,7 @@ export function decodeSpotPrice(raw: bigint, tokenDecimals = 18): string {
   const shift = 18 - tokenDecimals;
   const divisor = 10n ** BigInt(shift);
   const wholeCents = raw / divisor; // in USDC units (6 dec)
-  return formatUsdc(wholeCents);
+  return formatPrice(wholeCents);
 }
 
 /**

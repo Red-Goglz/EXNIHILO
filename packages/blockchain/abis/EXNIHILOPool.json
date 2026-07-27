@@ -3,16 +3,6 @@
     "inputs": [
       {
         "internalType": "address",
-        "name": "airToken_",
-        "type": "address"
-      },
-      {
-        "internalType": "address",
-        "name": "airUsdToken_",
-        "type": "address"
-      },
-      {
-        "internalType": "address",
         "name": "underlyingToken_",
         "type": "address"
       },
@@ -20,6 +10,11 @@
         "internalType": "address",
         "name": "underlyingUsdc_",
         "type": "address"
+      },
+      {
+        "internalType": "uint8",
+        "name": "tokenDecimals_",
+        "type": "uint8"
       },
       {
         "internalType": "address",
@@ -72,6 +67,11 @@
   },
   {
     "inputs": [],
+    "name": "AutoRenewActive",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "FeeOnTransferNotSupported",
     "type": "error"
   },
@@ -118,6 +118,11 @@
   {
     "inputs": [],
     "name": "OnlyPositionHolder",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OnlyTreasury",
     "type": "error"
   },
   {
@@ -177,6 +182,11 @@
   },
   {
     "inputs": [],
+    "name": "RenewalFeeExceedsMax",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "ReserveInvariantViolated",
     "type": "error"
   },
@@ -212,6 +222,50 @@
       {
         "indexed": true,
         "internalType": "address",
+        "name": "to",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "LpFeesPaid",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "recipient",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "PayoutClaimed",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
         "name": "recipient",
         "type": "address"
       },
@@ -222,7 +276,7 @@
         "type": "uint256"
       }
     ],
-    "name": "PayoutFailed",
+    "name": "PayoutCredited",
     "type": "event"
   },
   {
@@ -320,6 +374,62 @@
     "type": "event"
   },
   {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "nftId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "caller",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "feePaid",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "newDeadline",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "bool",
+        "name": "autoRenewed",
+        "type": "bool"
+      }
+    ],
+    "name": "PositionRenewed",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "ProtocolFeesPaid",
+    "type": "event"
+  },
+  {
     "inputs": [
       {
         "internalType": "uint256",
@@ -339,12 +449,12 @@
   },
   {
     "inputs": [],
-    "name": "airToken",
+    "name": "airTokenSupply",
     "outputs": [
       {
-        "internalType": "contract IAirToken",
+        "internalType": "uint256",
         "name": "",
-        "type": "address"
+        "type": "uint256"
       }
     ],
     "stateMutability": "view",
@@ -352,12 +462,12 @@
   },
   {
     "inputs": [],
-    "name": "airUsdToken",
+    "name": "airUsdSupply",
     "outputs": [
       {
-        "internalType": "contract IAirToken",
+        "internalType": "uint256",
         "name": "",
-        "type": "address"
+        "type": "uint256"
       }
     ],
     "stateMutability": "view",
@@ -390,10 +500,61 @@
     "type": "function"
   },
   {
-    "inputs": [],
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
+      }
+    ],
     "name": "claimFees",
     "outputs": [],
     "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
+      }
+    ],
+    "name": "claimPayout",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "to",
+        "type": "address"
+      }
+    ],
+    "name": "claimProtocolFees",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "name": "claimable",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
     "type": "function"
   },
   {
@@ -550,6 +711,19 @@
   },
   {
     "inputs": [],
+    "name": "lpFeesPaidTotal",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "lpNftContract",
     "outputs": [
       {
@@ -687,6 +861,32 @@
   },
   {
     "inputs": [],
+    "name": "protocolFeesAccumulated",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "protocolFeesPaidTotal",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "protocolTreasury",
     "outputs": [
       {
@@ -706,9 +906,44 @@
         "type": "uint256"
       }
     ],
-    "name": "realizeLong",
-    "outputs": [],
-    "stateMutability": "nonpayable",
+    "name": "quoteClose",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "ready",
+        "type": "bool"
+      },
+      {
+        "internalType": "int256",
+        "name": "pnl",
+        "type": "int256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "notional",
+        "type": "uint256"
+      },
+      {
+        "internalType": "bool",
+        "name": "isLong",
+        "type": "bool"
+      }
+    ],
+    "name": "quoteOpenFee",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "totalFee",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
     "type": "function"
   },
   {
@@ -719,9 +954,15 @@
         "type": "uint256"
       }
     ],
-    "name": "realizeShort",
-    "outputs": [],
-    "stateMutability": "nonpayable",
+    "name": "quoteRenewFee",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "totalFee",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
     "type": "function"
   },
   {
@@ -736,6 +977,11 @@
       {
         "internalType": "uint256",
         "name": "nftId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "maxFee",
         "type": "uint256"
       }
     ],
@@ -758,6 +1004,24 @@
       }
     ],
     "name": "setPositionCaps",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "nftId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "minPayout",
+        "type": "uint256"
+      }
+    ],
+    "name": "settleExpired",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
@@ -832,6 +1096,32 @@
   {
     "inputs": [],
     "name": "swapFeeBps",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "tokenDecimals",
+    "outputs": [
+      {
+        "internalType": "uint8",
+        "name": "",
+        "type": "uint8"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "totalClaimable",
     "outputs": [
       {
         "internalType": "uint256",

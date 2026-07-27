@@ -150,21 +150,6 @@
         "internalType": "uint256",
         "name": "positionDuration",
         "type": "uint256"
-      },
-      {
-        "internalType": "string",
-        "name": "airTokenName",
-        "type": "string"
-      },
-      {
-        "internalType": "string",
-        "name": "airUsdName",
-        "type": "string"
-      },
-      {
-        "internalType": "uint8",
-        "name": "tokenDecimals",
-        "type": "uint8"
       }
     ],
     "name": "createMarket",

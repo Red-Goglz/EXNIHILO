@@ -10,10 +10,16 @@ async function main() {
   const backedToken = await pool.backedAirToken();
   const backedUsd  = await pool.backedAirUsd();
   const lpFees     = await pool.lpFeesAccumulated();
+  const lpPaid     = await pool.lpFeesPaidTotal();
+  const protoFees  = await pool.protocolFeesAccumulated();
+  const protoPaid  = await pool.protocolFeesPaidTotal();
   console.log(`\n=== Current Pool State ===`);
   console.log(`  backedAirToken:       ${ethers.formatUnits(backedToken, 18)} PEPE`);
   console.log(`  backedAirUsd:        ${ethers.formatUnits(backedUsd, 6)} USDC`);
-  console.log(`  lpFeesAccumulated:   ${ethers.formatUnits(lpFees, 6)} USDC`);
+  console.log(`  lpFeesAccumulated:   ${ethers.formatUnits(lpFees, 6)} USDC (failsafe, claimable)`);
+  console.log(`  lpFeesPaidTotal:     ${ethers.formatUnits(lpPaid, 6)} USDC`);
+  console.log(`  protocolFeesAccumulated: ${ethers.formatUnits(protoFees, 6)} USDC (failsafe, claimable)`);
+  console.log(`  protocolFeesPaidTotal:   ${ethers.formatUnits(protoPaid, 6)} USDC`);
 
   // Initial liquidity from MarketCreated event
   const created = await factory.queryFilter(factory.filters.MarketCreated(), 0);

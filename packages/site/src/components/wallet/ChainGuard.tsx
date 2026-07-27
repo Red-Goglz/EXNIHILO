@@ -1,16 +1,21 @@
 import { useAccount, useSwitchChain } from "wagmi";
-import { hardhat, avalancheFuji } from "viem/chains";
 import { type ReactNode } from "react";
-
-const SUPPORTED_CHAIN_IDS = [hardhat.id, avalancheFuji.id];
+import { useAppChain } from "../../hooks/useAppChain.ts";
+import { APP_CHAINS } from "../../lib/chains.ts";
 
 interface ChainGuardProps {
   children: ReactNode;
 }
 
+/**
+ * Gates wallet-dependent content: requires a connected wallet on the chain
+ * the URL points at (/app/:chainSlug/...). The URL chain is the source of
+ * truth — the wallet is asked to follow it.
+ */
 export default function ChainGuard({ children }: ChainGuardProps) {
   const { isConnected, chainId } = useAccount();
   const { switchChain } = useSwitchChain();
+  const { chainId: urlChainId, label } = useAppChain();
 
   if (!isConnected) {
     return (
@@ -29,7 +34,7 @@ export default function ChainGuard({ children }: ChainGuardProps) {
         </p>
         <p
           style={{
-            fontSize: "0.65rem",
+            fontSize: "var(--fs-body-s)",
             color: "var(--dim)",
             letterSpacing: "0.1em",
           }}
@@ -40,7 +45,7 @@ export default function ChainGuard({ children }: ChainGuardProps) {
     );
   }
 
-  if (!SUPPORTED_CHAIN_IDS.includes(chainId as (typeof SUPPORTED_CHAIN_IDS)[number])) {
+  if (chainId !== urlChainId) {
     return (
       <div
         className="flex flex-col items-center justify-center py-24 gap-6"
@@ -53,30 +58,29 @@ export default function ChainGuard({ children }: ChainGuardProps) {
             color: "var(--red)",
           }}
         >
-          — UNSUPPORTED NETWORK —
+          — WRONG NETWORK —
         </p>
         <p
           style={{
-            fontSize: "0.65rem",
+            fontSize: "var(--fs-body-s)",
             color: "var(--muted)",
             letterSpacing: "0.08em",
           }}
         >
-          Switch to Hardhat (local) or Avalanche Fuji
+          This page is on {label}. Switch your wallet to continue.
         </p>
         <div className="flex gap-3">
-          <button
-            onClick={() => switchChain({ chainId: hardhat.id })}
-            className="btn-terminal"
-          >
-            HARDHAT LOCAL
-          </button>
-          <button
-            onClick={() => switchChain({ chainId: avalancheFuji.id })}
-            className="btn-terminal btn-cyan"
-          >
-            AVALANCHE FUJI
-          </button>
+          {APP_CHAINS.map((c) => (
+            <button
+              key={c.slug}
+              onClick={() => switchChain({ chainId: c.chain.id })}
+              className={
+                c.chain.id === urlChainId ? "btn-terminal btn-cyan" : "btn-terminal"
+              }
+            >
+              {c.label}
+            </button>
+          ))}
         </div>
       </div>
     );

@@ -6,66 +6,85 @@
 
 | Function | Access | Description |
 |---|---|---|
-| `renewPosition(uint256 nftId)` | Anyone | Pay base fee (5%) to extend position deadline by one period |
-| `closePositionAfterDeadline(uint256 nftId)` | Anyone | Settle an expired position (profitable: pay holder; underwater: return to LP) |
 | `swap(uint256 amountIn, uint256 minAmountOut, bool tokenToUsdc, address recipient)` | Anyone | Swap tokens via SWAP-1, output sent to `recipient` |
 | `openLong(uint256 usdcAmount, uint256 minAirTokenOut, address recipient)` | Anyone | Open a long position, NFT minted to `recipient` |
 | `openShort(uint256 usdcNotional, uint256 minAirUsdOut, address recipient)` | Anyone | Open a short position, NFT minted to `recipient` |
-| `closeLong(uint256 nftId, uint256 minUsdcOut)` | Position owner | Close long via AMM, receive USDC profit |
-| `closeShort(uint256 nftId, uint256 minUsdcOut)` | Position owner | Close short via AMM, receive USDC profit |
-| `realizeLong(uint256 nftId)` | Position owner | Deliver USDC to cover debt, receive locked tokens at par |
-| `realizeShort(uint256 nftId)` | Position owner | Deliver tokens to cover debt, receive locked USDC at par |
+| `closeLong(uint256 nftId, uint256 minUsdcOut)` | Position owner | Close long via AMM, receive USDC profit directly |
+| `closeShort(uint256 nftId, uint256 minUsdcOut)` | Position owner | Close short via AMM, receive USDC profit directly |
+| `renewPosition(uint256 nftId, uint256 maxFee)` | Position owner | Pay the dynamic renewal fee (quote via `quoteRenewFee`) to extend the deadline by one period; reverts if the fee exceeds `maxFee` |
+| `closePositionAfterDeadline(uint256 nftId, uint256 minPayout)` | Anyone | Settle an expired position (profitable: payout credited to holder's claimable balance; underwater: collateral returns to LP). Reverts `AutoRenewActive` if an executable auto-renewal exists |
+| `settleExpired(uint256 nftId, uint256 minPayout)` | Anyone | Settle an expired position with a 0.05 USDC caller bounty; auto-renews from position equity instead of closing when the holder opted in via `PositionNFT.setAutoRenew` |
+| `claimPayout(address to)` | Credited holder | Withdraw payouts credited by expired-position settlements |
 | `addLiquidity(uint256 tokenAmount, uint256 usdcAmount)` | LP only | Add liquidity (must match reserve ratio) |
 | `removeLiquidity()` | LP only | Withdraw all liquidity (requires zero open positions) |
-| `claimFees()` | LP only | Claim accumulated LP fees |
+| `claimFees(address to)` | LP only | Claim accrued LP fees (fees are pull payments) |
+| `claimProtocolFees(address to)` | Treasury only | Claim accrued protocol fees |
 | `setPositionCaps(uint256 newUsd, uint256 newBps)` | LP only | Set position size caps |
+| `closePool()` | LP or deployer | Start pool wind-down (no new positions; all expire by closeDate) |
 
 ### View functions
 
 | Function | Returns |
 |---|---|
 | `spotPrice()` | Current token price in raw USDC units per whole token |
-| `backedAirToken()` | Backed token reserves |
-| `backedAirUsd()` | Backed USDC reserves |
-| `longOpenInterest()` | Aggregate long open interest |
-| `shortOpenInterest()` | Aggregate short open interest |
-| `lpFeesAccumulated()` | Unclaimed LP fees (USDC) |
-| `maxPositionUsd()` | Hard position cap |
-| `maxPositionBps()` | Soft position cap (bps) |
+| `longPrice()` / `shortPrice()` | Effective entry prices (SWAP-2 / SWAP-3 marginal rates) |
+| `airTokenSupply()` / `airUsdSupply()` | Total accounting-unit supplies (virtual reserves) |
+| `backedAirToken()` / `backedAirUsd()` | Backed reserves (real collateral) |
+| `tokenDecimals()` | Underlying token decimals |
+| `longOpenInterest()` / `shortOpenInterest()` | Aggregate open interest per side |
+| `lpFeesAccumulated()` / `protocolFeesAccumulated()` | Accrued unclaimed fees (USDC) |
+| `lpFeesPaidTotal()` / `protocolFeesPaidTotal()` | Fees already withdrawn. `accumulated + paidTotal` is the monotonic lifetime accrual — use it to diff between two points in time |
+| `claimable(address)` | Credited payout awaiting withdrawal |
+| `totalClaimable()` | Sum of all outstanding credited payouts |
+| `totalShortCollateral()` | Sum of `lockedAmount` across open shorts. USDC the pool holds but owes to traders; included in the reserve invariant |
+| `maxPositionUsd()` / `maxPositionBps()` | Position caps |
 | `swapFeeBps()` | Swap fee in bps |
 | `openPositionCount()` | Number of open positions |
-| `quoteSwap(uint256 amountIn, bool tokenToUsdc)` | Quote a swap: `(grossOut, fee, netOut)` |
 | `effectiveLeverageCap()` | Effective position cap in USDC |
-| `isLongUnderwater(uint256 nftId)` | Whether a long position is underwater |
-| `isShortUnderwater(uint256 nftId)` | Whether a short position is underwater |
-| `positionDuration()` | Position period length in seconds |
+| `quoteOpenFee(uint256 notional, bool isLong)` | Total USDC fee to open a position now |
+| `quoteRenewFee(uint256 nftId)` | Total USDC fee to renew a position now (dynamic: mark value + OI slice) |
+| `quoteClose(uint256 nftId)` | `(ready, pnl)` — live close quote mirroring settlement math |
+| `positionDuration()` / `closeDate()` / `isClosing()` | Expiry / wind-down state |
+| `indexerState()` | `(backedAirToken, backedAirUsd, longPrice, shortPrice, lpFeesLifetime, protocolFeesLifetime)` in one call — see below |
+
+#### `indexerState()`
+
+Bundles the six values an off-chain indexer needs on every pool event into a
+single `eth_call`. Fetching them separately cost eight calls per event, which
+made RPC volume the dominant cost of a sync and is the first thing a
+rate-limited provider punishes.
+
+Fees are returned as **lifetime** totals (`accumulated + paidTotal`) because
+that is the only monotonic form: collecting fees zeroes the accumulator and adds
+the same amount to the paid total, so the sum never decreases and a consumer can
+safely diff it between events.
+
+Prefer extending this function over adding a second read. Bundling
+contract-side works on every chain, unlike Multicall3, which is not deployed on
+a bare Hardhat node.
 
 ### Events
 
 ```solidity
-event Swap(address indexed caller, address tokenIn, uint256 amountIn, address tokenOut, uint256 amountOut);
-event LongOpened(uint256 indexed nftId, address indexed holder, uint256 usdcIn, uint256 airUsdMinted, uint256 airTokenLocked, uint256 feesPaid);
-event LongClosed(uint256 indexed nftId, address indexed holder, uint256 profit, uint256 airUsdBurned);
-event LongRealized(uint256 indexed nftId, address indexed holder, uint256 usdcPaid, uint256 tokenDelivered);
-event ShortOpened(uint256 indexed nftId, address indexed holder, uint256 airTokenMinted, uint256 airUsdLocked, uint256 feesPaid);
-event ShortClosed(uint256 indexed nftId, address indexed holder, uint256 profit, uint256 airTokenBurned);
-event ShortRealized(uint256 indexed nftId, address indexed holder, uint256 tokenPaid, uint256 usdcDelivered);
-event PositionForceRealized(uint256 indexed nftId, address indexed lpOwner, uint256 collateralPaid);
-event LiquidityAdded(address indexed provider, uint256 tokenAmount, uint256 usdcAmount, uint256 backedAirToken, uint256 backedAirUsd);
-event LiquidityRemoved(address indexed provider, uint256 tokenAmount, uint256 usdcAmount);
-event FeesClaimed(address indexed lpOwner, uint256 amount);
-event PositionCapsUpdated(uint256 newMaxPositionUsd, uint256 newMaxPositionBps, address indexed by);
-event PositionRenewed(uint256 indexed nftId, address indexed payer, uint256 feePaid, uint256 newDeadline);
-event PositionClosedAfterDeadline(uint256 indexed nftId, address indexed caller, bool profitable, uint256 payout);
+event PositionOpened(uint256 indexed nftId, address indexed holder, bool isLong);
+event PositionRenewed(uint256 indexed nftId, address indexed caller, uint256 feePaid, uint256 newDeadline, bool autoRenewed);
+event PositionClosed(uint256 indexed nftId, address indexed holder, uint256 payout);
+event PositionClosedAfterDeadline(uint256 indexed nftId, address indexed caller, uint256 payout);
+event PayoutCredited(address indexed recipient, uint256 amount);
+event PayoutClaimed(address indexed recipient, address indexed to, uint256 amount);
+event PoolClosed(address indexed closedBy, uint256 closeDate);
+event LpFeesPaid(address indexed to, uint256 amount);
+event ProtocolFeesPaid(address indexed to, uint256 amount);
 ```
 
 ## EXNIHILOFactory
 
 | Function | Description |
 |---|---|
-| `createMarket(address tokenAddress, uint256 usdcAmount, uint256 tokenAmount, uint256 maxPositionUsd, uint256 maxPositionBps, uint256 positionDuration)` | Deploy a new market (positionDuration: 0 = 7-day default) |
+| `createMarket(address tokenAddress, uint256 usdcAmount, uint256 tokenAmount, uint256 maxPositionUsd, uint256 maxPositionBps, uint256 positionDuration)` | Deploy a new market (positionDuration: 0 = 7-day default; token decimals read on-chain) |
 | `allPools(uint256 index)` | Get pool address by index |
-| `poolCount()` | Total number of deployed pools |
+| `allPoolsLength()` | Total number of deployed pools |
+| `isPool(address)` | Whether an address is a factory-deployed pool |
 
 ## PositionNFT
 
@@ -75,10 +94,17 @@ event PositionClosedAfterDeadline(uint256 indexed nftId, address indexed caller,
 | `tokenURI(uint256 tokenId)` | On-chain SVG metadata |
 | `balanceOf(address owner)` | Number of positions held |
 | `tokenOfOwnerByIndex(address owner, uint256 index)` | Enumerate positions |
+| `setAutoRenew(uint256 tokenId, bool enabled, uint256 maxFee)` | Holder only — opt into keeper-driven auto-renewal at expiry, with `maxFee` capping the fee chargeable against the position's equity. **Cleared on every transfer.** |
+| `getAutoRenew(uint256 tokenId)` | `(enabled, maxFee)` — current auto-renew configuration |
+| `applyRenewal(uint256 tokenId, ...)` | Pool only — records a renewal (deadline, fees, and any equity charge) |
+
+```solidity
+event AutoRenewSet(uint256 indexed tokenId, bool enabled, uint256 maxFee);
+```
 
 ## EXNIHILORouter
 
-The router allows users to approve USDC (and underlying tokens) once, then trade on any pool without per-pool approvals. LP operations and position exits (close/realize) are called directly on the pool.
+The router allows users to approve USDC (and underlying tokens) once, then trade on any pool without per-pool approvals. LP operations and holder-only position operations (close, renew, claimPayout) are called directly on the pool.
 
 | Function | Description |
 |---|---|

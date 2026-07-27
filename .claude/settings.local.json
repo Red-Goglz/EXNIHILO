@@ -19,7 +19,10 @@
       "mcp__plugin_aiup-vaadin-jooq_playwright__browser_wait_for",
       "mcp__plugin_aiup-vaadin-jooq_context7__resolve-library-id",
       "mcp__plugin_aiup-vaadin-jooq_context7__query-docs",
-      "WebFetch(domain:indexer.exnihilo.finance)"
+      "WebFetch(domain:indexer.exnihilo.markets)",
+      "PowerShell(npm install *)",
+      "PowerShell(npm ls *)",
+      "PowerShell(npm *)"
     ]
   }
 }

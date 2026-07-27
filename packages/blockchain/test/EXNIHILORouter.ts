@@ -131,11 +131,7 @@ async function deployRouterFixture() {
     INITIAL_TOKEN,
     MAX_POS_USD,
     MAX_POS_BPS,
-    0n,
-    "airPEPE",
-    "airPEPEUsd",
-    18
-  );
+    0n);
   const receipt = await tx.wait();
   const log = receipt!.logs
     .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -543,32 +539,25 @@ describe("EXNIHILORouter", function () {
 
   describe("Residual refund (pulled-but-unconsumed USDC goes back to caller)", function () {
 
-    it("renewPosition over-estimate refunds surplus to caller", async function () {
+    it("renewPosition removed from the router (holder-only, called directly on pool)", async function () {
+      const { router } = await loadFixture(deployRouterFixture);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      expect((router as any).renewPosition).to.equal(undefined);
+    });
+
+    it("router fee quote comes from the pool (quoteOpenFee equivalence)", async function () {
       const { router, usdc, trader1, poolAddress } = await loadFixture(deployRouterFixture);
+      const pool = await ethers.getContractAt("EXNIHILOPool", poolAddress);
 
-      // Open a position so we have something to renew
-      const notional = ethers.parseUnits("100", 6);
-      await router.connect(trader1).openLong(poolAddress, notional, 0n);
-
-      // Over-estimate: pool's actual renewal fee is 5% of 100 USDC = 5 USDC (or MIN_POSITION_FEE).
-      // Caller supplies 10 USDC — surplus must refund.
-      const overEstimate = ethers.parseUnits("10", 6);
+      const notional = ethers.parseUnits("250", 6);
+      const quoted = await pool.quoteOpenFee(notional, true);
 
       const balBefore = await usdc.balanceOf(trader1.address);
-      const routerBefore = await usdc.balanceOf(await router.getAddress());
-
-      await router.connect(trader1).renewPosition(poolAddress, 0n, overEstimate);
-
+      await router.connect(trader1).openLong(poolAddress, notional, 0n);
       const balAfter = await usdc.balanceOf(trader1.address);
-      const routerAfter = await usdc.balanceOf(await router.getAddress());
 
-      // Router holds no more USDC than it did before (residual refunded)
-      expect(routerAfter).to.equal(routerBefore);
-
-      // Caller's net loss == actual renewal fee (much less than over-estimate)
-      const actualCost = balBefore - balAfter;
-      expect(actualCost).to.be.lt(overEstimate);
-      expect(actualCost).to.be.gt(0n);
+      // The router pulls exactly what the pool quotes — no drift possible.
+      expect(balBefore - balAfter).to.equal(quoted);
     });
 
     it("openLong: router balance is zero after call (happy path)", async function () {

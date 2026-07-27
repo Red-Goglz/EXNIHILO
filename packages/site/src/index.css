@@ -23,10 +23,32 @@ input[type="number"] { -moz-appearance: textfield; }
   --orange: #ff8c00;
   --orange-glow: rgba(255, 140, 0, 0.1);
   --body: #c8c8c8;
-  --muted: #505050;
-  --dim: #282828;
+  --muted: #6a6a6a;
+  --dim: #3a3a3a;
+  /* Short-side identity — distinct from --red so "short" never reads as
+     "error/danger". Losses, errors, and expiry stay --red. */
+  --magenta: #ff2d9d;
+  --magenta-glow: rgba(255, 45, 157, 0.1);
   --font-display: "Bebas Neue", "Arial Black", sans-serif;
   --font-mono: "IBM Plex Mono", "Courier New", monospace;
+
+  /* Type scale — floor for readability. Nothing informative goes below
+     --fs-label (~11.2px); --fs-nano is for decorative chips only. */
+  --fs-nano: 0.62rem;
+  --fs-micro: 0.66rem;
+  --fs-label: 0.7rem;
+  --fs-body-s: 0.74rem;
+}
+
+/* Respect users who disable animation at the OS level. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* ── Base ───────────────────────────────────────────────────────────────── */
@@ -230,7 +252,7 @@ body::after {
   color: var(--green);
   border: 1px solid rgba(0, 255, 136, 0.25);
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: var(--fs-label);
   font-weight: 700;
   letter-spacing: 0.12em;
   padding: 1px 7px;
@@ -238,11 +260,11 @@ body::after {
 }
 
 .tag-short {
-  background: var(--red-glow);
-  color: var(--red);
-  border: 1px solid rgba(255, 59, 48, 0.25);
+  background: var(--magenta-glow);
+  color: var(--magenta);
+  border: 1px solid rgba(255, 45, 157, 0.25);
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: var(--fs-label);
   font-weight: 700;
   letter-spacing: 0.12em;
   padding: 1px 7px;
@@ -304,6 +326,15 @@ body::after {
   background: var(--red-glow);
 }
 
+.btn-magenta {
+  border-color: var(--magenta);
+  color: var(--magenta);
+}
+
+.btn-magenta:hover {
+  background: var(--magenta-glow);
+}
+
 .btn-green {
   border-color: var(--green);
   color: var(--green);
@@ -347,7 +378,7 @@ body::after {
 
 .markets-table th {
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: var(--fs-label);
   font-weight: 600;
   letter-spacing: 0.12em;
   color: var(--muted);
@@ -377,6 +408,49 @@ body::after {
   color: var(--cyan);
 }
 
+/* ── Positions table (portfolio) ────────────────────────────────────────── */
+.positions-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.positions-table th {
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.positions-table td {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--body);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.positions-table tbody tr:not(.position-detail):hover {
+  background: rgba(0, 229, 255, 0.02);
+}
+
+.positions-table tr.position-detail td {
+  background: rgba(255, 255, 255, 0.015);
+  border-left: 2px solid var(--border-bright);
+}
+
+/* Desktop table vs. mobile cards */
+.positions-mobile { display: none; }
+
+@media (max-width: 860px) {
+  .positions-desktop { display: none; }
+  .positions-mobile  { display: block; }
+}
+
 /* ── Stat boxes ─────────────────────────────────────────────────────────── */
 .stat-box {
   background: var(--surface);
@@ -385,7 +459,7 @@ body::after {
 }
 
 .stat-label {
-  font-size: 0.6rem;
+  font-size: var(--fs-micro);
   letter-spacing: 0.15em;
   color: var(--muted);
   margin-bottom: 4px;
@@ -409,7 +483,7 @@ body::after {
 
 .tab-item {
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: var(--fs-label);
   letter-spacing: 0.12em;
   color: var(--muted);
   padding: 10px 20px;

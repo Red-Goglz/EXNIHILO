@@ -85,6 +85,11 @@ async function main() {
   }
   console.log("Factory:     ", factoryAddress, "(LpNFT.factory matches — no patch needed)");
 
+  // 4b. Wire PositionNFT to the factory — without this, every openLong/openShort
+  //     reverts with FactoryNotSet (mint is gated on factory-registered pools).
+  await (await positionNFT.connect(deployer).initFactory(factoryAddress)).wait();
+  console.log("PositionNFT.initFactory wired to", factoryAddress);
+
   // 5. Deploy base tokens
   const baseTokens: { name: string; symbol: string; contract: any; address: string }[] = [];
 
@@ -163,10 +168,7 @@ async function main() {
       tokenSeed,
       maxPosUsd,
       maxPosBps,
-      0n, // positionDuration: 0 = default 7 days
-      `air${baseToken.symbol}`,
-      `air${baseToken.symbol}Usd`,
-      18
+      0n // positionDuration: 0 = default 7 days
     );
     const receipt = await tx.wait();
 

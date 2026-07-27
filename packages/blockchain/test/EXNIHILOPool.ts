@@ -186,11 +186,7 @@ async function deployPoolFixture() {
     INITIAL_TOKEN,
     MAX_POS_USD,
     MAX_POS_BPS,
-    0n,
-    "airPEPE",
-    "airPEPEUsd",
-    18
-  );
+    0n);
   const receipt = await tx.wait();
 
   const iface = factory.interface;
@@ -331,7 +327,7 @@ describe("EXNIHILOPool", function () {
   describe("2. Open Long", function () {
 
     it("deducts base LP/protocol fee + impact fee from notional", async function () {
-      const { pool, usdc, treasury, trader1 } = await loadFixture(deployPoolFixture);
+      const { pool, usdc, trader1 } = await loadFixture(deployPoolFixture);
 
       const usdcIn      = ethers.parseUnits("100", 6);
       const protocolFee = (usdcIn * PROTO_FEE_BPS) / BPS_DENOM;
@@ -339,11 +335,11 @@ describe("EXNIHILOPool", function () {
       // OI=0 for first position: impact = 1500 * N * N / (2 * U * 10000)
       const impactFee   = (1500n * usdcIn * usdcIn) / (2n * INITIAL_USDC * BPS_DENOM);
 
-      const treasuryBefore = await usdc.balanceOf(treasury.address);
       await openLong(pool, trader1, usdcIn);
 
-      expect(await usdc.balanceOf(treasury.address)).to.equal(treasuryBefore + protocolFee);
+      // Fees accrue (pull payment) — claimable via claimFees/claimProtocolFees.
       expect(await pool.lpFeesAccumulated()).to.equal(lpFee + impactFee);
+      expect(await pool.protocolFeesAccumulated()).to.equal(protocolFee);
     });
 
     it("mints the long NFT to the trader", async function () {
@@ -352,12 +348,11 @@ describe("EXNIHILOPool", function () {
       expect(await positionNFT.ownerOf(nftId)).to.equal(trader1.address);
     });
 
-    it("inflates airUsd totalSupply (synthetic debt)", async function () {
+    it("inflates airUsdSupply (synthetic debt)", async function () {
       const { pool, trader1 } = await loadFixture(deployPoolFixture);
-      const airUsd = await ethers.getContractAt("AirToken", await pool.airUsdToken());
-      const supplyBefore = await airUsd.totalSupply();
+      const supplyBefore = await pool.airUsdSupply();
       await openLong(pool, trader1, ethers.parseUnits("100", 6));
-      expect(await airUsd.totalSupply()).to.be.gt(supplyBefore);
+      expect(await pool.airUsdSupply()).to.be.gt(supplyBefore);
     });
 
     it("backedAirUsd does NOT increase on openLong", async function () {
@@ -477,86 +472,12 @@ describe("EXNIHILOPool", function () {
     });
   });
 
-  // ── 4. Realize Long ────────────────────────────────────────────────────────
-
-  describe("4. Realize Long", function () {
-
-    async function withLongFixture() {
-      const base = await deployPoolFixture();
-      const nftId = await openLong(base.pool, base.trader1, ethers.parseUnits("100", 6));
-      return { ...base, nftId };
-    }
-
-    it("trader pays airUsdMinted USDC and receives locked token", async function () {
-      const { pool, usdc, baseToken, positionNFT, trader1, nftId } =
-        await loadFixture(withLongFixture);
-
-      const pos = await positionNFT.getPosition(nftId);
-      await usdc.mint(trader1.address, pos.airUsdMinted);
-      const tokenBefore = await baseToken.balanceOf(trader1.address);
-
-      await pool.connect(trader1).realizeLong(nftId);
-
-      expect(await baseToken.balanceOf(trader1.address)).to.equal(
-        tokenBefore + pos.lockedAmount
-      );
-    });
-
-    it("NFT is burned after realizeLong", async function () {
-      const { pool, usdc, positionNFT, trader1, nftId } =
-        await loadFixture(withLongFixture);
-
-      const pos = await positionNFT.getPosition(nftId);
-      await usdc.mint(trader1.address, pos.airUsdMinted);
-      await pool.connect(trader1).realizeLong(nftId);
-      await expect(positionNFT.ownerOf(nftId)).to.be.reverted;
-    });
-
-    it("openPositionCount decrements after realizeLong", async function () {
-      const { pool, usdc, positionNFT, trader1, nftId } =
-        await loadFixture(withLongFixture);
-
-      const pos = await positionNFT.getPosition(nftId);
-      await usdc.mint(trader1.address, pos.airUsdMinted);
-      await pool.connect(trader1).realizeLong(nftId);
-      expect(await pool.openPositionCount()).to.equal(0n);
-    });
-
-    it("backedAirUsd increases by airUsdMinted after realizeLong", async function () {
-      const { pool, usdc, positionNFT, trader1, nftId } =
-        await loadFixture(withLongFixture);
-
-      const pos = await positionNFT.getPosition(nftId);
-      const backedBefore = await pool.backedAirUsd();
-      await usdc.mint(trader1.address, pos.airUsdMinted);
-      await pool.connect(trader1).realizeLong(nftId);
-      expect(await pool.backedAirUsd()).to.equal(backedBefore + pos.airUsdMinted);
-    });
-
-    it("reverts when non-holder tries to realize", async function () {
-      const { pool, trader2, nftId } = await loadFixture(withLongFixture);
-      await expect(
-        pool.connect(trader2).realizeLong(nftId)
-      ).to.be.revertedWithCustomError(pool, "OnlyPositionHolder");
-    });
-
-    it("realizeLong succeeds without reverting", async function () {
-      const { pool, usdc, positionNFT, trader1, nftId } =
-        await loadFixture(withLongFixture);
-
-      const pos = await positionNFT.getPosition(nftId);
-      await usdc.mint(trader1.address, pos.airUsdMinted);
-      await expect(pool.connect(trader1).realizeLong(nftId))
-        .to.not.be.reverted;
-    });
-  });
-
   // ── 5. Open Short ──────────────────────────────────────────────────────────
 
   describe("5. Open Short", function () {
 
     it("deducts base LP/protocol fee + impact fee from notional", async function () {
-      const { pool, usdc, treasury, trader1 } = await loadFixture(deployPoolFixture);
+      const { pool, usdc, trader1 } = await loadFixture(deployPoolFixture);
 
       const usdcIn      = ethers.parseUnits("100", 6);
       const protocolFee = (usdcIn * PROTO_FEE_BPS) / BPS_DENOM;
@@ -564,11 +485,11 @@ describe("EXNIHILOPool", function () {
       // OI=0 for first position: impact = 1500 * N * N / (2 * U * 10000)
       const impactFee   = (1500n * usdcIn * usdcIn) / (2n * INITIAL_USDC * BPS_DENOM);
 
-      const treasuryBefore = await usdc.balanceOf(treasury.address);
       await openShort(pool, trader1, usdcIn);
 
-      expect(await usdc.balanceOf(treasury.address)).to.equal(treasuryBefore + protocolFee);
+      // Fees accrue (pull payment) — claimable via claimFees/claimProtocolFees.
       expect(await pool.lpFeesAccumulated()).to.equal(lpFee + impactFee);
+      expect(await pool.protocolFeesAccumulated()).to.equal(protocolFee);
     });
 
     it("mints the short NFT to the trader", async function () {
@@ -577,12 +498,11 @@ describe("EXNIHILOPool", function () {
       expect(await positionNFT.ownerOf(nftId)).to.equal(trader1.address);
     });
 
-    it("inflates airToken totalSupply (synthetic debt)", async function () {
+    it("inflates airTokenSupply (synthetic debt)", async function () {
       const { pool, trader1 } = await loadFixture(deployPoolFixture);
-      const airToken = await ethers.getContractAt("AirToken", await pool.airToken());
-      const supplyBefore = await airToken.totalSupply();
+      const supplyBefore = await pool.airTokenSupply();
       await openShort(pool, trader1, ethers.parseUnits("100", 6));
-      expect(await airToken.totalSupply()).to.be.gt(supplyBefore);
+      expect(await pool.airTokenSupply()).to.be.gt(supplyBefore);
     });
 
     it("backedAirUsd decreases by airUsdOut (collateral locked)", async function () {
@@ -633,11 +553,17 @@ describe("EXNIHILOPool", function () {
 
   // ── 6. Close Short ────────────────────────────────────────────────────────
   //
-  // Note: closeShort checks whether cpAmountOut(lockedAmount, airUsdSupply, backedAirToken)
-  // covers the airTokenMinted debt.  For standard 18-decimal token / 6-decimal USDC
-  // pools the lockedAmount (6 dec, small) buys back far fewer airToken (18 dec) than
-  // the debt, so positions are permanently underwater.  All tests below reflect the
-  // actual contract behaviour.
+  // closeShort checks whether cpAmountOut(lockedAmount, airUsdSupply − locked,
+  // backedAirToken) covers the airTokenMinted debt. The math is DECIMALS-
+  // INVARIANT — both sides of the comparison scale with the pool's token/USDC
+  // ratio, so 18-dec pools behave identically to 6-dec pools:
+  //
+  //   - Immediately after open, every short is underwater by roughly the swap
+  //     fee + slippage (same as a freshly opened long). This is a FEE effect,
+  //     not a decimals effect.
+  //   - A price PUMP moves against the short → deeper underwater.
+  //   - A price DUMP (what the short bets on) makes the buyback cheap → the
+  //     short closes profitably. Proven below on this standard 18-dec pool.
 
   describe("6. Close Short", function () {
 
@@ -647,12 +573,41 @@ describe("EXNIHILOPool", function () {
       return { ...base, nftId };
     }
 
-    it("always reverts with PositionUnderwater for 18-dec token / 6-dec USDC", async function () {
-      // lockedAmount (6-dec units) buys back far fewer airToken (18-dec) than the debt → underwater.
+    it("freshly opened short is underwater (fees + slippage), regardless of decimals", async function () {
       const { pool, trader1, nftId } = await loadFixture(withShortFixture);
       await expect(
         pool.connect(trader1).closeShort(nftId, 0n)
       ).to.be.revertedWithCustomError(pool, "PositionUnderwater");
+    });
+
+    it("profitable closeShort on a standard 18-dec pool after a price dump", async function () {
+      // Regression for a long-standing wrong claim that 18-dec shorts are
+      // "permanently underwater". Dump the token price and the short closes
+      // at a profit, exactly like the 6-dec case in Coverage.ts.
+      const { pool, usdc, baseToken, positionNFT, trader1, trader2, nftId } =
+        await loadFixture(withShortFixture);
+
+      // Crash the price: dump 5× the pool's token supply.
+      const dump = ethers.parseEther("5000000");
+      await baseToken.mint(trader2.address, dump);
+      await baseToken.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
+      await pool.connect(trader2).swap(dump, 0n, true, trader2.address);
+
+      // quoteClose agrees the position is now in profit.
+      const [ready, pnl] = await pool.quoteClose(nftId);
+      expect(ready).to.equal(true);
+      expect(pnl).to.be.gt(0n);
+
+      // Close succeeds and pays the holder the quoted surplus.
+      const usdcBefore = await usdc.balanceOf(trader1.address);
+      await expect(pool.connect(trader1).closeShort(nftId, 0n))
+        .to.emit(pool, "PositionClosed");
+      const received = (await usdc.balanceOf(trader1.address)) - usdcBefore;
+
+      expect(received).to.be.gt(0n);
+      expect(received).to.equal(pnl); // settlement matches the quote exactly
+      await expect(positionNFT.ownerOf(nftId)).to.be.reverted; // NFT burned
+      expect(await pool.openPositionCount()).to.equal(0n);
     });
 
     it("short remains underwater after a price pump (token more expensive to buy back)", async function () {
@@ -695,69 +650,6 @@ describe("EXNIHILOPool", function () {
       ).to.be.revertedWithCustomError(pool, "OnlyPositionHolder");
     });
 
-  });
-
-  // ── 7. Realize Short ──────────────────────────────────────────────────────
-
-  describe("7. Realize Short", function () {
-
-    async function withShortFixture() {
-      const base = await deployPoolFixture();
-      const nftId = await openShort(base.pool, base.trader1, ethers.parseUnits("100", 6));
-      return { ...base, nftId };
-    }
-
-    it("trader pays airTokenMinted token and receives locked USDC", async function () {
-      const { pool, usdc, baseToken, positionNFT, trader1, nftId } =
-        await loadFixture(withShortFixture);
-
-      const pos = await positionNFT.getPosition(nftId);
-      await baseToken.mint(trader1.address, pos.airTokenMinted);
-      const usdcBefore = await usdc.balanceOf(trader1.address);
-
-      await pool.connect(trader1).realizeShort(nftId);
-
-      expect(await usdc.balanceOf(trader1.address)).to.equal(
-        usdcBefore + pos.lockedAmount
-      );
-    });
-
-    it("NFT is burned after realizeShort", async function () {
-      const { pool, baseToken, positionNFT, trader1, nftId } =
-        await loadFixture(withShortFixture);
-
-      const pos = await positionNFT.getPosition(nftId);
-      await baseToken.mint(trader1.address, pos.airTokenMinted);
-      await pool.connect(trader1).realizeShort(nftId);
-      await expect(positionNFT.ownerOf(nftId)).to.be.reverted;
-    });
-
-    it("openPositionCount decrements after realizeShort", async function () {
-      const { pool, baseToken, positionNFT, trader1, nftId } =
-        await loadFixture(withShortFixture);
-
-      const pos = await positionNFT.getPosition(nftId);
-      await baseToken.mint(trader1.address, pos.airTokenMinted);
-      await pool.connect(trader1).realizeShort(nftId);
-      expect(await pool.openPositionCount()).to.equal(0n);
-    });
-
-    it("reverts when non-holder tries to realize", async function () {
-      const { pool, trader2, nftId } = await loadFixture(withShortFixture);
-      await expect(
-        pool.connect(trader2).realizeShort(nftId)
-      ).to.be.revertedWithCustomError(pool, "OnlyPositionHolder");
-    });
-
-    it("realizeShort succeeds without reverting", async function () {
-      const { pool, baseToken, positionNFT, trader1, nftId } =
-        await loadFixture(withShortFixture);
-
-      const pos = await positionNFT.getPosition(nftId);
-      await baseToken.mint(trader1.address, pos.airTokenMinted);
-      await expect(pool.connect(trader1).realizeShort(nftId))
-        .to.not.be.reverted;
-    });
   });
 
   // ── 8. LP: addLiquidity ────────────────────────────────────────────────────
@@ -883,53 +775,90 @@ describe("EXNIHILOPool", function () {
     });
   });
 
-  // ── 10. LP: claimFees ──────────────────────────────────────────────────────
+  // ── 10. LP fees: accrual + claim (pull payments) ────────────────────────────
 
-  describe("10. LP: claimFees", function () {
+  describe("10. LP fees: accrual + claim", function () {
 
     async function withFeesFixture() {
       const base = await deployPoolFixture();
-      // Open two positions to accumulate LP fees
+      // Open two positions — fees accrue for LP and treasury to claim.
       await openLong(base.pool, base.trader1, ethers.parseUnits("200", 6));
       await openShort(base.pool, base.trader2, ethers.parseUnits("200", 6));
       return base;
     }
 
-    it("LP holder receives accumulated LP fees", async function () {
+    it("fees accrue on open (nothing is pushed)", async function () {
+      const { pool, usdc, creator, treasury, trader1 } = await loadFixture(deployPoolFixture);
+      const lpBefore       = await usdc.balanceOf(creator.address);
+      const treasuryBefore = await usdc.balanceOf(treasury.address);
+      await openLong(pool, trader1, ethers.parseUnits("200", 6));
+      expect(await usdc.balanceOf(creator.address)).to.equal(lpBefore);
+      expect(await usdc.balanceOf(treasury.address)).to.equal(treasuryBefore);
+      expect(await pool.lpFeesAccumulated()).to.be.gt(0n);
+      expect(await pool.protocolFeesAccumulated()).to.be.gt(0n);
+    });
+
+    it("claimFees pays the accrued amount to `to` and emits LpFeesPaid", async function () {
       const { pool, usdc, creator } = await loadFixture(withFeesFixture);
-      const accumulated = await pool.lpFeesAccumulated();
-      expect(accumulated).to.be.gt(0n);
-      const usdcBefore = await usdc.balanceOf(creator.address);
-      await pool.connect(creator).claimFees();
-      expect(await usdc.balanceOf(creator.address)).to.equal(usdcBefore + accumulated);
-    });
+      const accrued  = await pool.lpFeesAccumulated();
+      const before   = await usdc.balanceOf(creator.address);
 
-    it("lpFeesAccumulated resets to zero after claim", async function () {
-      const { pool, creator } = await loadFixture(withFeesFixture);
-      await pool.connect(creator).claimFees();
+      await expect(pool.connect(creator).claimFees(creator.address))
+        .to.emit(pool, "LpFeesPaid")
+        .withArgs(creator.address, accrued);
+
+      expect(await usdc.balanceOf(creator.address)).to.equal(before + accrued);
       expect(await pool.lpFeesAccumulated()).to.equal(0n);
+      expect(await pool.lpFeesPaidTotal()).to.equal(accrued);
     });
 
-    it("reverts when lpFeesAccumulated is zero", async function () {
+    it("claimProtocolFees pays the accrued amount and emits ProtocolFeesPaid", async function () {
+      const { pool, usdc, treasury } = await loadFixture(withFeesFixture);
+      const accrued = await pool.protocolFeesAccumulated();
+      const before  = await usdc.balanceOf(treasury.address);
+
+      await expect(pool.connect(treasury).claimProtocolFees(treasury.address))
+        .to.emit(pool, "ProtocolFeesPaid")
+        .withArgs(treasury.address, accrued);
+
+      expect(await usdc.balanceOf(treasury.address)).to.equal(before + accrued);
+      expect(await pool.protocolFeesAccumulated()).to.equal(0n);
+      expect(await pool.protocolFeesPaidTotal()).to.equal(accrued);
+    });
+
+    it("claimFees reverts with ZeroAmount when nothing accrued", async function () {
       const { pool, creator } = await loadFixture(deployPoolFixture);
       await expect(
-        pool.connect(creator).claimFees()
+        pool.connect(creator).claimFees(creator.address)
       ).to.be.revertedWithCustomError(pool, "ZeroAmount");
     });
 
-    it("reverts when called by non-LP-holder", async function () {
+    it("claimFees reverts when called by non-LP-holder", async function () {
       const { pool, other } = await loadFixture(withFeesFixture);
       await expect(
-        pool.connect(other).claimFees()
+        pool.connect(other).claimFees(other.address)
       ).to.be.revertedWithCustomError(pool, "OnlyLpHolder");
     });
 
-    it("claimFees succeeds and resets accumulated", async function () {
+    it("claimFees reverts on zero-address recipient", async function () {
       const { pool, creator } = await loadFixture(withFeesFixture);
-      const accumulated = await pool.lpFeesAccumulated();
-      expect(accumulated).to.be.gt(0n);
-      await pool.connect(creator).claimFees();
-      expect(await pool.lpFeesAccumulated()).to.equal(0n);
+      await expect(
+        pool.connect(creator).claimFees(ethers.ZeroAddress)
+      ).to.be.revertedWithCustomError(pool, "ZeroAddress");
+    });
+
+    it("claimProtocolFees reverts for non-treasury caller", async function () {
+      const { pool, creator } = await loadFixture(withFeesFixture);
+      await expect(
+        pool.connect(creator).claimProtocolFees(creator.address)
+      ).to.be.revertedWithCustomError(pool, "OnlyTreasury");
+    });
+
+    it("claimProtocolFees reverts with ZeroAmount when nothing accrued", async function () {
+      const { pool, treasury } = await loadFixture(deployPoolFixture);
+      await expect(
+        pool.connect(treasury).claimProtocolFees(treasury.address)
+      ).to.be.revertedWithCustomError(pool, "ZeroAmount");
     });
   });
 
@@ -971,8 +900,7 @@ describe("EXNIHILOPool", function () {
       // Pool with maxPositionBps=10 (0.1 %), maxPositionUsd=0.
       const { factory, usdc, baseToken, creator, trader1 } = await loadFixture(deployFactoryFixtureForPool);
       await factory.connect(creator).createMarket(
-        await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 10n, 0n, "airPEPE", "airPEPEUsd", 18
-      );
+        await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 10n, 0n);
       const poolAddr = await factory.allPools(0n);
       const pool = await ethers.getContractAt("EXNIHILOPool", poolAddr);
 

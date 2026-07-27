@@ -9,47 +9,6 @@ import { useState, useMemo } from "react";
 
 let chartIdCounter = 0;
 
-// ─── Deterministic fake data (fallback when indexer has no data) ─────────────
-
-function nextSeed(s: number): number {
-  return ((s * 1664525) + 1013904223) | 0;
-}
-
-function generateFakePath(poolAddr: string, n: number): number[] {
-  let seed = 5381;
-  for (let i = 0; i < poolAddr.length; i++)
-    seed = (((seed << 5) + seed) + poolAddr.charCodeAt(i)) | 0;
-  seed = Math.abs(seed) || 1;
-  const pts: number[] = [];
-  let v = 0.4 + ((seed & 0xFF) / 255) * 0.2;
-  for (let i = 0; i < n; i++) {
-    seed = nextSeed(seed);
-    v = Math.max(0.1, Math.min(0.9, v + (((seed >>> 0) & 0xFF) / 255 - 0.5) * 0.05));
-    pts.push(v);
-  }
-  return pts;
-}
-
-function deriveFakeLines(spotPts: number[], poolAddr: string) {
-  let seed = 5381;
-  const tag = poolAddr + "_spread";
-  for (let i = 0; i < tag.length; i++)
-    seed = (((seed << 5) + seed) + tag.charCodeAt(i)) | 0;
-  seed = Math.abs(seed) || 1;
-  const n = spotPts.length;
-  const longPts: number[] = [];
-  const shortPts: number[] = [];
-  for (let i = 0; i < n; i++) {
-    seed = nextSeed(seed);
-    const t = i / (n - 1);
-    const maxSpread = 0.05 + (((seed >>> 0) & 0xFF) / 255) * 0.07;
-    const spread = i === 0 ? 0 : maxSpread * Math.log(1 + t * 9) / Math.log(10);
-    longPts.push(Math.min(0.98, spotPts[i] + spread));
-    shortPts.push(Math.max(0.02, spotPts[i] - spread));
-  }
-  return { longPts, shortPts };
-}
-
 // ─── Normalize real price data to 0–1 ───────────────────────────────────────
 
 function normalizePrices(
@@ -98,14 +57,12 @@ function normalizePrices(
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function PoolPriceChart({
-  poolAddress,
   priceData,
   highlightLine,
   spotLabel,
   longLabel,
   shortLabel,
 }: {
-  poolAddress: string;
   priceData?: { spot: bigint; long: bigint; short: bigint }[];
   highlightLine?: "long" | "short" | null;
   spotLabel?: string;
@@ -125,12 +82,14 @@ export default function PoolPriceChart({
 
   const hasReal = priceData && priceData.length >= 2;
 
-  const { spotPts, longPts, shortPts } = useMemo(() => {
-    if (hasReal) return normalizePrices(priceData!, N);
-    const fakeSpot = generateFakePath(poolAddress, N);
-    const { longPts, shortPts } = deriveFakeLines(fakeSpot, poolAddress);
-    return { spotPts: fakeSpot, longPts, shortPts };
-  }, [hasReal, priceData, poolAddress]);
+  // No synthetic fallback: an invented price path on a trading screen is
+  // indistinguishable from a real one. With no history we draw no lines.
+  const { spotPts, longPts, shortPts } = useMemo(
+    () => (hasReal
+      ? normalizePrices(priceData!, N)
+      : { spotPts: [], longPts: [], shortPts: [] }),
+    [hasReal, priceData, N],
+  );
 
   // Map normalized [0,1] to SVG coords: x = time (left→right), y = price (bottom→top)
   const toSvg = (pts: number[]) =>
@@ -181,6 +140,54 @@ export default function PoolPriceChart({
   const shortHi = highlightLine === "short";
   const longPulse  = !highlightLine || highlightLine === "long";
   const shortPulse = !highlightLine || highlightLine === "short";
+
+  // Grid + live labels only — nothing is drawn where no history exists. The
+  // prices themselves come from contract reads, so they stay meaningful; only
+  // their position on the chart would have to be invented, so it isn't.
+  if (!hasReal) {
+    const lx = W - PAD_R + 16;
+    const rows = [
+      { key: "long", color: "#00ff88", label: "LONG", price: longLabel },
+      { key: "spot", color: "#aaaaaa", label: "SPOT", price: spotLabel },
+      { key: "short", color: "#ff3b30", label: "SHORT", price: shortLabel },
+    ];
+    return (
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block" }}
+        preserveAspectRatio="xMidYMid meet"
+      >
+        {[0.25, 0.5, 0.75].map((f) => {
+          const y = PAD_T + (1 - f) * (H - PAD_T - PAD_B);
+          return <line key={f} x1={PAD_L} y1={y} x2={W - PAD_R} y2={y}
+            stroke="rgba(255,255,255,0.04)" strokeWidth="1" />;
+        })}
+
+        {rows.map((r, i) => {
+          const y = PAD_T + 34 + i * 34;
+          return (
+            <g key={r.key}>
+              <text x={lx} y={y - 3} textAnchor="start"
+                fill={r.color} fontSize="8" fontFamily="var(--font-mono)"
+                fontWeight="600" opacity="0.6">
+                {r.label}
+              </text>
+              <text x={lx} y={y + 9} textAnchor="start"
+                fill={r.color} fontSize="11" fontFamily="var(--font-mono)" fontWeight="700">
+                {r.price ?? "—"}
+              </text>
+            </g>
+          );
+        })}
+
+        <text x={(PAD_L + (W - PAD_R)) / 2} y={H / 2} textAnchor="middle"
+          fill="rgba(255,255,255,0.25)" fontSize="10"
+          fontFamily="var(--font-mono)" letterSpacing="2">
+          NO PRICE HISTORY YET
+        </text>
+      </svg>
+    );
+  }
 
   return (
     <svg

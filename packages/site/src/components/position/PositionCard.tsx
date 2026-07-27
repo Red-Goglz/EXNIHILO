@@ -1,27 +1,13 @@
-import { useState, useEffect, useRef } from "react";
-import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContracts } from "wagmi";
-import { useQueryClient } from "@tanstack/react-query";
-import { useFormo } from "@formo/analytics";
-import { exnihiloPoolAbi, exnihiloRouterAbi, erc20Abi } from "@exnihilio/abis";
-import { formatUsdc, formatToken } from "../../lib/format.ts";
-import { cpAmountOut } from "../../lib/amm.ts";
-import { useRouterApproval } from "../../hooks/useRouterApproval.ts";
+import { useState, useEffect } from "react";
+import { formatUsdc, formatToken, formatDuration } from "../../lib/format.ts";
+import {
+  usePositionState,
+  parseUsdcInput,
+  fmtCountdown,
+  type Position,
+} from "../../hooks/usePositionState.ts";
 import TxButton from "../shared/TxButton.tsx";
-
-interface Position {
-  isLong: boolean;
-  pool: `0x${string}`;
-  lockedToken: `0x${string}`;
-  lockedAmount: bigint;
-  usdcIn: bigint;
-  airUsdMinted: bigint;
-  airTokenMinted: bigint;
-  feesPaid: bigint;
-  openedAt: bigint;
-  deadline: bigint;
-}
-
-const CLOSE_FEE_BPS = 100n; // 1% of surplus on profitable close — must match pool
+import PnlCardModal from "./PnlCardModal.tsx";
 
 interface PositionCardProps {
   tokenId: bigint;
@@ -52,7 +38,7 @@ function WithTooltip({ tip, children }: { tip: string; children: React.ReactNode
             zIndex: 50,
             whiteSpace: "nowrap",
             fontFamily: "var(--font-mono)",
-            fontSize: "0.6rem",
+            fontSize: "var(--fs-label)",
             color: "var(--muted)",
             letterSpacing: "0.04em",
             boxShadow: "0 4px 24px rgba(0,0,0,0.6)",
@@ -68,295 +54,37 @@ function WithTooltip({ tip, children }: { tip: string; children: React.ReactNode
   );
 }
 
-/** Format seconds remaining as "Xd Xh Xm Xs" */
-function fmtCountdown(seconds: number): string {
-  if (seconds <= 0) return "EXPIRED";
-  const d = Math.floor(seconds / 86400);
-  const h = Math.floor((seconds % 86400) / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  if (d > 0) return `${d}d ${h}h ${m}m`;
-  if (h > 0) return `${h}h ${m}m ${s}s`;
-  return `${m}m ${s}s`;
-}
-
 export default function PositionCard({
   tokenId,
   position,
+  positionNFTAddress,
   underlyingUsdc,
 }: PositionCardProps) {
-  const { address } = useAccount();
-  const queryClient = useQueryClient();
-  const analytics = useFormo();
+  const st = usePositionState(tokenId, position, positionNFTAddress, underlyingUsdc);
 
-  const poolContract = { address: position.pool, abi: exnihiloPoolAbi } as const;
+  const [armPanelOpen, setArmPanelOpen] = useState(false);
+  const [pnlCardOpen, setPnlCardOpen] = useState(false);
 
-  const { data } = useReadContracts({
-    contracts: [
-      { ...poolContract, functionName: "backedAirToken" },
-      { ...poolContract, functionName: "backedAirUsd" },
-      { ...poolContract, functionName: "airToken" },
-      { ...poolContract, functionName: "airUsdToken" },
-      { ...poolContract, functionName: "underlyingToken" },
-      { ...poolContract, functionName: "swapFeeBps" },
-      { ...poolContract, functionName: "closeDate" },
-      { ...poolContract, functionName: "positionDuration" },
-    ],
-  });
-
-  const backedAirToken     = data?.[0]?.result as bigint | undefined;
-  const backedAirUsd      = data?.[1]?.result as bigint | undefined;
-  const airTokenAddress    = data?.[2]?.result as `0x${string}` | undefined;
-  const airUsdAddress     = data?.[3]?.result as `0x${string}` | undefined;
-  const underlyingToken    = data?.[4]?.result as `0x${string}` | undefined;
-  const swapFeeBps         = data?.[5]?.result as bigint | undefined;
-  const poolCloseDate      = data?.[6]?.result as bigint | undefined;
-  const poolPositionDuration = data?.[7]?.result as bigint | undefined;
-  const isMarketClosed     = poolCloseDate !== undefined && poolCloseDate > 0n;
-  // Show the moment closePool was called, not the future wind-down date.
-  const marketClosedAt =
-    isMarketClosed && poolPositionDuration !== undefined
-      ? poolCloseDate! - poolPositionDuration
-      : undefined;
-
-  const { data: tokenMeta } = useReadContracts({
-    contracts: underlyingToken
-      ? [{ address: underlyingToken, abi: erc20Abi, functionName: "symbol" }]
-      : [],
-    query: { enabled: !!underlyingToken },
-  });
-
-  const tokenSymbol = (tokenMeta?.[0]?.result as string | undefined) ?? "...";
-
-  const { data: supplyData } = useReadContracts({
-    contracts: airTokenAddress && airUsdAddress ? [
-      { address: airTokenAddress, abi: erc20Abi, functionName: "totalSupply" as const },
-      { address: airUsdAddress,  abi: erc20Abi, functionName: "totalSupply" as const },
-    ] : [],
-    query: { enabled: !!airTokenAddress && !!airUsdAddress },
-  });
-
-  const airTokenTotalSupply = supplyData?.[0]?.result as bigint | undefined;
-  const airUsdTotalSupply  = supplyData?.[1]?.result as bigint | undefined;
-
-  // Compute renewal fee client-side (5% of notional)
-  const notional = position.isLong ? position.airUsdMinted : position.usdcIn;
-  const renewalFee = (() => {
-    const fee = (notional * 500n) / 10_000n; // 5% base
-    return fee < 50_000n ? 50_000n : fee; // min 0.05 USDC
-  })();
-
-  // ── Router approval for renew (reuse existing USDC→router approval) ─────
-  const { routerAddress, routerAllowance } = useRouterApproval(underlyingUsdc);
-  const useRouter = !!routerAddress && routerAllowance !== undefined && routerAllowance >= renewalFee;
-
-  // ── Direct pool USDC allowance (fallback if no router approval) ────────
-  const { data: allowanceData } = useReadContracts({
-    contracts: address ? [{
-      address: underlyingUsdc,
-      abi: erc20Abi,
-      functionName: "allowance" as const,
-      args: [address, position.pool] as const,
-    }] : [],
-    query: { enabled: !!address && !useRouter },
-  });
-  const usdcAllowance = allowanceData?.[0]?.result as bigint | undefined;
-  const needsRenewApproval = !useRouter && usdcAllowance !== undefined && renewalFee > usdcAllowance;
-
-  const { writeContract: writeApprove, data: approveHash, isPending: approvePending } = useWriteContract();
-  const { isLoading: approveConfirming, isSuccess: approveSuccess } = useWaitForTransactionReceipt({ hash: approveHash });
-
-  const approveStatus = approvePending ? "pending" : approveConfirming ? "confirming" : approveSuccess ? "success" : "idle";
+  // Extending pulls the fee via allowance, so an approval may be needed first.
+  const needsApprovalFirst = st.needsRenewApproval && !st.approveSuccess;
+  // Suggested cap: 2× the current quote — headroom for profit growth and OI
+  // crowding without authorizing a runaway fee.
+  const [capInput, setCapInput] = useState<string>("");
+  const capValue = capInput === "" ? st.suggestedCap : parseUsdcInput(capInput);
+  const capBelowFee = capValue !== null && capValue < st.renewalFee;
 
   useEffect(() => {
-    if (approveSuccess) queryClient.invalidateQueries();
-  }, [approveSuccess, queryClient]);
-
-  // ── Close / Realize tx state ────────────────────────────────────────────
-  const { writeContract, data: txHash, isPending } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
-  const lastActionRef = useRef<"close" | "realize" | null>(null);
-
-  const txStatus = isPending
-    ? "pending"
-    : isConfirming
-    ? "confirming"
-    : isSuccess
-    ? "success"
-    : "idle";
-
-  // ── Renew tx state ──────────────────────────────────────────────────────
-  const { writeContract: writeRenew, data: renewHash, isPending: renewPending } = useWriteContract();
-  const { isLoading: renewConfirming, isSuccess: renewSuccess } = useWaitForTransactionReceipt({ hash: renewHash });
-
-  const renewStatus = renewPending
-    ? "pending"
-    : renewConfirming
-    ? "confirming"
-    : renewSuccess
-    ? "success"
-    : "idle";
-
-  // Refetch position data once tx is actually mined (not just submitted)
-  useEffect(() => {
-    if (isSuccess) {
-      queryClient.invalidateQueries();
-      // Volume = notional minted at open, in USD (both airUsdMinted and lockedAmount for shorts are 6-dec USDC-scale)
-      const notionalRaw = position.isLong ? position.airUsdMinted : position.lockedAmount;
-      // Revenue = 1% of surplus on profitable close; 0 on realize or losing close
-      let protocolFeeRaw = 0n;
-      if (lastActionRef.current === "close" && poolDataReady) {
-        if (position.isLong && airTokenTotalSupply! > position.lockedAmount) {
-          const airUsdOut = cpAmountOut(
-            position.lockedAmount,
-            airTokenTotalSupply! - position.lockedAmount,
-            backedAirUsd!,
-            swapFeeBps!,
-          );
-          if (airUsdOut > position.airUsdMinted) {
-            const surplus = airUsdOut - position.airUsdMinted;
-            protocolFeeRaw = (surplus * CLOSE_FEE_BPS) / 10_000n;
-          }
-        } else if (!position.isLong && airUsdTotalSupply! > position.lockedAmount) {
-          const totalBuyable = cpAmountOut(
-            position.lockedAmount,
-            airUsdTotalSupply! - position.lockedAmount,
-            backedAirToken!,
-            swapFeeBps!,
-          );
-          if (totalBuyable > 0n && totalBuyable >= position.airTokenMinted) {
-            const airUsdCost =
-              (position.lockedAmount * position.airTokenMinted + totalBuyable - 1n) / totalBuyable;
-            if (position.lockedAmount > airUsdCost) {
-              const surplus = position.lockedAmount - airUsdCost;
-              protocolFeeRaw = (surplus * CLOSE_FEE_BPS) / 10_000n;
-            }
-          }
-        }
-      }
-      analytics?.track("Position Closed or Realized", {
-        pool: position.pool,
-        tokenId: tokenId.toString(),
-        side: position.isLong ? "long" : "short",
-        action: lastActionRef.current ?? "unknown",
-        volume: Number(notionalRaw) / 1_000_000,
-        revenue: Number(protocolFeeRaw) / 1_000_000,
-      });
+    if (st.autoRenewSuccess) {
+      setArmPanelOpen(false);
+      setCapInput("");
     }
-  }, [isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (renewSuccess) {
-      queryClient.invalidateQueries();
-      analytics?.track("Position Renewed", {
-        pool: position.pool,
-        tokenId: tokenId.toString(),
-        side: position.isLong ? "long" : "short",
-      });
-    }
-  }, [renewSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ── Countdown timer ─────────────────────────────────────────────────────
-  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
-
-  useEffect(() => {
-    const interval = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const deadlineNum = Number(position.deadline);
-  const secondsLeft = deadlineNum - now;
-  const isExpired = secondsLeft <= 0;
-  const isUrgent = secondsLeft > 0 && secondsLeft < 3600; // <1h
-
-  // ── PnL & close-eligibility ─────────────────────────────────────────────
-  // PnL is net of the 1% close fee on profit. Percent is PnL over usdcIn
-  // (principal), so a total loss shows as -100% rather than a runaway ratio.
-  let pnlDisplay = "";
-  let pnlPositive = false;
-  let pnlNetAbs = 0n;
-  let canClose = false;
-
-  const poolDataReady =
-    backedAirToken !== undefined &&
-    backedAirUsd  !== undefined &&
-    airTokenTotalSupply !== undefined &&
-    airUsdTotalSupply  !== undefined &&
-    swapFeeBps !== undefined;
-
-  if (poolDataReady) {
-    if (position.isLong) {
-      // Mirrors EXNIHILOPool.closeLong: SWAP-3 with (airTokenSupply - lockedAmount, backedAirUsd).
-      if (airTokenTotalSupply! > position.lockedAmount) {
-        const airUsdOut = cpAmountOut(
-          position.lockedAmount,
-          airTokenTotalSupply! - position.lockedAmount,
-          backedAirUsd!,
-          swapFeeBps!,
-        );
-        canClose    = airUsdOut >= position.airUsdMinted;
-        pnlPositive = airUsdOut > position.airUsdMinted;
-        if (pnlPositive) {
-          const surplus = airUsdOut - position.airUsdMinted;
-          pnlNetAbs  = (surplus * (10_000n - CLOSE_FEE_BPS)) / 10_000n;
-          pnlDisplay = `+$${formatUsdc(pnlNetAbs)}`;
-        } else {
-          pnlNetAbs  = position.airUsdMinted - airUsdOut;
-          pnlDisplay = `-$${formatUsdc(pnlNetAbs)}`;
-        }
-      }
-    } else {
-      // Mirrors EXNIHILOPool.closeShort: SWAP-2 with (airUsdSupply - lockedAmount, backedAirToken),
-      // then proportional ceil-division to get airUsdCost for the debt. We also
-      // display PnL when underwater (totalBuyable < airTokenMinted) so the user
-      // still sees their unrealized loss — only canClose is gated on solvency.
-      if (airUsdTotalSupply! > position.lockedAmount) {
-        const totalBuyable = cpAmountOut(
-          position.lockedAmount,
-          airUsdTotalSupply! - position.lockedAmount,
-          backedAirToken!,
-          swapFeeBps!,
-        );
-        if (totalBuyable > 0n) {
-          const airUsdCost =
-            (position.lockedAmount * position.airTokenMinted + totalBuyable - 1n) / totalBuyable;
-          canClose    = totalBuyable >= position.airTokenMinted && airUsdCost <= position.lockedAmount;
-          pnlPositive = position.lockedAmount > airUsdCost;
-          if (pnlPositive) {
-            const surplus = position.lockedAmount - airUsdCost;
-            pnlNetAbs  = (surplus * (10_000n - CLOSE_FEE_BPS)) / 10_000n;
-            pnlDisplay = `+$${formatUsdc(pnlNetAbs)}`;
-          } else {
-            pnlNetAbs  = airUsdCost - position.lockedAmount;
-            pnlDisplay = `-$${formatUsdc(pnlNetAbs)}`;
-          }
-        } else {
-          // Pool cannot quote any buyback — treat as max loss (full collateral).
-          pnlPositive = false;
-          pnlNetAbs   = position.lockedAmount;
-          pnlDisplay  = `-$${formatUsdc(pnlNetAbs)}`;
-        }
-      }
-    }
-  }
-
-  if (pnlDisplay && position.usdcIn > 0n) {
-    // Percent over principal (usdcIn). Clamp loss at -100% since the true
-    // max loss is the collateral — the proportional formula can overshoot
-    // when the short is deeply underwater.
-    let pct = Number((pnlNetAbs * 100n) / position.usdcIn);
-    if (!pnlPositive && pct > 100) pct = 100;
-    pnlDisplay = `${pnlDisplay} (${pnlPositive ? "+" : "-"}${pct}%)`;
-  }
-
-  const openedDate = new Date(Number(position.openedAt) * 1000).toLocaleDateString();
-  const deadlineDate = new Date(deadlineNum * 1000).toLocaleDateString();
+  }, [st.autoRenewSuccess]);
 
   return (
     <div
       style={{
         background: "var(--surface)",
-        border: `1px solid ${position.isLong ? "rgba(0,255,136,0.15)" : "rgba(255,59,48,0.15)"}`,
+        border: `1px solid ${position.isLong ? "rgba(0,255,136,0.15)" : "rgba(255,45,157,0.15)"}`,
         padding: "18px",
         position: "relative",
         display: "flex",
@@ -371,8 +99,8 @@ export default function PositionCard({
           position: "absolute",
           top: -1, left: -1,
           width: 8, height: 8,
-          borderTop: `1px solid ${position.isLong ? "var(--green)" : "var(--red)"}`,
-          borderLeft: `1px solid ${position.isLong ? "var(--green)" : "var(--red)"}`,
+          borderTop: `1px solid ${position.isLong ? "var(--green)" : "var(--magenta)"}`,
+          borderLeft: `1px solid ${position.isLong ? "var(--green)" : "var(--magenta)"}`,
           pointerEvents: "none",
         }}
       />
@@ -384,19 +112,88 @@ export default function PositionCard({
             {position.isLong ? "LONG" : "SHORT"}
           </span>
           <span style={{ fontSize: "0.78rem", color: "#fff", fontWeight: 600, letterSpacing: "0.04em" }}>
-            {tokenSymbol}
+            {st.tokenSymbol}
           </span>
-          <span style={{ fontSize: "0.6rem", color: "var(--dim)" }}>
+          <span style={{ fontSize: "var(--fs-label)", color: "var(--dim)" }}>
             #{tokenId.toString()}
           </span>
         </div>
-        <span style={{ fontSize: "0.6rem", color: "var(--muted)", letterSpacing: "0.05em" }}>
-          {openedDate}
+        <span style={{ fontSize: "var(--fs-label)", color: "var(--muted)", letterSpacing: "0.05em" }}>
+          {st.openedDate}
         </span>
       </div>
 
       {/* Divider */}
       <div style={{ height: 1, background: "var(--border)" }} />
+
+      {/* PnL hero — the number the trader came to see */}
+      {st.hasPnl && (
+        <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
+          <div>
+            <div className="stat-label">EST. PnL</div>
+            <div
+              style={{
+                fontSize: "1.2rem",
+                fontWeight: 700,
+                letterSpacing: "0.02em",
+                color: st.pnlPositive ? "var(--green)" : "var(--red)",
+                lineHeight: 1.2,
+              }}
+            >
+              {st.pnlPositive ? "+" : "−"}{formatUsdc(st.pnlNetAbs)}
+            </div>
+          </div>
+          {position.feesPaid > 0n && (
+            <div style={{ textAlign: "right" }}>
+              <div className="stat-label">RETURN ON FEES</div>
+              <div
+                style={{
+                  fontSize: "0.82rem",
+                  fontWeight: 600,
+                  color: st.pnlPositive ? "var(--green)" : "var(--red)",
+                }}
+              >
+                {st.pnlPositive ? "+" : "−"}
+                {((Number(st.pnlNetAbs) / Number(position.feesPaid)) * 100).toFixed(0)}%
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Shareable card — surfaces the position's own on-chain NFT art */}
+      <button
+        onClick={() => setPnlCardOpen(true)}
+        style={{
+          alignSelf: "flex-start",
+          background: "none",
+          border: "none",
+          padding: 0,
+          fontFamily: "var(--font-mono)",
+          fontSize: "var(--fs-nano)",
+          letterSpacing: "0.12em",
+          color: "var(--cyan)",
+          textDecoration: "underline",
+          textUnderlineOffset: 3,
+          cursor: "pointer",
+        }}
+      >
+        SHOW PNL CARD ↗
+      </button>
+
+      {pnlCardOpen && (
+        <PnlCardModal
+          tokenId={tokenId}
+          positionNFTAddress={positionNFTAddress}
+          tokenSymbol={st.tokenSymbol}
+          isLong={position.isLong}
+          feesPaidRaw={position.feesPaid}
+          hasPnl={st.hasPnl}
+          pnlPositive={st.pnlPositive}
+          pnlNetAbs={st.pnlNetAbs}
+          onClose={() => setPnlCardOpen(false)}
+        />
+      )}
 
       {/* Deadline / Timer */}
       <div
@@ -405,155 +202,219 @@ export default function PositionCard({
           alignItems: "center",
           justifyContent: "space-between",
           padding: "8px 10px",
-          background: isExpired
+          background: st.isExpired
             ? "rgba(255,59,48,0.08)"
-            : isUrgent
+            : st.isUrgent
             ? "rgba(255,140,0,0.08)"
             : "rgba(0,229,255,0.04)",
           border: `1px solid ${
-            isExpired ? "rgba(255,59,48,0.25)" : isUrgent ? "rgba(255,140,0,0.25)" : "rgba(0,229,255,0.1)"
+            st.isExpired ? "rgba(255,59,48,0.25)" : st.isUrgent ? "rgba(255,140,0,0.25)" : "rgba(0,229,255,0.1)"
           }`,
         }}
       >
         <div>
           <div
             style={{
-              fontSize: "0.5rem",
+              fontSize: "var(--fs-nano)",
               letterSpacing: "0.15em",
               color: "var(--muted)",
               marginBottom: 2,
             }}
           >
-            {isExpired ? "EXPIRED" : "EXPIRES"}
+            {st.isExpired ? "EXPIRED" : "EXPIRES"}
           </div>
           <div
             style={{
               fontSize: "0.72rem",
               fontWeight: 600,
-              color: isExpired ? "var(--red)" : isUrgent ? "var(--orange)" : "var(--cyan)",
+              color: st.isExpired ? "var(--red)" : st.isUrgent ? "var(--orange)" : "var(--cyan)",
               letterSpacing: "0.06em",
             }}
           >
-            {isExpired ? deadlineDate : fmtCountdown(secondsLeft)}
+            {st.isExpired ? st.deadlineDate : fmtCountdown(st.secondsLeft)}
           </div>
         </div>
 
         {/* Renew button — hidden when market is closed (contract rejects renewals past closeDate) */}
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
-          {isMarketClosed ? (
+          {st.isMarketClosed ? (
             <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: "0.5rem", letterSpacing: "0.15em", color: "var(--muted)" }}>
+              <div style={{ fontSize: "var(--fs-nano)", letterSpacing: "0.15em", color: "var(--muted)" }}>
                 MARKET CLOSED
               </div>
-              {marketClosedAt !== undefined && (
-                <div style={{ fontSize: "0.62rem", color: "var(--red)", letterSpacing: "0.04em", fontWeight: 600 }}>
-                  {new Date(Number(marketClosedAt) * 1000).toLocaleDateString()}
+              {st.marketClosedAt !== undefined && (
+                <div style={{ fontSize: "var(--fs-label)", color: "var(--red)", letterSpacing: "0.04em", fontWeight: 600 }}>
+                  {new Date(Number(st.marketClosedAt) * 1000).toLocaleDateString()}
                 </div>
               )}
-              <div style={{ fontSize: "0.52rem", color: "var(--dim)", letterSpacing: "0.04em", marginTop: 1 }}>
+              <div style={{ fontSize: "var(--fs-nano)", color: "var(--dim)", letterSpacing: "0.04em", marginTop: 1 }}>
                 renew unavailable
               </div>
             </div>
-          ) : needsRenewApproval && !approveSuccess ? (
-            <TxButton
-              idleLabel={`Approve USDC`}
-              status={approveStatus}
-              variant="default"
-              onClick={() =>
-                writeApprove({
-                  address: underlyingUsdc,
-                  abi: erc20Abi,
-                  functionName: "approve",
-                  args: [position.pool, renewalFee],
-                })
-              }
-              style={{ fontSize: "0.56rem", padding: "4px 10px" }}
-            />
           ) : (
-            <TxButton
-              idleLabel={`Renew ($${formatUsdc(renewalFee)})`}
-              status={renewStatus}
-              variant="default"
-              onClick={() => {
-                if (useRouter) {
-                  writeRenew({
-                    address: routerAddress!,
-                    abi: exnihiloRouterAbi,
-                    functionName: "renewPosition",
-                    args: [position.pool, tokenId, renewalFee],
-                  });
-                } else {
-                  writeRenew({
-                    address: position.pool,
-                    abi: exnihiloPoolAbi,
-                    functionName: "renewPosition",
-                    args: [tokenId],
-                  });
-                }
-              }}
-              style={{ fontSize: "0.56rem", padding: "4px 10px" }}
-            />
+            <>
+              {/* The button always reads "Extend …" so its purpose is clear.
+                  A bare "Approve USDC" gave no hint what it was for. Approval
+                  is a step inside the extend flow, taken only on click. */}
+              <TxButton
+                idleLabel={`Extend +${formatDuration(st.poolPositionDuration)} ($${formatUsdc(st.renewalFee)})`}
+                status={needsApprovalFirst ? st.approveStatus : st.renewStatus}
+                variant="default"
+                onClick={needsApprovalFirst ? st.approveRenewal : st.renew}
+                style={{ fontSize: "var(--fs-label)", padding: "4px 10px" }}
+              />
+              <span style={{ fontSize: "var(--fs-nano)", color: "var(--dim)", letterSpacing: "0.1em" }}>
+                {needsApprovalFirst
+                  ? "APPROVES USDC FIRST · THEN EXTEND"
+                  : "STACKS · DYNAMIC FEE · REPRICED LIVE"}
+              </span>
+            </>
           )}
         </div>
       </div>
 
-      {/* Data grid */}
-      <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-        {position.isLong && (
-          <>
+      {/* Auto-renew — keeper renews from position equity at expiry */}
+      {!st.isMarketClosed && (
+        <div
+          style={{
+            border: `1px solid ${st.autoRenewOn ? "rgba(0,229,255,0.2)" : "var(--border)"}`,
+            background: st.autoRenewOn ? "rgba(0,229,255,0.03)" : "transparent",
+            padding: "8px 10px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+            transition: "border-color 0.2s ease, background 0.2s ease",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div>
-              <div className="stat-label">USDC IN</div>
-              <div style={{ fontSize: "0.82rem", color: "var(--body)" }}>
-                {formatUsdc(position.usdcIn)}
+              <div style={{ fontSize: "var(--fs-nano)", letterSpacing: "0.15em", color: "var(--muted)", marginBottom: 2 }}>
+                AUTO-RENEW
               </div>
+              {st.autoRenewOn ? (
+                <div style={{ fontSize: "var(--fs-label)", color: "var(--cyan)", letterSpacing: "0.05em", fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                  <span className="pulse-dot" style={{ background: "var(--cyan)" }} />
+                  ARMED · CAP ${formatUsdc(st.autoRenewCap)}
+                </div>
+              ) : (
+                <div style={{ fontSize: "var(--fs-label)", color: "var(--muted)", letterSpacing: "0.05em" }}>
+                  OFF — settles at expiry
+                </div>
+              )}
             </div>
-            <div>
-              <div className="stat-label">LOCKED TOKEN</div>
-              <div style={{ fontSize: "0.82rem", color: "var(--body)" }}>
-                {formatToken(position.lockedAmount, 18)}
-              </div>
-            </div>
-            <div>
-              <div className="stat-label">DEBT (airUSD)</div>
-              <div style={{ fontSize: "0.82rem", color: "var(--body)" }}>
-                {formatUsdc(position.airUsdMinted)}
-              </div>
-            </div>
-          </>
-        )}
 
-        {!position.isLong && (
-          <>
-            <div>
-              <div className="stat-label">LOCKED USDC</div>
-              <div style={{ fontSize: "0.82rem", color: "var(--body)" }}>
-                {formatUsdc(position.lockedAmount)}
-              </div>
-            </div>
-            <div>
-              <div className="stat-label">DEBT (airTOKEN)</div>
-              <div style={{ fontSize: "0.82rem", color: "var(--body)" }}>
-                {formatToken(position.airTokenMinted, 18)}
-              </div>
-            </div>
-          </>
-        )}
-
-        {/* PnL */}
-        {pnlDisplay && (
-          <div>
-            <div className="stat-label">EST. PnL</div>
-            <div
+            {/* Terminal toggle */}
+            <button
+              onClick={() => {
+                if (st.autoRenewBusy) return;
+                if (st.autoRenewOn) st.disarmAutoRenew();
+                else setArmPanelOpen((v) => !v);
+              }}
+              disabled={st.autoRenewBusy}
+              aria-label={st.autoRenewOn ? "Disable auto-renew" : "Enable auto-renew"}
               style={{
-                fontSize: "0.82rem",
-                fontWeight: 600,
-                color: pnlPositive ? "var(--green)" : "var(--red)",
+                width: 36,
+                height: 18,
+                padding: 0,
+                background: "var(--bg)",
+                border: `1px solid ${st.autoRenewOn ? "var(--cyan)" : "var(--border-bright)"}`,
+                cursor: st.autoRenewBusy ? "wait" : "pointer",
+                position: "relative",
+                flexShrink: 0,
+                opacity: st.autoRenewBusy ? 0.6 : 1,
               }}
             >
-              {pnlDisplay}
-            </div>
+              <span
+                style={{
+                  position: "absolute",
+                  top: 2,
+                  left: 2,
+                  width: 12,
+                  height: 12,
+                  background: st.autoRenewOn ? "var(--cyan)" : "var(--muted)",
+                  boxShadow: st.autoRenewOn ? "0 0 8px rgba(0,229,255,0.6)" : "none",
+                  transform: st.autoRenewOn ? "translateX(18px)" : "translateX(0)",
+                  transition: "transform 0.18s ease, background 0.18s ease, box-shadow 0.18s ease",
+                }}
+              />
+            </button>
           </div>
-        )}
+
+          {/* Arm panel */}
+          {armPanelOpen && !st.autoRenewOn && (
+            <div style={{ borderTop: "1px solid var(--border)", paddingTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: "var(--fs-nano)", letterSpacing: "0.15em", color: "var(--muted)", marginBottom: 3 }}>
+                    FEE CAP (USDC)
+                  </div>
+                  <input
+                    value={capInput}
+                    onChange={(e) => setCapInput(e.target.value)}
+                    placeholder={formatUsdc(st.suggestedCap)}
+                    inputMode="decimal"
+                    style={{
+                      width: "100%",
+                      background: "var(--bg)",
+                      border: `1px solid ${capValue === null ? "var(--red)" : capBelowFee ? "var(--orange)" : "var(--border-bright)"}`,
+                      color: "var(--body)",
+                      fontFamily: "var(--font-mono)",
+                      fontSize: "var(--fs-body-s)",
+                      padding: "5px 8px",
+                      outline: "none",
+                      letterSpacing: "0.04em",
+                    }}
+                  />
+                </div>
+                <TxButton
+                  idleLabel="Arm"
+                  status={st.autoRenewStatus}
+                  variant="cyan"
+                  disabled={capValue === null}
+                  onClick={() => capValue !== null && st.armAutoRenew(capValue)}
+                  style={{ fontSize: "var(--fs-label)", padding: "5px 14px" }}
+                />
+              </div>
+              {capValue === null ? (
+                <span style={{ fontSize: "var(--fs-label)", color: "var(--red)", letterSpacing: "0.04em" }}>
+                  invalid amount
+                </span>
+              ) : capBelowFee ? (
+                <span style={{ fontSize: "var(--fs-label)", color: "var(--orange)", letterSpacing: "0.04em" }}>
+                  below the current fee (${formatUsdc(st.renewalFee)}) — the keeper would settle instead of renewing
+                </span>
+              ) : (
+                <span style={{ fontSize: "var(--fs-label)", color: "var(--muted)", letterSpacing: "0.04em", lineHeight: 1.6 }}>
+                  At expiry, anyone may renew this position for you. The fee + 0.05 keeper
+                  bounty are paid from the position's own profit — nothing leaves your
+                  wallet. If it can't pay, or the fee exceeds your cap, it settles instead.
+                  Cleared if the NFT is transferred.
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Data grid — SIZE / LOCKED / FEES for both sides. The synthetic debt
+          equals SIZE at open, so it only earns a row once auto-extends have
+          grown it (the fees written against the position's equity). */}
+      <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+        <div>
+          <div className="stat-label">SIZE</div>
+          <div style={{ fontSize: "0.82rem", color: "var(--body)" }}>
+            {formatUsdc(position.usdcIn)}
+          </div>
+        </div>
+
+        <div>
+          <div className="stat-label">{position.isLong ? "LOCKED TOKEN" : "LOCKED USDC"}</div>
+          <div style={{ fontSize: "0.82rem", color: "var(--body)" }}>
+            {position.isLong
+              ? formatToken(position.lockedAmount, 18)
+              : formatUsdc(position.lockedAmount)}
+          </div>
+        </div>
 
         <div>
           <div className="stat-label">FEES PAID</div>
@@ -561,10 +422,19 @@ export default function PositionCard({
             {formatUsdc(position.feesPaid)}
           </div>
         </div>
+
+        {position.isLong && position.airUsdMinted > position.usdcIn && (
+          <div title="Auto-extend fees are written against the position as extra debt — your break-even rises by this difference.">
+            <div className="stat-label">DEBT · AUTO-EXTENDS</div>
+            <div style={{ fontSize: "0.82rem", color: "var(--orange)" }}>
+              {formatUsdc(position.airUsdMinted)}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Pool address */}
-      <p style={{ fontSize: "0.58rem", color: "var(--muted)", letterSpacing: "0.03em" }}>
+      <p style={{ fontSize: "var(--fs-micro)", color: "var(--muted)", letterSpacing: "0.03em" }}>
         Pool: {position.pool.slice(0, 10)}...{position.pool.slice(-6)}
       </p>
 
@@ -573,43 +443,28 @@ export default function PositionCard({
         <WithTooltip tip="Close your position and receive USDC back.">
           <TxButton
             idleLabel={position.isLong ? "Close Long" : "Close Short"}
-            status={txStatus}
+            status={st.closeStatus}
             variant={position.isLong ? "red" : "green"}
-            onClick={() => {
-              lastActionRef.current = "close";
-              if (position.isLong) {
-                writeContract({ address: position.pool, abi: exnihiloPoolAbi, functionName: "closeLong", args: [tokenId, 0n] });
-              } else {
-                writeContract({ address: position.pool, abi: exnihiloPoolAbi, functionName: "closeShort", args: [tokenId, 0n] });
-              }
-            }}
-            disabled={!canClose}
-            style={{ width: "100%", justifyContent: "center", fontSize: "0.62rem" }}
-          />
-        </WithTooltip>
-
-        <WithTooltip tip="Pay the debt and receive the underlying locked tokens.">
-          <TxButton
-            idleLabel="Realize"
-            status={txStatus}
-            variant="default"
-            onClick={() => {
-              lastActionRef.current = "realize";
-              if (position.isLong) {
-                writeContract({ address: position.pool, abi: exnihiloPoolAbi, functionName: "realizeLong", args: [tokenId] });
-              } else {
-                writeContract({ address: position.pool, abi: exnihiloPoolAbi, functionName: "realizeShort", args: [tokenId] });
-              }
-            }}
-            style={{ width: "100%", justifyContent: "center", fontSize: "0.62rem" }}
+            onClick={st.close}
+            disabled={!st.canClose}
+            style={{ width: "100%", justifyContent: "center", fontSize: "var(--fs-label)" }}
           />
         </WithTooltip>
       </div>
 
       {/* Expired hint */}
-      {isExpired && (
-        <p style={{ fontSize: "0.58rem", color: "var(--red)", letterSpacing: "0.04em", marginTop: -6 }}>
-          EXPIRED -- position can be liquidated by anyone
+      {st.isExpired && (
+        <p
+          style={{
+            fontSize: "var(--fs-micro)",
+            color: st.autoRenewOn ? "var(--cyan)" : "var(--red)",
+            letterSpacing: "0.04em",
+            marginTop: -6,
+          }}
+        >
+          {st.autoRenewOn
+            ? "EXPIRED -- auto-renew armed: a keeper renews it from position profit (or settles if it can't pay)"
+            : "EXPIRED -- position can be settled by anyone"}
         </p>
       )}
     </div>

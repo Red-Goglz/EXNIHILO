@@ -12,10 +12,9 @@ import "./EXNIHILOPool.sol";
  */
 contract PoolDeployer {
     function deploy(
-        address airToken,
-        address airUsdToken,
         address tokenAddress,
         address usdc,
+        uint8   tokenDecimals,
         address positionNFT,
         address lpNftContract,
         uint256 lpNftId,
@@ -27,10 +26,9 @@ contract PoolDeployer {
         address factory
     ) external returns (address) {
         EXNIHILOPool pool = new EXNIHILOPool(
-            airToken,
-            airUsdToken,
             tokenAddress,
             usdc,
+            tokenDecimals,
             positionNFT,
             lpNftContract,
             lpNftId,

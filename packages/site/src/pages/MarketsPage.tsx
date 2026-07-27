@@ -1,25 +1,25 @@
 import { useState, useCallback } from "react";
-import { useChainId, useReadContract, useReadContracts } from "wagmi";
+import { useReadContract, useReadContracts } from "wagmi";
 import { exnihiloFactoryAbi } from "@exnihilio/abis";
-import { getAddresses } from "../contracts/addresses.ts";
+import { useAppChain } from "../hooks/useAppChain.ts";
 import PoolCard from "../components/pool/PoolCard.tsx";
 import type { PoolMeta } from "../components/pool/PoolCard.tsx";
 import { Link } from "react-router-dom";
 
-type SortCol = "market" | "spot" | "long" | "short" | "tvl" | "apr" | "positions" | "pctLong" | "pctShort" | "rating";
+type SortCol = "market" | "spot" | "long" | "short" | "tvl" | "apr" | "positions" | "pctLong" | "pctShort" | "oi";
 type SortDir = "asc" | "desc";
 
-const COLUMNS: { key: SortCol; label: string }[] = [
+const COLUMNS: { key: SortCol; label: string; tip?: string }[] = [
   { key: "market",    label: "MARKET" },
   { key: "spot",      label: "SPOT" },
-  { key: "long",      label: "LONG" },
-  { key: "short",     label: "SHORT" },
+  { key: "long",      label: "LONG",   tip: "Long entry price. The % is its gap vs spot — how far synthetic supply has bent the entry curve." },
+  { key: "short",     label: "SHORT",  tip: "Short entry price. The % is its gap vs spot — how far synthetic supply has bent the entry curve." },
   { key: "tvl",       label: "TOTAL TVL" },
   { key: "apr",       label: "APR (7D)" },
   { key: "positions", label: "POSITIONS" },
-  { key: "pctLong",   label: "% LONG" },
-  { key: "pctShort",  label: "% SHORT" },
-  { key: "rating",    label: "LIQUIDITY" },
+  { key: "pctLong",   label: "% LONG",  tip: "Long open interest as % of pool USDC — LP utilization, not sentiment." },
+  { key: "pctShort",  label: "% SHORT", tip: "Short open interest as % of pool USDC — LP utilization, not sentiment." },
+  { key: "oi",        label: "OPEN INTEREST", tip: "Combined open interest; the bar shows the long/short split." },
 ];
 
 function comparePools(a: PoolMeta | undefined, b: PoolMeta | undefined, col: SortCol, dir: SortDir): number {
@@ -38,7 +38,7 @@ function comparePools(a: PoolMeta | undefined, b: PoolMeta | undefined, col: Sor
     case "positions": cmp = a.positions - b.positions; break;
     case "pctLong":   cmp = a.pctLong - b.pctLong; break;
     case "pctShort":  cmp = a.pctShort - b.pctShort; break;
-    case "rating":    cmp = a.rating - b.rating; break;
+    case "oi":        cmp = a.oiRaw < b.oiRaw ? -1 : a.oiRaw > b.oiRaw ? 1 : 0; break;
   }
   return dir === "desc" ? -cmp : cmp;
 }
@@ -48,11 +48,10 @@ export default function MarketsPage() {
 }
 
 function MarketsContent() {
-  const chainId = useChainId();
-  const addresses = getAddresses(chainId);
+  const { chainId, addresses, path } = useAppChain();
 
   const [search, setSearch] = useState("");
-  const [sortCol, setSortCol] = useState<SortCol>("rating");
+  const [sortCol, setSortCol] = useState<SortCol>("tvl");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [poolMeta, setPoolMeta] = useState<Record<string, PoolMeta>>({});
 
@@ -62,7 +61,7 @@ function MarketsContent() {
       if (
         existing &&
         existing.symbol === meta.symbol &&
-        existing.rating === meta.rating &&
+        existing.oiRaw === meta.oiRaw &&
         existing.spotRaw === meta.spotRaw &&
         existing.tvlRaw === meta.tvlRaw &&
         existing.positions === meta.positions
@@ -83,6 +82,7 @@ function MarketsContent() {
   const factoryContract = {
     address: addresses.factory,
     abi: exnihiloFactoryAbi,
+    chainId,
   } as const;
 
   const { data: poolLength, isLoading: lengthLoading } = useReadContract({
@@ -148,7 +148,7 @@ function MarketsContent() {
         <p
           style={{
             fontFamily: "var(--font-mono)",
-            fontSize: "0.65rem",
+            fontSize: "var(--fs-body-s)",
             letterSpacing: "0.1em",
             color: "var(--muted)",
             maxWidth: 480,
@@ -161,7 +161,7 @@ function MarketsContent() {
         <p
           style={{
             fontFamily: "var(--font-mono)",
-            fontSize: "0.62rem",
+            fontSize: "var(--fs-label)",
             letterSpacing: "0.18em",
             color: "var(--red)",
           }}
@@ -180,7 +180,7 @@ function MarketsContent() {
         />
 
         <Link
-          to="/app/create"
+          to={path("create")}
           className="btn-terminal btn-cyan"
           style={{ fontSize: "0.7rem", padding: "10px 28px" }}
         >
@@ -210,7 +210,7 @@ function MarketsContent() {
             <p
               style={{
                 fontFamily: "var(--font-mono)",
-                fontSize: "0.62rem",
+                fontSize: "var(--fs-label)",
                 color: "var(--muted)",
                 letterSpacing: "0.1em",
                 marginTop: 4,
@@ -222,9 +222,9 @@ function MarketsContent() {
         </div>
 
         <Link
-          to="/app/create"
+          to={path("create")}
           className="btn-terminal btn-cyan"
-          style={{ fontSize: "0.65rem" }}
+          style={{ fontSize: "var(--fs-body-s)" }}
         >
           + CREATE
         </Link>
@@ -241,7 +241,7 @@ function MarketsContent() {
                 top: "50%",
                 transform: "translateY(-50%)",
                 fontFamily: "var(--font-mono)",
-                fontSize: "0.65rem",
+                fontSize: "var(--fs-body-s)",
                 color: "var(--dim)",
                 pointerEvents: "none",
               }}
@@ -257,7 +257,7 @@ function MarketsContent() {
               style={{
                 width: "100%",
                 paddingLeft: 28,
-                fontSize: "0.65rem",
+                fontSize: "var(--fs-body-s)",
                 letterSpacing: "0.08em",
               }}
             />
@@ -287,12 +287,13 @@ function MarketsContent() {
           <table className="markets-table">
             <thead>
               <tr>
-                {COLUMNS.map(({ key, label }) => {
+                {COLUMNS.map(({ key, label, tip }) => {
                   const active = sortCol === key;
                   return (
                     <th
                       key={key}
                       onClick={() => handleSort(key)}
+                      title={tip}
                       style={{
                         cursor: "pointer",
                         userSelect: "none",
@@ -325,7 +326,7 @@ function MarketsContent() {
         <p
           style={{
             fontFamily: "var(--font-mono)",
-            fontSize: "0.65rem",
+            fontSize: "var(--fs-body-s)",
             color: "var(--muted)",
             letterSpacing: "0.1em",
             padding: "32px 0",

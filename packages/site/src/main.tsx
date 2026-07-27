@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { createBrowserRouter, RouterProvider } from "react-router-dom";
+import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 import "./index.css";
 import { WagmiProvider } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -14,21 +14,38 @@ import PoolPage from "./pages/PoolPage.tsx";
 import PortfolioPage from "./pages/PortfolioPage.tsx";
 import CreatePage from "./pages/CreatePage.tsx";
 import AnalyticsPage from "./pages/AnalyticsPage.tsx";
+import ChainRoute, { RedirectToFeed } from "./components/routing/ChainRoute.tsx";
+import { appPath, DEFAULT_CHAIN } from "./lib/chains.ts";
 
 const queryClient = new QueryClient();
 
+// All app routes are chain-scoped: /app/:chainSlug/... — the URL segment
+// (not the wallet) decides which chain's contracts the page reads.
+// Legacy chainless URLs (/app/markets/0xabc) redirect to the default chain.
 const router = createBrowserRouter([
   { path: "/", element: <LandingPage /> },
   {
     path: "/app",
-    element: <Layout />,
     children: [
-      { index: true, element: <FeedPage /> },
-      { path: "markets", element: <MarketsPage /> },
-      { path: "markets/:poolAddr", element: <PoolPage /> },
-      { path: "portfolio", element: <PortfolioPage /> },
-      { path: "create", element: <CreatePage /> },
-      { path: "analytics", element: <AnalyticsPage /> },
+      { index: true, element: <Navigate to={appPath(DEFAULT_CHAIN.slug)} replace /> },
+      {
+        path: ":chainSlug",
+        element: <ChainRoute />,
+        children: [
+          {
+            element: <Layout />,
+            children: [
+              { index: true, element: <FeedPage /> },
+              { path: "markets", element: <MarketsPage /> },
+              { path: "markets/:poolAddr", element: <PoolPage /> },
+              { path: "portfolio", element: <PortfolioPage /> },
+              { path: "create", element: <CreatePage /> },
+              { path: "analytics", element: <AnalyticsPage /> },
+              { path: "*", element: <RedirectToFeed /> },
+            ],
+          },
+        ],
+      },
     ],
   },
 ]);

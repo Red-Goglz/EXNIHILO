@@ -1,9 +1,11 @@
 import { useState, useEffect } from "react";
-import { useAccount, useReadContracts, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { useAccount, useReadContracts } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
 import { useFormo } from "@formo/analytics";
 import { exnihiloPoolAbi, lpNFTAbi, erc20Abi } from "@exnihilio/abis";
 import { parseUnits, formatUsdc, formatToken } from "../../lib/format.ts";
+import { useTx } from "../../hooks/useTx.ts";
+import { useAppChain } from "../../hooks/useAppChain.ts";
 import TokenInput from "../shared/TokenInput.tsx";
 import TxButton from "../shared/TxButton.tsx";
 
@@ -25,6 +27,7 @@ export default function LpPanel({
   tokenDecimals,
 }: LpPanelProps) {
   const { address } = useAccount();
+  const { chainId } = useAppChain();
   const queryClient = useQueryClient();
   const analytics = useFormo();
 
@@ -32,8 +35,9 @@ export default function LpPanel({
   const [usdcInput, setUsdcInput] = useState("");
   const [capsUsdInput, setCapsUsdInput] = useState("");
   const [capsBpsInput, setCapsBpsInput] = useState("");
+  const [claimAddrInput, setClaimAddrInput] = useState("");
 
-  const poolContract = { address: poolAddress, abi: exnihiloPoolAbi } as const;
+  const poolContract = { address: poolAddress, abi: exnihiloPoolAbi, chainId } as const;
 
   const { data } = useReadContracts({
     contracts: [
@@ -46,23 +50,25 @@ export default function LpPanel({
       { ...poolContract, functionName: "maxPositionBps" },
       { ...poolContract, functionName: "closeDate" },
       { ...poolContract, functionName: "positionDuration" },
+      { ...poolContract, functionName: "lpFeesPaidTotal" },
     ],
   });
 
   const lpNftId = data?.[0]?.result as bigint | undefined;
   const backedAirToken = data?.[1]?.result as bigint | undefined;
   const backedAirUsd = data?.[2]?.result as bigint | undefined;
-  const lpFees = data?.[3]?.result as bigint | undefined;
+  const lpFeesClaimable = data?.[3]?.result as bigint | undefined;
   const openPositionCount = data?.[4]?.result as bigint | undefined;
   const currentMaxUsd = data?.[5]?.result as bigint | undefined;
   const currentMaxBps = data?.[6]?.result as bigint | undefined;
   const closeDate = data?.[7]?.result as bigint | undefined;
   const positionDuration = data?.[8]?.result as bigint | undefined;
+  const lpFeesPaidTotal = data?.[9]?.result as bigint | undefined;
 
   const { data: lpOwner } = useReadContracts({
     contracts:
       lpNftId !== undefined
-        ? [{ address: lpNftAddress, abi: lpNFTAbi, functionName: "ownerOf", args: [lpNftId] }]
+        ? [{ address: lpNftAddress, abi: lpNFTAbi, functionName: "ownerOf", args: [lpNftId], chainId }]
         : [],
     query: { enabled: lpNftId !== undefined },
   });
@@ -81,12 +87,14 @@ export default function LpPanel({
             abi: erc20Abi,
             functionName: "allowance",
             args: [address, poolAddress],
+            chainId,
           },
           {
             address: underlyingUsdc,
             abi: erc20Abi,
             functionName: "allowance",
             args: [address, poolAddress],
+            chainId,
           },
         ]
       : [],
@@ -100,29 +108,23 @@ export default function LpPanel({
 
   const hasOpenPositions = openPositionCount !== undefined && openPositionCount > 0n;
 
-  const { writeContract, data: txHash, isPending } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash: txHash });
+  const { writeContract, status: txStatus, isSuccess } = useTx("LP TRANSACTION");
 
-  const { writeContract: writeCaps, data: capsHash, isPending: capsPending } = useWriteContract();
-  const { isLoading: capsConfirming, isSuccess: capsSuccess } = useWaitForTransactionReceipt({ hash: capsHash });
+  const {
+    writeContract: writeCaps,
+    status: capsStatus,
+    isSuccess: capsSuccess,
+  } = useTx("CAPS UPDATE");
 
-  const txStatus = isPending
-    ? "pending"
-    : isConfirming
-    ? "confirming"
-    : isSuccess
-    ? "success"
-    : "idle";
-
-  const capsStatus = capsPending ? "pending" : capsConfirming ? "confirming" : capsSuccess ? "success" : "idle";
-
-  const { writeContract: writeClose, data: closeHash, isPending: closePending } = useWriteContract();
-  const { isLoading: closeConfirming, isSuccess: closeSuccess } = useWaitForTransactionReceipt({ hash: closeHash });
-  const closeStatus = closePending ? "pending" : closeConfirming ? "confirming" : closeSuccess ? "success" : "idle";
+  const {
+    writeContract: writeClose,
+    status: closeStatus,
+    isSuccess: closeSuccess,
+  } = useTx("MARKET CLOSE");
 
   useEffect(() => {
-    if (closeSuccess) queryClient.invalidateQueries();
-  }, [closeSuccess, queryClient]);
+    if (isSuccess || capsSuccess || closeSuccess) queryClient.invalidateQueries();
+  }, [isSuccess, capsSuccess, closeSuccess, queryClient]);
 
   const isPoolClosing = closeDate !== undefined && closeDate > 0n;
   const positionDurationHours = positionDuration !== undefined ? Number(positionDuration) / 3600 : 168;
@@ -160,14 +162,14 @@ export default function LpPanel({
           padding: "32px 0",
           textAlign: "center",
           fontFamily: "var(--font-mono)",
-          fontSize: "0.65rem",
+          fontSize: "var(--fs-body-s)",
           color: "var(--muted)",
           letterSpacing: "0.1em",
         }}
       >
         — LP NFT NOT IN THIS WALLET —
         <br />
-        <span style={{ fontSize: "0.6rem", color: "var(--dim)" }}>
+        <span style={{ fontSize: "var(--fs-label)", color: "var(--dim)" }}>
           Only the LP NFT holder can manage liquidity
         </span>
       </div>
@@ -182,7 +184,7 @@ export default function LpPanel({
           <div className="stat-label">BACKED TOKEN</div>
           <div style={{ fontSize: "0.75rem", color: "var(--body)" }}>
             {backedAirToken !== undefined ? formatToken(backedAirToken, tokenDecimals) : "—"}
-            <span style={{ color: "var(--muted)", marginLeft: 4, fontSize: "0.65rem" }}>
+            <span style={{ color: "var(--muted)", marginLeft: 4, fontSize: "var(--fs-body-s)" }}>
               {tokenSymbol}
             </span>
           </div>
@@ -194,9 +196,12 @@ export default function LpPanel({
           </div>
         </div>
         <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", padding: "10px 12px" }}>
-          <div className="stat-label">LP FEES</div>
+          <div className="stat-label">FEES CLAIMED</div>
           <div style={{ fontSize: "0.75rem", color: "var(--green)", fontWeight: 600 }}>
-            ${lpFees !== undefined ? formatUsdc(lpFees) : "—"}
+            ${lpFeesPaidTotal !== undefined ? formatUsdc(lpFeesPaidTotal) : "—"}
+          </div>
+          <div style={{ fontSize: "var(--fs-micro)", color: "var(--muted)", fontFamily: "var(--font-mono)", letterSpacing: "0.05em" }}>
+            lifetime total
           </div>
         </div>
       </div>
@@ -209,7 +214,7 @@ export default function LpPanel({
             border: `1px solid ${isPoolClosing ? "rgba(255,140,0,0.25)" : "rgba(255,59,48,0.25)"}`,
             padding: "12px 14px",
             fontFamily: "var(--font-mono)",
-            fontSize: "0.62rem",
+            fontSize: "var(--fs-label)",
             color: isPoolClosing ? "var(--orange)" : "var(--red)",
             letterSpacing: "0.04em",
             display: "flex",
@@ -223,14 +228,14 @@ export default function LpPanel({
               : `◉ ${openPositionCount?.toString()} open position(s) — cannot remove liquidity`}
           </div>
           {!isPoolClosing && (
-            <div style={{ color: "var(--muted)", fontSize: "0.58rem", lineHeight: 1.5 }}>
+            <div style={{ color: "var(--muted)", fontSize: "var(--fs-micro)", lineHeight: 1.5 }}>
               Close the market to block new positions and prevent renewals.
               All existing positions will expire within {positionDurationDays} day{positionDurationDays !== 1 ? "s" : ""} ({positionDurationHours}h).
               After that you can withdraw all liquidity.
             </div>
           )}
           {isPoolClosing && (
-            <div style={{ color: "var(--muted)", fontSize: "0.58rem" }}>
+            <div style={{ color: "var(--muted)", fontSize: "var(--fs-micro)" }}>
               Closes {new Date(Number(closeDate!) * 1000).toLocaleString()} — positions cannot be renewed past this date.
             </div>
           )}
@@ -244,9 +249,10 @@ export default function LpPanel({
                   address: poolAddress,
                   abi: exnihiloPoolAbi,
                   functionName: "closePool",
+                  chainId,
                 })
               }
-              style={{ width: "100%", justifyContent: "center", fontSize: "0.6rem" }}
+              style={{ width: "100%", justifyContent: "center", fontSize: "var(--fs-label)" }}
             />
           )}
         </div>
@@ -265,7 +271,7 @@ export default function LpPanel({
         <div
           style={{
             fontFamily: "var(--font-mono)",
-            fontSize: "0.6rem",
+            fontSize: "var(--fs-label)",
             letterSpacing: "0.18em",
             color: "var(--muted)",
           }}
@@ -300,6 +306,7 @@ export default function LpPanel({
                   abi: erc20Abi,
                   functionName: "approve",
                   args: [poolAddress, tokenRaw],
+                  chainId,
                 });
               } else {
                 writeContract({
@@ -307,6 +314,7 @@ export default function LpPanel({
                   abi: erc20Abi,
                   functionName: "approve",
                   args: [poolAddress, usdcRaw],
+                  chainId,
                 });
               }
             }}
@@ -327,6 +335,7 @@ export default function LpPanel({
                   abi: exnihiloPoolAbi,
                   functionName: "addLiquidity",
                   args: [tokenRaw, usdcRaw],
+                  chainId,
                 },
                 { onSuccess: () => {
                   handleSuccess();
@@ -353,7 +362,7 @@ export default function LpPanel({
         <div
           style={{
             fontFamily: "var(--font-mono)",
-            fontSize: "0.6rem",
+            fontSize: "var(--fs-label)",
             letterSpacing: "0.18em",
             color: "var(--muted)",
           }}
@@ -365,13 +374,13 @@ export default function LpPanel({
             <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", padding: "8px 10px" }}>
               <div className="stat-label">YOU RECEIVE</div>
               <div style={{ fontSize: "0.75rem", color: "var(--body)" }}>
-                {formatToken(backedAirToken, tokenDecimals)} <span style={{ color: "var(--muted)", fontSize: "0.65rem" }}>{tokenSymbol}</span>
+                {formatToken(backedAirToken, tokenDecimals)} <span style={{ color: "var(--muted)", fontSize: "var(--fs-body-s)" }}>{tokenSymbol}</span>
               </div>
             </div>
             <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", padding: "8px 10px" }}>
               <div className="stat-label">YOU RECEIVE</div>
               <div style={{ fontSize: "0.75rem", color: "var(--body)" }}>
-                ${formatUsdc(backedAirUsd)} <span style={{ color: "var(--muted)", fontSize: "0.65rem" }}>USDC</span>
+                ${formatUsdc(backedAirUsd)} <span style={{ color: "var(--muted)", fontSize: "var(--fs-body-s)" }}>USDC</span>
               </div>
             </div>
           </div>
@@ -386,6 +395,7 @@ export default function LpPanel({
                 address: poolAddress,
                 abi: exnihiloPoolAbi,
                 functionName: "removeLiquidity",
+                chainId,
               },
               { onSuccess: () => {
                 handleSuccess();
@@ -398,27 +408,83 @@ export default function LpPanel({
         />
       </div>
 
-      {/* Claim fees */}
-      <TxButton
-        idleLabel={`Claim Fees${lpFees ? ` ($${formatUsdc(lpFees)})` : ""}`}
-        status={txStatus}
-        variant="default"
-        onClick={() =>
-          writeContract(
-            {
-              address: poolAddress,
-              abi: exnihiloPoolAbi,
-              functionName: "claimFees",
-            },
-            { onSuccess: () => {
-              handleSuccess();
-              analytics?.track("Fees Claimed", { pool: poolAddress, amount: lpFees?.toString() });
+      {/* Earned fees — fees accrue on every position open/renewal (pull
+          payment) and are withdrawn here. */}
+      {lpFeesClaimable !== undefined && lpFeesClaimable > 0n && (
+        <div
+          style={{
+            border: "1px solid rgba(0,255,136,0.25)",
+            background: "rgba(0,255,136,0.05)",
+            padding: "16px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 12,
+          }}
+        >
+          <div
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: "var(--fs-label)",
+              letterSpacing: "0.18em",
+              color: "var(--green)",
             }}
-          )
-        }
-        disabled={!lpFees || lpFees === 0n}
-        style={{ width: "100%", justifyContent: "center" }}
-      />
+          >
+            EARNED FEES — READY TO CLAIM
+          </div>
+          <div style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-label)", color: "var(--muted)", lineHeight: 1.5 }}>
+            ${formatUsdc(lpFeesClaimable)} USDC has accrued from position opens
+            and renewals. Claim it below — optionally to a different address if
+            this wallet cannot receive USDC.
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-label)", letterSpacing: "0.1em", color: "var(--muted)", minWidth: 80 }}>
+              SEND TO
+            </span>
+            <input
+              className="input-terminal"
+              type="text"
+              placeholder={address ?? "0x…"}
+              value={claimAddrInput}
+              onChange={(e) => setClaimAddrInput(e.target.value.trim())}
+              style={{ flex: 1, padding: "6px 8px", fontSize: "0.7rem" }}
+            />
+          </div>
+          {claimAddrInput !== "" && !/^0x[0-9a-fA-F]{40}$/.test(claimAddrInput) && (
+            <p style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-label)", color: "var(--red)", letterSpacing: "0.05em" }}>
+              Invalid address
+            </p>
+          )}
+          <TxButton
+            idleLabel={`Claim $${formatUsdc(lpFeesClaimable)}`}
+            status={txStatus}
+            variant="default"
+            onClick={() => {
+              const recipient = (claimAddrInput !== ""
+                ? claimAddrInput
+                : address) as `0x${string}`;
+              writeContract(
+                {
+                  address: poolAddress,
+                  abi: exnihiloPoolAbi,
+                  functionName: "claimFees",
+                  args: [recipient],
+                  chainId,
+                },
+                { onSuccess: () => {
+                  handleSuccess();
+                  setClaimAddrInput("");
+                  analytics?.track("Fees Claimed", { pool: poolAddress, amount: lpFeesClaimable?.toString(), recipient });
+                }}
+              );
+            }}
+            disabled={
+              !address ||
+              (claimAddrInput !== "" && !/^0x[0-9a-fA-F]{40}$/.test(claimAddrInput))
+            }
+            style={{ width: "100%", justifyContent: "center" }}
+          />
+        </div>
+      )}
 
       {/* Position caps */}
       <div
@@ -433,7 +499,7 @@ export default function LpPanel({
         <div
           style={{
             fontFamily: "var(--font-mono)",
-            fontSize: "0.6rem",
+            fontSize: "var(--fs-label)",
             letterSpacing: "0.18em",
             color: "var(--muted)",
           }}
@@ -468,7 +534,7 @@ export default function LpPanel({
         {/* Inputs */}
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.6rem", letterSpacing: "0.1em", color: "var(--muted)", minWidth: 80 }}>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-label)", letterSpacing: "0.1em", color: "var(--muted)", minWidth: 80 }}>
               USD CAP
             </span>
             <input
@@ -481,10 +547,10 @@ export default function LpPanel({
               onChange={(e) => setCapsUsdInput(e.target.value)}
               style={{ flex: 1, padding: "6px 8px", fontSize: "0.75rem" }}
             />
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.65rem", color: "var(--muted)" }}>USDC</span>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-body-s)", color: "var(--muted)" }}>USDC</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.6rem", letterSpacing: "0.1em", color: "var(--muted)", minWidth: 80 }}>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-label)", letterSpacing: "0.1em", color: "var(--muted)", minWidth: 80 }}>
               BPS CAP
             </span>
             <input
@@ -498,12 +564,12 @@ export default function LpPanel({
               onChange={(e) => setCapsBpsInput(e.target.value)}
               style={{ flex: 1, padding: "6px 8px", fontSize: "0.75rem" }}
             />
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.65rem", color: "var(--muted)" }}>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-body-s)", color: "var(--muted)" }}>
               bps {newCapsBps > 0n ? `(${(Number(newCapsBps) / 100).toFixed(2)}%)` : ""}
             </span>
           </div>
           {!capsValid && (
-            <p style={{ fontFamily: "var(--font-mono)", fontSize: "0.6rem", color: "var(--red)", letterSpacing: "0.05em" }}>
+            <p style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-label)", color: "var(--red)", letterSpacing: "0.05em" }}>
               BPS must be 10–9900 or 0 to disable
             </p>
           )}
@@ -520,6 +586,7 @@ export default function LpPanel({
                 abi: exnihiloPoolAbi,
                 functionName: "setPositionCaps",
                 args: [newCapsUsd, newCapsBps],
+                chainId,
               },
               {
                 onSuccess: () => {

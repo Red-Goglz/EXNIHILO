@@ -153,11 +153,7 @@ async function withOneMarketFixture() {
     INITIAL_TOKEN,
     MAX_POS_USD,
     MAX_POS_BPS,
-    0n,
-    "airPEPE",
-    "airPEPEUsd",
-    18
-  );
+    0n);
   const receipt = await tx.wait();
 
   const iface = factory.interface;
@@ -219,11 +215,7 @@ describe("EXNIHILOFactory", function () {
           INITIAL_TOKEN,
           MAX_POS_USD,
           MAX_POS_BPS,
-          0n,
-          "airPEPE",
-          "airPEPEUsd",
-          18
-        )
+          0n)
       )
         .to.emit(factory, "MarketCreated")
         .withArgs(
@@ -244,10 +236,7 @@ describe("EXNIHILOFactory", function () {
         INITIAL_TOKEN,
         MAX_POS_USD,
         MAX_POS_BPS,
-        0n,
-        "airPEPE",
-        "airPEPEUsd",
-        18
+        0n
       );
 
       expect(pool).to.not.equal(ethers.ZeroAddress);
@@ -281,20 +270,17 @@ describe("EXNIHILOFactory", function () {
       expect(await pool.backedAirUsd()).to.equal(INITIAL_USDC);
     });
 
-    it("pool's airToken token is named correctly", async function () {
+    it("pool's tokenDecimals matches the underlying token", async function () {
       const { poolAddress } = await loadFixture(withOneMarketFixture);
       const pool = await ethers.getContractAt("EXNIHILOPool", poolAddress);
-      const airToken = await ethers.getContractAt("AirToken", await pool.airToken());
-      expect(await airToken.name()).to.equal("airPEPE");
-      expect(await airToken.symbol()).to.equal("airPEPE");
+      expect(await pool.tokenDecimals()).to.equal(18n);
     });
 
-    it("pool's airUsd token is named correctly", async function () {
+    it("pool's supply counters equal the seeded liquidity", async function () {
       const { poolAddress } = await loadFixture(withOneMarketFixture);
       const pool = await ethers.getContractAt("EXNIHILOPool", poolAddress);
-      const airUsd = await ethers.getContractAt("AirToken", await pool.airUsdToken());
-      expect(await airUsd.name()).to.equal("airPEPEUsd");
-      expect(await airUsd.symbol()).to.equal("airPEPEUsd");
+      expect(await pool.airTokenSupply()).to.equal(INITIAL_TOKEN);
+      expect(await pool.airUsdSupply()).to.equal(INITIAL_USDC);
     });
 
     it("pool's maxPositionUsd is set correctly", async function () {
@@ -328,7 +314,7 @@ describe("EXNIHILOFactory", function () {
     it("reverts when tokenAddress is the zero address", async function () {
       const { factory, creator } = await loadFixture(deployFactoryFixture);
       await expect(
-        factory.connect(creator).createMarket(ethers.ZeroAddress, INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n, "airPEPE", "airPEPEUsd", 18)
+        factory.connect(creator).createMarket(ethers.ZeroAddress, INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n)
       ).to.be.reverted;
     });
 
@@ -336,7 +322,7 @@ describe("EXNIHILOFactory", function () {
     it("accepts maxPositionBps of 10 (minimum boundary)", async function () {
       const { factory, creator, baseToken } = await loadFixture(deployFactoryFixture);
       await expect(
-        factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 10n, 0n, "airPEPE", "airPEPEUsd", 18)
+        factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 10n, 0n)
       ).to.emit(factory, "MarketCreated");
     });
 
@@ -347,14 +333,14 @@ describe("EXNIHILOFactory", function () {
       await (token2 as unknown as MockERC20).mint(creator.address, INITIAL_TOKEN);
       await (token2 as any).connect(creator).approve(await factory.getAddress(), ethers.MaxUint256);
       await expect(
-        factory.connect(creator).createMarket(await token2.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 9900n, 0n, "airDOGE", "airDOGEUsd", 18)
+        factory.connect(creator).createMarket(await token2.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 9900n, 0n)
       ).to.emit(factory, "MarketCreated");
     });
 
     it("accepts maxPositionBps of 0 (disabled)", async function () {
       const { factory, creator, baseToken } = await loadFixture(deployFactoryFixture);
       await expect(
-        factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n, "airPEPE", "airPEPEUsd", 18)
+        factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n)
       ).to.emit(factory, "MarketCreated");
     });
   });
@@ -366,7 +352,7 @@ describe("EXNIHILOFactory", function () {
       const { factory, creator, creator2, baseToken, usdc, lpNft } =
         await loadFixture(deployFactoryFixture);
 
-      await factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n, "airPEPE", "airPEPEUsd", 18);
+      await factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n);
       expect(await lpNft.ownerOf(0n)).to.equal(creator.address);
 
       const MockF = await ethers.getContractFactory("MockERC20");
@@ -374,7 +360,7 @@ describe("EXNIHILOFactory", function () {
       await token2.mint(creator2.address, INITIAL_TOKEN);
       await token2.connect(creator2).approve(await factory.getAddress(), ethers.MaxUint256);
 
-      await factory.connect(creator2).createMarket(await token2.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n, "airSHIB", "airSHIBUsd", 18);
+      await factory.connect(creator2).createMarket(await token2.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n);
       expect(await lpNft.ownerOf(1n)).to.equal(creator2.address);
     });
 
@@ -382,8 +368,8 @@ describe("EXNIHILOFactory", function () {
       const { factory, creator, creator2, baseToken } =
         await loadFixture(deployFactoryFixture);
 
-      await factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n, "airPEPE", "airPEPEUsd", 18);
-      await factory.connect(creator2).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n, "airPEPE", "airPEPEUsd", 18);
+      await factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n);
+      await factory.connect(creator2).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n);
 
       const pool1 = await factory.allPools(0n);
       const pool2 = await factory.allPools(1n);
@@ -393,11 +379,11 @@ describe("EXNIHILOFactory", function () {
     });
   });
 
-  // ── 5. _safeSymbol / _safeDecimals fallback branches ──────────────────────
+  // ── 5. decimals() fallback branch ──────────────────────────────────────────
 
-  describe("_safeSymbol / _safeDecimals fallback", function () {
-    it("falls back to 'TOKEN' when token has no symbol()", async function () {
-      // NoMetaERC20 has no symbol() or decimals() — factory falls back to "TOKEN" / 18.
+  describe("tokenDecimals fallback", function () {
+    it("falls back to 18 when token has no decimals()", async function () {
+      // NoMetaERC20 has no symbol() or decimals() — factory falls back to 18.
       const { factory, usdc, creator } = await loadFixture(deployFactoryFixture);
 
       const NoMetaF = await ethers.getContractFactory("NoMetaERC20");
@@ -412,11 +398,7 @@ describe("EXNIHILOFactory", function () {
         INITIAL_TOKEN,
         0n,
         0n,
-        0n,
-        "airTOKEN",
-        "airTOKENUsd",
-        18
-      );
+        0n);
       const receipt = await tx.wait();
       const iface = factory.interface;
       const log = receipt!.logs
@@ -424,12 +406,7 @@ describe("EXNIHILOFactory", function () {
         .find((l) => l?.name === "MarketCreated")!;
 
       const pool = await ethers.getContractAt("EXNIHILOPool", log.args.pool as string);
-      const airToken = await ethers.getContractAt("AirToken", await pool.airToken());
-      const airUsd  = await ethers.getContractAt("AirToken", await pool.airUsdToken());
-
-      // Fallback symbol used as name
-      expect(await airToken.name()).to.equal("airTOKEN");
-      expect(await airUsd.name()).to.equal("airTOKENUsd");
+      expect(await pool.tokenDecimals()).to.equal(18n);
     });
   });
 });

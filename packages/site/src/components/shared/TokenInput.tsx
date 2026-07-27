@@ -2,6 +2,7 @@ import { type ChangeEvent } from "react";
 import { useAccount, useReadContract } from "wagmi";
 import { erc20Abi } from "@exnihilio/abis";
 import { formatToken } from "../../lib/format.ts";
+import { useAppChain } from "../../hooks/useAppChain.ts";
 
 interface TokenInputProps {
   label: string;
@@ -27,6 +28,7 @@ export default function TokenInput({
   capLabel,
 }: TokenInputProps) {
   const { address } = useAccount();
+  const { chainId } = useAppChain();
 
   const { data: balance } = useReadContract(
     tokenAddress && address
@@ -35,6 +37,7 @@ export default function TokenInput({
           abi: erc20Abi,
           functionName: "balanceOf",
           args: [address],
+          chainId,
         }
       : undefined
   );
@@ -65,7 +68,7 @@ export default function TokenInput({
         <label
           style={{
             fontFamily: "var(--font-mono)",
-            fontSize: "0.62rem",
+            fontSize: "var(--fs-label)",
             letterSpacing: "0.15em",
             color: "var(--muted)",
             textTransform: "uppercase",
@@ -77,7 +80,7 @@ export default function TokenInput({
           <span
             style={{
               fontFamily: "var(--font-mono)",
-              fontSize: "0.62rem",
+              fontSize: "var(--fs-label)",
               color: "var(--muted)",
               letterSpacing: "0.05em",
             }}
@@ -91,7 +94,7 @@ export default function TokenInput({
         <span
           style={{
             fontFamily: "var(--font-mono)",
-            fontSize: "0.62rem",
+            fontSize: "var(--fs-label)",
             color: "var(--orange)",
             letterSpacing: "0.05em",
           }}
@@ -135,7 +138,7 @@ export default function TokenInput({
             onClick={setMax}
             style={{
               fontFamily: "var(--font-mono)",
-              fontSize: "0.6rem",
+              fontSize: "var(--fs-label)",
               letterSpacing: "0.1em",
               background: "transparent",
               border: "1px solid var(--border)",

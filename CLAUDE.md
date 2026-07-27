@@ -6,9 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 EXNIHILO is an npm workspace monorepo for a Web3 dApp "Out of thin air" Trade Platform
 It's a dapp where you can create permissionless pools, go long or short a token.
-It has two packages:
+It has five packages:
 - `packages/blockchain` — Solidity smart contracts with Hardhat
 - `packages/site` — React 19 frontend with Wagmi/Viem for wallet integration
+- `packages/indexer` — Ponder event indexer + Hono JSON API serving price history, pool/protocol metrics, and LP APR to the site
+- `packages/abis` — shared contract ABIs (`@exnihilio/abis`), consumed by both the site and the indexer
+- `packages/docs` — VitePress documentation site
 
 ## Commands
 
@@ -29,6 +32,18 @@ npm run build      # TypeScript check + production build
 npm run lint       # Run ESLint
 npm run preview    # Preview production build
 ```
+
+### Indexer Package (`packages/indexer`)
+
+```bash
+npm run dev:indexer     # Ponder dev server with hot reload (from repo root)
+npm run start:indexer   # Production indexer + API
+npm run codegen -w packages/indexer   # Regenerate ponder:schema / ponder:registry types
+```
+
+Serves on port 42069 by default. Requires `packages/indexer/.env.local` — copy
+`packages/indexer/.env.example` and set `PONDER_RPC_URL_43113`. `DATABASE_URL` is
+optional locally (falls back to embedded PGlite) but required in production.
 
 ### Workspace-level
 
@@ -61,6 +76,25 @@ Follows standard Hardhat layout:
 - **Build**: Vite with `tsc -b` type-checking before bundling
 
 The only configured chain is **Linea Sepolia testnet**. Contract ABIs/addresses from the blockchain package need to be manually wired into the site after deployment.
+
+### Indexer Package
+
+- `ponder.config.ts` — contracts + networks. `EXNIHILOPool` is a `factory()` source derived
+  from the factory's `MarketCreated` event, so new pools are picked up automatically.
+  `chunkedHttp` splits `eth_getLogs` into 2000-block ranges for the public Avalanche RPC.
+- `src/chain.ts` — **single source of truth** for the indexed chain id, contract addresses,
+  and start block. Both `ponder.config.ts` and the API import from here; do not re-hardcode.
+- `src/index.ts` — event handlers writing the tables in `ponder.schema.ts`.
+- `src/api/index.ts` — Hono routes consumed by the site.
+
+Fee splits are **never derived from bps constants** — the pool routes impact fees entirely
+to LPs and takes a close fee on surplus, so the ratio is not fixed. Handlers read the pool's
+`lpFeesAccumulated + lpFeesPaidTotal` / `protocolFeesAccumulated + protocolFeesPaidTotal`
+and record the delta since the last event. See `syncFees` in `src/index.ts`.
+
+The indexer follows **one chain per instance** (`INDEXED_CHAIN_ID`); requests carrying a
+different `?chainId=` are rejected with 404. The site only calls chains whose registry entry
+in `src/lib/chains.ts` has an `indexerUrl`.
 
 ## Agents & Skills
 

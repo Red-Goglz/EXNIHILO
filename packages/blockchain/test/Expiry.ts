@@ -130,11 +130,7 @@ async function deployPoolFixture() {
     INITIAL_TOKEN,
     MAX_POS_USD,
     MAX_POS_BPS,
-    0n,
-    "airPEPE",
-    "airPEPEUsd",
-    18
-  );
+    0n);
   const receipt = await tx.wait();
 
   const iface = factory.interface;
@@ -196,11 +192,7 @@ async function deployPoolFixture1h() {
     INITIAL_TOKEN,
     MAX_POS_USD,
     MAX_POS_BPS,
-    ONE_HOUR,
-    "airPEPE",
-    "airPEPEUsd",
-    18
-  );
+    ONE_HOUR);
   const receipt = await tx.wait();
 
   const iface = factory.interface;
@@ -325,34 +317,50 @@ describe("Expiry: cliff-based position expiry", function () {
 
   describe("3. renewPosition", function () {
 
-    it("charges base fee (5% of notional): check USDC transfer and lpFeesAccumulated", async function () {
-      const { pool, positionNFT, usdc, treasury, trader1, other } =
+    it("charges the dynamic fee (base on mark + OI impact slice): check accruals", async function () {
+      const { pool, positionNFT, usdc, treasury, creator, trader1, other } =
         await loadFixture(deployPoolFixture);
 
       const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
       const pos = await positionNFT.getPosition(nftId);
       const notional = pos.airUsdMinted; // for longs, notional = airUsdMinted
 
+      // Fresh position: surplus = 0 (slippage + fees), so mark = notional and
+      // the base fee matches the old flat 5%. The impact slice is priced at
+      // current OI (this position is the only one → offset = 0).
+      const IMPACT_FEE_BPS = 1500n;
+      const backed = await pool.backedAirUsd();
+      const oi     = await pool.longOpenInterest();
+      const offset = oi - notional;
+      const impactFee   = (IMPACT_FEE_BPS * notional * (2n * offset + notional))
+                        / (2n * backed * BPS_DENOM);
       const protocolFee = (notional * PROTO_FEE_BPS) / BPS_DENOM;
-      const lpFee       = (notional * LP_FEE_BPS)    / BPS_DENOM;
+      const lpFee       = (notional * LP_FEE_BPS)    / BPS_DENOM + impactFee;
       const totalFee    = protocolFee + lpFee;
 
-      // Fund and approve the renewer
-      await usdc.mint(other.address, totalFee * 2n);
-      await usdc.connect(other).approve(await pool.getAddress(), ethers.MaxUint256);
+      // quoteRenewFee must match the fee the pool actually charges
+      expect(await pool.quoteRenewFee(nftId)).to.equal(totalFee);
 
-      const lpFeesBefore    = await pool.lpFeesAccumulated();
-      const treasuryBefore  = await usdc.balanceOf(treasury.address);
-      const otherUsdcBefore = await usdc.balanceOf(other.address);
+      const lpAccruedBefore    = await pool.lpFeesAccumulated();
+      const protoAccruedBefore = await pool.protocolFeesAccumulated();
+      const holderBefore       = await usdc.balanceOf(trader1.address);
 
-      await pool.connect(other).renewPosition(nftId);
+      await pool.connect(trader1).renewPosition(nftId, totalFee);
 
-      // LP fees increased by lpFee
-      expect(await pool.lpFeesAccumulated()).to.equal(lpFeesBefore + lpFee);
-      // Treasury received protocolFee
-      expect(await usdc.balanceOf(treasury.address)).to.equal(treasuryBefore + protocolFee);
-      // Caller spent totalFee
-      expect(await usdc.balanceOf(other.address)).to.equal(otherUsdcBefore - totalFee);
+      // Fees accrue (pull payment) — LP and treasury claim later.
+      expect(await pool.lpFeesAccumulated()).to.equal(lpAccruedBefore + lpFee);
+      expect(await pool.protocolFeesAccumulated()).to.equal(protoAccruedBefore + protocolFee);
+      // Holder spent totalFee
+      expect(await usdc.balanceOf(trader1.address)).to.equal(holderBefore - totalFee);
+    });
+
+    it("reverts RenewalFeeExceedsMax when the fee moves above maxFee", async function () {
+      const { pool, trader1 } = await loadFixture(deployPoolFixture);
+      const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
+      const quote = await pool.quoteRenewFee(nftId);
+      await expect(
+        pool.connect(trader1).renewPosition(nftId, quote - 1n)
+      ).to.be.revertedWithCustomError(pool, "RenewalFeeExceedsMax");
     });
 
     it("extends deadline by positionDuration from current deadline", async function () {
@@ -363,13 +371,13 @@ describe("Expiry: cliff-based position expiry", function () {
       const oldDeadline = posBefore.deadline;
 
       // Renew before expiry
-      await pool.connect(trader1).renewPosition(nftId);
+      await pool.connect(trader1).renewPosition(nftId, ethers.MaxUint256);
 
       const posAfter = await positionNFT.getPosition(nftId);
       expect(posAfter.deadline).to.equal(oldDeadline + SEVEN_DAYS);
     });
 
-    it("anyone can renew (not just the holder)", async function () {
+    it("non-holder cannot renew (griefing protection)", async function () {
       const { pool, positionNFT, usdc, trader1, other } =
         await loadFixture(deployPoolFixture);
 
@@ -379,8 +387,10 @@ describe("Expiry: cliff-based position expiry", function () {
       await usdc.mint(other.address, ethers.parseUnits("1000", 6));
       await usdc.connect(other).approve(await pool.getAddress(), ethers.MaxUint256);
 
-      // Should not revert — other is not the holder
-      await expect(pool.connect(other).renewPosition(nftId)).to.not.be.reverted;
+      // Reverts — only the position holder may renew
+      await expect(
+        pool.connect(other).renewPosition(nftId, ethers.MaxUint256)
+      ).to.be.revertedWithCustomError(pool, "OnlyPositionHolder");
     });
 
     it("works for both long and short positions", async function () {
@@ -392,8 +402,8 @@ describe("Expiry: cliff-based position expiry", function () {
       const longBefore  = await positionNFT.getPosition(longId);
       const shortBefore = await positionNFT.getPosition(shortId);
 
-      await pool.connect(trader1).renewPosition(longId);
-      await pool.connect(trader1).renewPosition(shortId);
+      await pool.connect(trader1).renewPosition(longId, ethers.MaxUint256);
+      await pool.connect(trader1).renewPosition(shortId, ethers.MaxUint256);
 
       const longAfter  = await positionNFT.getPosition(longId);
       const shortAfter = await positionNFT.getPosition(shortId);
@@ -410,7 +420,7 @@ describe("Expiry: cliff-based position expiry", function () {
       // Fast-forward past expiry (7 days + 1 day extra)
       await time.increase(Number(SEVEN_DAYS) + 86400);
 
-      await pool.connect(trader1).renewPosition(nftId);
+      await pool.connect(trader1).renewPosition(nftId, ethers.MaxUint256);
 
       const posAfter = await positionNFT.getPosition(nftId);
       const latest   = BigInt(await time.latest());
@@ -427,15 +437,13 @@ describe("Expiry: cliff-based position expiry", function () {
       const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
       const pos   = await positionNFT.getPosition(nftId);
 
-      const notional    = pos.airUsdMinted;
-      const protocolFee = (notional * PROTO_FEE_BPS) / BPS_DENOM;
-      const lpFee       = (notional * LP_FEE_BPS)    / BPS_DENOM;
-      const totalFee    = protocolFee + lpFee;
+      // quoteRenewFee is the single source of truth for the dynamic fee.
+      const totalFee = await pool.quoteRenewFee(nftId);
 
       const expectedNewDeadline = pos.deadline + SEVEN_DAYS;
 
       const usdcBefore = await usdc.balanceOf(trader1.address);
-      await pool.connect(trader1).renewPosition(nftId);
+      await pool.connect(trader1).renewPosition(nftId, totalFee);
       const usdcAfter = await usdc.balanceOf(trader1.address);
       expect(usdcBefore - usdcAfter).to.equal(totalFee);
 
@@ -492,30 +500,59 @@ describe("Expiry: cliff-based position expiry", function () {
       ).to.be.revertedWithCustomError(pool, "PositionNotExpired");
     });
 
-    it("after deadline, anyone can close a profitable long (holder receives USDC minus 1% fee)", async function () {
+    it("after deadline, anyone can close a profitable long (payout credited, holder claims)", async function () {
       const { pool, usdc, trader1, other, nftId } =
         await loadFixture(withProfitableExpiredLong);
 
+      // Other (not the holder) closes the expired position — payout is
+      // CREDITED (pull payment), not pushed.
+      await expect(pool.connect(other).closePositionAfterDeadline(nftId, 0n))
+        .to.emit(pool, "PayoutCredited");
+
+      const credited = await pool.claimable(trader1.address);
+      expect(credited).to.be.gt(0n);
+
+      // Holder withdraws the credited payout.
       const holderUsdcBefore = await usdc.balanceOf(trader1.address);
-
-      // Other (not the holder) closes the expired position
-      await pool.connect(other).closePositionAfterDeadline(nftId, 0n);
-
-      const holderUsdcAfter = await usdc.balanceOf(trader1.address);
-      // Holder should have received USDC profit
-      expect(holderUsdcAfter).to.be.gt(holderUsdcBefore);
+      await expect(pool.connect(trader1).claimPayout(trader1.address))
+        .to.emit(pool, "PayoutClaimed")
+        .withArgs(trader1.address, trader1.address, credited);
+      expect(await usdc.balanceOf(trader1.address)).to.equal(holderUsdcBefore + credited);
+      expect(await pool.claimable(trader1.address)).to.equal(0n);
+      expect(await pool.totalClaimable()).to.equal(0n);
     });
 
-    it("after deadline, anyone can close a profitable short", async function () {
+    it("after deadline, anyone can close a profitable short (payout credited)", async function () {
       const { pool, usdc, trader1, other, nftId } =
         await loadFixture(withProfitableExpiredShort);
 
-      const holderUsdcBefore = await usdc.balanceOf(trader1.address);
-
       await pool.connect(other).closePositionAfterDeadline(nftId, 0n);
 
-      const holderUsdcAfter = await usdc.balanceOf(trader1.address);
-      expect(holderUsdcAfter).to.be.gt(holderUsdcBefore);
+      const credited = await pool.claimable(trader1.address);
+      expect(credited).to.be.gt(0n);
+
+      const holderUsdcBefore = await usdc.balanceOf(trader1.address);
+      await pool.connect(trader1).claimPayout(trader1.address);
+      expect(await usdc.balanceOf(trader1.address)).to.equal(holderUsdcBefore + credited);
+    });
+
+    it("claimPayout reverts with ZeroAmount when nothing is credited", async function () {
+      const { pool, other } = await loadFixture(withProfitableExpiredLong);
+      await expect(
+        pool.connect(other).claimPayout(other.address)
+      ).to.be.revertedWithCustomError(pool, "ZeroAmount");
+    });
+
+    it("claimPayout can redirect to a different recipient", async function () {
+      const { pool, usdc, trader1, other, nftId } =
+        await loadFixture(withProfitableExpiredLong);
+
+      await pool.connect(other).closePositionAfterDeadline(nftId, 0n);
+      const credited = await pool.claimable(trader1.address);
+
+      const otherBefore = await usdc.balanceOf(other.address);
+      await pool.connect(trader1).claimPayout(other.address);
+      expect(await usdc.balanceOf(other.address)).to.equal(otherBefore + credited);
     });
 
     it("emits PositionClosedAfterDeadline with payout > 0", async function () {

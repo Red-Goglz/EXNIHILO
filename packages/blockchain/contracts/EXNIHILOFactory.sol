@@ -4,13 +4,12 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import "./AirToken.sol";
 import "./LpNFT.sol";
 
 interface IPoolDeployer {
     function deploy(
-        address airToken, address airUsdToken, address tokenAddress,
-        address usdc, address positionNFT, address lpNftContract,
+        address tokenAddress, address usdc, uint8 tokenDecimals,
+        address positionNFT, address lpNftContract,
         uint256 lpNftId, address protocolTreasury,
         uint256 maxPositionUsd, uint256 maxPositionBps,
         uint256 defaultSwapFeeBps, uint256 positionDuration, address factory
@@ -21,15 +20,18 @@ interface IPoolAddLiquidity {
     function addLiquidity(uint256 tokenAmount, uint256 usdcAmount) external;
 }
 
+interface IERC20Decimals {
+    function decimals() external view returns (uint8);
+}
+
 /**
  * @title  EXNIHILOFactory
  * @author EXNIHILO
  * @notice Permissionless factory that creates EXNIHILO token/USDC trading markets.
  *
  *         Each call to createMarket deploys:
- *           - AirToken  (airToken wrapper, decimals matching the underlying token)
- *           - AirToken  (airUsd wrapper, 6 decimals, USDC-denominated)
- *           - EXNIHILOPool  (the AMM + leveraged-trading contract)
+ *           - EXNIHILOPool  (the AMM + leveraged-trading contract; internal
+ *             airToken/airUsd accounting is held as pool supply counters)
  *
  *         The factory also mints exactly one LP NFT per pool (via the shared
  *         LpNFT contract), seeds the pool with the caller's initial liquidity,
@@ -157,16 +159,14 @@ contract EXNIHILOFactory is ReentrancyGuard {
      *
      *   1.  Validate all inputs.
      *   2.  Pull usdcAmount USDC and tokenAmount token from msg.sender.
-     *   3.  Deploy AirToken (airToken) — name/symbol: "air<symbol>", token decimals.
-     *   4.  Deploy AirToken (airUsd)  — name/symbol: "air<symbol>Usd", 6 decimals.
-     *   5.  Predict the next LP NFT id (= allPools.length, see contract header).
-     *   6.  Deploy EXNIHILOPool with all parameters, passing the predicted LP NFT id.
-     *   7.  Wire both AirTokens to the pool via initPool().
-     *   8.  Mint LP NFT to factory (factory is temporary LP holder for seeding).
-     *   9.  Approve pool to pull factory's tokens; call pool.addLiquidity().
-     *  10.  Revoke residual approvals.
-     *  11.  Transfer LP NFT from factory to msg.sender.
-     *  12.  Update registry and emit MarketCreated.
+     *   3.  Read the underlying token's decimals (fallback 18).
+     *   4.  Predict the next LP NFT id (= allPools.length, see contract header).
+     *   5.  Deploy EXNIHILOPool with all parameters, passing the predicted LP NFT id.
+     *   6.  Mint LP NFT to factory (factory is temporary LP holder for seeding).
+     *   7.  Approve pool to pull factory's tokens; call pool.addLiquidity().
+     *   8.  Revoke residual approvals.
+     *   9.  Transfer LP NFT from factory to msg.sender.
+     *  10.  Update registry and emit MarketCreated.
      *
      * @param tokenAddress    ERC-20 underlying token to create a market for. Must not be zero.
      * @param usdcAmount      Initial USDC liquidity (6 dec). Must be > 0.
@@ -184,10 +184,7 @@ contract EXNIHILOFactory is ReentrancyGuard {
         uint256 tokenAmount,
         uint256 maxPositionUsd,
         uint256 maxPositionBps,
-        uint256 positionDuration,
-        string calldata airTokenName,
-        string calldata airUsdName,
-        uint8 tokenDecimals
+        uint256 positionDuration
     ) external nonReentrant returns (address pool, uint256 lpNftId) {
         // ── 1. Input validation ───────────────────────────────────────────────
 
@@ -198,21 +195,23 @@ contract EXNIHILOFactory is ReentrancyGuard {
         IERC20(usdc).safeTransferFrom(msg.sender, address(this), usdcAmount);
         IERC20(tokenAddress).safeTransferFrom(msg.sender, address(this), tokenAmount);
 
-        // ── 3. Deploy AirToken for the token wrapper ───────────────────────────
+        // ── 3. Read the underlying token's decimals ───────────────────────────
+        //    Read from the token itself (fallback 18) so the pool's airToken
+        //    accounting can never be created with mismatched decimals.
 
-        AirToken airToken = new AirToken(airTokenName, airTokenName, tokenDecimals);
+        uint8 tokenDecimals;
+        try IERC20Decimals(tokenAddress).decimals() returns (uint8 d) {
+            tokenDecimals = d;
+        } catch {
+            tokenDecimals = 18;
+        }
 
-        // ── 4. Deploy AirToken for the USDC wrapper ───────────────────────────
-
-        AirToken airUsdToken = new AirToken(airUsdName, airUsdName, 6);
-
-        // ── 5. Deploy EXNIHILOPool via PoolDeployer ──────────────────────────
+        // ── 4/5. Deploy EXNIHILOPool via PoolDeployer ─────────────────────────
 
         pool = poolDeployer.deploy(
-            address(airToken),
-            address(airUsdToken),
             tokenAddress,
             usdc,
+            tokenDecimals,
             positionNFT,
             address(lpNftContract),
             allPools.length,    // lpNftId_ — equals LpNFT._nextTokenId
@@ -224,32 +223,30 @@ contract EXNIHILOFactory is ReentrancyGuard {
             address(this)       // factory address for emergency deployer lookup
         );
 
-        // ── 7. Wire AirTokens to the pool ────────────────────────────────────
-
-        // initPool can only be called once per AirToken and only by its factory
-        // (the deploying address, which is this contract).
-        airToken.initPool(pool);
-        airUsdToken.initPool(pool);
-
-        // ── 8. Mint LP NFT to factory (temporary holder for seeding) ──────────
+        // ── 6. Mint LP NFT to factory (temporary holder for seeding) ──────────
 
         // LpNFT.mint() increments _nextTokenId and returns tokenId = _nextTokenId++.
         // The returned id must equal our prediction; if not, something is wrong
         // with the factory's LP NFT accounting invariant.
         lpNftId = lpNftContract.mint(address(this), pool);
 
-        // ── 9. Seed the pool via addLiquidity (factory is the LP NFT holder) ──
+        // ── 7. Seed the pool via addLiquidity (factory is the LP NFT holder) ──
 
         IERC20(tokenAddress).forceApprove(pool, tokenAmount);
         IERC20(usdc).forceApprove(pool, usdcAmount);
 
         IPoolAddLiquidity(pool).addLiquidity(tokenAmount, usdcAmount);
 
-        // ── 10. Transfer LP NFT to market creator ─────────────────────────────
+        // Revoke residual approvals (defense-in-depth for non-standard
+        // ERC-20s that do not zero the allowance on exact transferFrom).
+        IERC20(tokenAddress).forceApprove(pool, 0);
+        IERC20(usdc).forceApprove(pool, 0);
+
+        // ── 9. Transfer LP NFT to market creator ──────────────────────────────
 
         IERC721(address(lpNftContract)).transferFrom(address(this), msg.sender, lpNftId);
 
-        // ── 12. Registry update and event ─────────────────────────────────────
+        // ── 10. Registry update and event ─────────────────────────────────────
 
         isPool[pool] = true;
         allPools.push(pool);

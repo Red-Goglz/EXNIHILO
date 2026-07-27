@@ -1,10 +1,12 @@
 import { useState, useEffect } from "react";
-import { useAccount, useReadContracts, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { useAccount, useReadContracts } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
 import { useFormo } from "@formo/analytics";
 import { exnihiloPoolAbi, erc20Abi } from "@exnihilio/abis";
 import { parseUnits, formatToken } from "../../lib/format.ts";
 import { cpAmountOut } from "../../lib/amm.ts";
+import { useTx } from "../../hooks/useTx.ts";
+import { useAppChain } from "../../hooks/useAppChain.ts";
 import TokenInput from "../shared/TokenInput.tsx";
 import TxButton from "../shared/TxButton.tsx";
 
@@ -24,6 +26,7 @@ export default function SwapPanel({
   tokenDecimals,
 }: SwapPanelProps) {
   const { address } = useAccount();
+  const { chainId } = useAppChain();
   const queryClient = useQueryClient();
   const analytics = useFormo();
 
@@ -38,7 +41,7 @@ export default function SwapPanel({
   const tokenInSymbol = tokenToUsdc ? tokenSymbol : "USDC";
   const tokenOutSymbol = tokenToUsdc ? "USDC" : tokenSymbol;
 
-  const poolContract = { address: poolAddress, abi: exnihiloPoolAbi } as const;
+  const poolContract = { address: poolAddress, abi: exnihiloPoolAbi, chainId } as const;
 
   const { data: poolData } = useReadContracts({
     contracts: [
@@ -55,6 +58,7 @@ export default function SwapPanel({
         abi: erc20Abi,
         functionName: "allowance",
         args: [address, poolAddress],
+        chainId,
       },
     ] : [],
     query: { enabled: !!address },
@@ -103,8 +107,11 @@ export default function SwapPanel({
       ? (quoted * (10_000n - slippageBps)) / 10_000n
       : 0n;
 
-  const { writeContract: writeApprove, data: approveHash, isPending: approvePending } = useWriteContract();
-  const { isLoading: approveConfirming, isSuccess: approveSuccess } = useWaitForTransactionReceipt({ hash: approveHash });
+  const {
+    writeContract: writeApprove,
+    status: approveStatus,
+    isSuccess: approveSuccess,
+  } = useTx("APPROVAL");
 
   useEffect(() => {
     if (approveSuccess) queryClient.invalidateQueries();
@@ -112,21 +119,24 @@ export default function SwapPanel({
 
   const needsApproval = !approveSuccess && allowance !== undefined && amountInRaw > allowance;
 
-  const { writeContract: writeSwap, data: swapHash, isPending: swapPending } = useWriteContract();
-  const { isLoading: swapConfirming, isSuccess: swapSuccess } = useWaitForTransactionReceipt({ hash: swapHash });
+  const {
+    writeContract: writeSwap,
+    status: swapStatus,
+    isSuccess: swapSuccess,
+  } = useTx("SWAP");
 
-  const handleSwapSuccess = () => {
-    queryClient.invalidateQueries();
-    analytics?.track("Swap Completed", {
-      pool: poolAddress,
-      direction: tokenToUsdc ? `${tokenSymbol}→USDC` : `USDC→${tokenSymbol}`,
-      amountIn: amountInRaw.toString(),
-    });
-    setAmountIn("");
-  };
-
-  const approveStatus = approvePending ? "pending" : approveConfirming ? "confirming" : approveSuccess ? "success" : "idle";
-  const swapStatus = swapPending ? "pending" : swapConfirming ? "confirming" : swapSuccess ? "success" : "idle";
+  // Refresh once the swap is actually mined (not just submitted).
+  useEffect(() => {
+    if (swapSuccess) {
+      queryClient.invalidateQueries();
+      analytics?.track("Swap Completed", {
+        pool: poolAddress,
+        direction: tokenToUsdc ? `${tokenSymbol}→USDC` : `USDC→${tokenSymbol}`,
+        amountIn: amountInRaw.toString(),
+      });
+      setAmountIn("");
+    }
+  }, [swapSuccess, queryClient]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="flex flex-col gap-4">
@@ -144,7 +154,7 @@ export default function SwapPanel({
             flex: 1,
             padding: "8px 12px",
             fontFamily: "var(--font-mono)",
-            fontSize: "0.65rem",
+            fontSize: "var(--fs-body-s)",
             letterSpacing: "0.08em",
             border: "none",
             background: tokenToUsdc ? "var(--cyan-glow)" : "transparent",
@@ -162,7 +172,7 @@ export default function SwapPanel({
             flex: 1,
             padding: "8px 12px",
             fontFamily: "var(--font-mono)",
-            fontSize: "0.65rem",
+            fontSize: "var(--fs-body-s)",
             letterSpacing: "0.08em",
             border: "none",
             background: !tokenToUsdc ? "var(--cyan-glow)" : "transparent",
@@ -199,7 +209,7 @@ export default function SwapPanel({
         <span
           style={{
             fontFamily: "var(--font-mono)",
-            fontSize: "0.6rem",
+            fontSize: "var(--fs-label)",
             letterSpacing: "0.1em",
             color: isHighImpact ? "var(--orange)" : "var(--muted)",
           }}
@@ -220,7 +230,7 @@ export default function SwapPanel({
                 }}
                 style={{
                   fontFamily: "var(--font-mono)",
-                  fontSize: "0.58rem",
+                  fontSize: "var(--fs-micro)",
                   letterSpacing: "0.05em",
                   color: "var(--muted)",
                   background: "transparent",
@@ -269,7 +279,7 @@ export default function SwapPanel({
                 onClick={() => setSlippageMode("auto")}
                 style={{
                   fontFamily: "var(--font-mono)",
-                  fontSize: "0.58rem",
+                  fontSize: "var(--fs-micro)",
                   letterSpacing: "0.05em",
                   color: "var(--cyan)",
                   background: "transparent",
@@ -305,7 +315,7 @@ export default function SwapPanel({
           }}
         >
           <div className="flex justify-between">
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.62rem", color: "var(--muted)", letterSpacing: "0.1em" }}>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-label)", color: "var(--muted)", letterSpacing: "0.1em" }}>
               EXPECTED OUT
             </span>
             <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.78rem", color: "var(--body)" }}>
@@ -313,7 +323,7 @@ export default function SwapPanel({
             </span>
           </div>
           <div className="flex justify-between">
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.62rem", color: "var(--muted)", letterSpacing: "0.1em" }}>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-label)", color: "var(--muted)", letterSpacing: "0.1em" }}>
               MIN ({slippagePctDisplay} SLIP)
             </span>
             <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.78rem", color: "#f59e0b" }}>
@@ -334,6 +344,7 @@ export default function SwapPanel({
               abi: erc20Abi,
               functionName: "approve",
               args: [poolAddress, amountInRaw],
+              chainId,
             })
           }
           disabled={amountInRaw === 0n}
@@ -344,15 +355,13 @@ export default function SwapPanel({
           idleLabel="Swap"
           status={swapStatus}
           onClick={() =>
-            writeSwap(
-              {
-                address: poolAddress,
-                abi: exnihiloPoolAbi,
-                functionName: "swap",
-                args: [amountInRaw, minAmountOut, tokenToUsdc, address!],
-              },
-              { onSuccess: handleSwapSuccess }
-            )
+            writeSwap({
+              address: poolAddress,
+              abi: exnihiloPoolAbi,
+              functionName: "swap",
+              args: [amountInRaw, minAmountOut, tokenToUsdc, address!],
+              chainId,
+            })
           }
           disabled={amountInRaw === 0n || minAmountOut === 0n}
           style={{ width: "100%", justifyContent: "center" }}

@@ -25,41 +25,19 @@ export const exnihiloFactoryAbi = [
         "internalType": "uint256",
         "name": "defaultSwapFeeBps_",
         "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "poolDeployer_",
+        "type": "address"
       }
     ],
     "stateMutability": "nonpayable",
     "type": "constructor"
   },
   {
-    "inputs": [
-      {
-        "internalType": "uint256",
-        "name": "bps",
-        "type": "uint256"
-      }
-    ],
-    "name": "InvalidMaxPositionBps",
-    "type": "error"
-  },
-  {
     "inputs": [],
-    "name": "InvalidPositionDuration",
-    "type": "error"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "uint256",
-        "name": "expected",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "actual",
-        "type": "uint256"
-      }
-    ],
-    "name": "LpNftIdMismatch",
+    "name": "OnlyDeployer",
     "type": "error"
   },
   {
@@ -79,66 +57,6 @@ export const exnihiloFactoryAbi = [
     "type": "error"
   },
   {
-    "inputs": [],
-    "name": "ZeroAddress",
-    "type": "error"
-  },
-  {
-    "inputs": [],
-    "name": "ZeroAmount",
-    "type": "error"
-  },
-  {
-    "inputs": [],
-    "name": "OnlyDeployer",
-    "type": "error"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "oldDeployer",
-        "type": "address"
-      },
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "newDeployer",
-        "type": "address"
-      }
-    ],
-    "name": "DeployerUpdated",
-    "type": "event"
-  },
-  {
-    "inputs": [],
-    "name": "deployer",
-    "outputs": [
-      {
-        "internalType": "address",
-        "name": "",
-        "type": "address"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "address",
-        "name": "newDeployer",
-        "type": "address"
-      }
-    ],
-    "name": "setDeployer",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
     "anonymous": false,
     "inputs": [
       {
@@ -154,24 +72,6 @@ export const exnihiloFactoryAbi = [
         "type": "address"
       },
       {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "usdcAmount",
-        "type": "uint256"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "tokenAmount",
-        "type": "uint256"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "lpNftId",
-        "type": "uint256"
-      },
-      {
         "indexed": true,
         "internalType": "address",
         "name": "creator",
@@ -180,19 +80,7 @@ export const exnihiloFactoryAbi = [
       {
         "indexed": false,
         "internalType": "uint256",
-        "name": "maxPositionUsd",
-        "type": "uint256"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "maxPositionBps",
-        "type": "uint256"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "positionDuration",
+        "name": "lpNftId",
         "type": "uint256"
       }
     ],
@@ -262,21 +150,6 @@ export const exnihiloFactoryAbi = [
         "internalType": "uint256",
         "name": "positionDuration",
         "type": "uint256"
-      },
-      {
-        "internalType": "string",
-        "name": "airTokenName",
-        "type": "string"
-      },
-      {
-        "internalType": "string",
-        "name": "airUsdName",
-        "type": "string"
-      },
-      {
-        "internalType": "uint8",
-        "name": "tokenDecimals",
-        "type": "uint8"
       }
     ],
     "name": "createMarket",
@@ -303,6 +176,19 @@ export const exnihiloFactoryAbi = [
         "internalType": "uint256",
         "name": "",
         "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "deployer",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
       }
     ],
     "stateMutability": "view",
@@ -341,51 +227,11 @@ export const exnihiloFactoryAbi = [
     "type": "function"
   },
   {
-    "inputs": [
-      {
-        "internalType": "address",
-        "name": "",
-        "type": "address"
-      },
-      {
-        "internalType": "address",
-        "name": "",
-        "type": "address"
-      },
-      {
-        "internalType": "uint256",
-        "name": "",
-        "type": "uint256"
-      },
-      {
-        "internalType": "bytes",
-        "name": "",
-        "type": "bytes"
-      }
-    ],
-    "name": "onERC721Received",
+    "inputs": [],
+    "name": "poolDeployer",
     "outputs": [
       {
-        "internalType": "bytes4",
-        "name": "",
-        "type": "bytes4"
-      }
-    ],
-    "stateMutability": "pure",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "address",
-        "name": "",
-        "type": "address"
-      }
-    ],
-    "name": "poolForToken",
-    "outputs": [
-      {
-        "internalType": "address",
+        "internalType": "contract IPoolDeployer",
         "name": "",
         "type": "address"
       }
@@ -417,6 +263,19 @@ export const exnihiloFactoryAbi = [
       }
     ],
     "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "newDeployer",
+        "type": "address"
+      }
+    ],
+    "name": "setDeployer",
+    "outputs": [],
+    "stateMutability": "nonpayable",
     "type": "function"
   },
   {

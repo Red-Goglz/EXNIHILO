@@ -1,8 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-
-// Indexer URL — set VITE_INDEXER_URL to your Ponder deployment URL
-// e.g. https://indexer.exnihilo.finance
-const INDEXER_URL = import.meta.env.VITE_INDEXER_URL || "";
+import { hasIndexer, indexerFetch } from "../lib/indexer.ts";
 
 export interface PricePoint {
   timestamp: number;
@@ -24,16 +21,15 @@ interface ApiResponse {
   }[];
 }
 
-export function usePriceHistory(poolAddress: string, limit = 200) {
+export function usePriceHistory(poolAddress: string, chainId: number, limit = 200) {
   return useQuery<PricePoint[]>({
-    queryKey: ["priceHistory", poolAddress, limit],
+    // chainId in the key: pool addresses are only unique per chain
+    queryKey: ["priceHistory", chainId, poolAddress, limit],
     queryFn: async () => {
-      if (!INDEXER_URL) throw new Error("VITE_INDEXER_URL not set");
-      const res = await fetch(
-        `${INDEXER_URL}/prices/${poolAddress.toLowerCase()}?limit=${limit}`
+      const data = await indexerFetch<ApiResponse>(
+        chainId,
+        `/prices/${poolAddress.toLowerCase()}?limit=${limit}`,
       );
-      if (!res.ok) throw new Error(`Indexer returned ${res.status}`);
-      const data: ApiResponse = await res.json();
       return data.prices.map((p) => ({
         timestamp: p.timestamp,
         spot: BigInt(p.spot),
@@ -45,6 +41,7 @@ export function usePriceHistory(poolAddress: string, limit = 200) {
     staleTime: 15_000,
     refetchInterval: 15_000,
     retry: 1,
-    enabled: !!INDEXER_URL, // don't fetch if no indexer configured
+    // Skip chains no indexer follows — those requests can only 404.
+    enabled: hasIndexer(chainId),
   });
 }
