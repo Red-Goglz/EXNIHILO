@@ -147,10 +147,17 @@ VITE_WC_PROJECT_ID=          # WalletConnect project id
 VITE_INDEXER_URL_LOCAL=      # e.g. http://localhost:42069
 VITE_INDEXER_URL_FUJI=       # Fuji indexer, if one is running
 VITE_RPC_FUJI=               # Optional: overrides the public Fuji RPC
+VITE_FORMO_WRITE_KEY=        # Formo analytics; unset disables it
 ```
 
 A chain with no indexer URL is simply never queried — the UI shows an
 "unavailable" state rather than failing requests.
+
+`VITE_FORMO_WRITE_KEY` is client-side by design — it ships in the bundle, so it
+is not a secret. But Formo **origin-locks** it: a key issued for one domain is
+rejected on another, and the failure is silent because every call site uses
+`analytics?.track(...)`. If events stop arriving after a domain move, check this
+first. Leave it unset locally so development traffic is not recorded.
 
 **`packages/indexer/.env.local`** — see [Indexer](./indexer).
 

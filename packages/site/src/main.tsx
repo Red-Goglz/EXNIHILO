@@ -19,6 +19,43 @@ import { appPath, DEFAULT_CHAIN } from "./lib/chains.ts";
 
 const queryClient = new QueryClient();
 
+/**
+ * Formo analytics write key.
+ *
+ * Client-side by design — it ships in the bundle either way, so this is not a
+ * secret. It lives in env rather than source so that rotating it (or pointing a
+ * preview deploy at a different project) is a config change, not a code change
+ * that lands in git history forever.
+ *
+ * The key is origin-locked by Formo. A key issued for one domain is rejected
+ * elsewhere, and because every call site uses `analytics?.track(...)`, that
+ * failure is silent. If events stop arriving after a domain move, this is the
+ * first thing to check.
+ *
+ * Unset (local dev, CI) → analytics is disabled rather than half-initialised.
+ */
+const formoWriteKey: string | undefined =
+  import.meta.env.VITE_FORMO_WRITE_KEY || undefined;
+
+if (!formoWriteKey && import.meta.env.PROD) {
+  console.warn(
+    "[analytics] VITE_FORMO_WRITE_KEY is not set — Formo analytics is disabled.",
+  );
+}
+
+/** Wraps children in the Formo provider only when a key is configured. */
+function Analytics({ children }: { children: React.ReactNode }) {
+  if (!formoWriteKey) return <>{children}</>;
+  return (
+    <FormoAnalyticsProvider
+      writeKey={formoWriteKey}
+      options={{ wagmi: { config, queryClient } }}
+    >
+      {children}
+    </FormoAnalyticsProvider>
+  );
+}
+
 // All app routes are chain-scoped: /app/:chainSlug/... — the URL segment
 // (not the wallet) decides which chain's contracts the page reads.
 // Legacy chainless URLs (/app/markets/0xabc) redirect to the default chain.
@@ -54,17 +91,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
-        <FormoAnalyticsProvider
-          writeKey="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJvcmlnaW4iOiJodHRwczovL2V4bmloaWxvLmZpbmFuY2UiLCJwcm9qZWN0X2lkIjoiYzhvZWVOT0JMY2J4N19UWmlIczB4IiwiaWF0IjoxNzc1MTYyODA3fQ.uzIzGUk7PpIH07huL1DkIplFUvfxyeCoTYKyG218qhg"
-          options={{
-            wagmi: {
-              config: config,
-              queryClient: queryClient,
-            },
-          }}
-        >
+        <Analytics>
           <RouterProvider router={router} />
-        </FormoAnalyticsProvider>
+        </Analytics>
       </QueryClientProvider>
     </WagmiProvider>
   </React.StrictMode>
