@@ -28,4 +28,10 @@ See [Key Concepts](./key-concepts) for a deeper explanation.
 
 ## Chains
 
-EXNIHILO is currently deployed on **Avalanche** (Fuji testnet). Mainnet deployment is upcoming.
+EXNIHILO is live on **Avalanche C-Chain mainnet** (chain ID 43114), quoted in
+Circle's native USDC. It is the only network the app shows.
+
+The protocol was deployed without any markets — market creation is
+permissionless, so pools are created by users rather than shipped with the
+protocol. Contract addresses are on the
+[addresses page](/protocol/addresses).

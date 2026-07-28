@@ -103,6 +103,28 @@ Local addresses after `deployLocal.ts`:
 
 Deployer `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266` (Hardhat signer[0]) receives 1,000,000 MockUSDC.
 
+### Avalanche Mainnet Deployment
+
+Live at factory `0xBe6Fb0e7b7d8EFD491FEbC436F737cE8B244F85a` (block 91,382,693).
+Full address list: [docs/protocol/addresses](packages/docs/protocol/addresses.md).
+
+```bash
+cd packages/blockchain
+# Rehearse against a mainnet fork first — nothing is spent:
+FORK_AVALANCHE=1 DRY_RUN=1 MAINNET_PROTOCOL_TREASURY=0x... \
+  npx hardhat run scripts/deployMainnet.ts
+
+MAINNET_PROTOCOL_TREASURY=0x... \
+  npx hardhat run scripts/deployMainnet.ts --network avalanche
+```
+
+Deploys the protocol only — PositionNFT, PoolDeployer, LpNFT, EXNIHILOFactory
+and EXNIHILORouter against Circle's native USDC. No mocks, no faucet and **no
+markets**: market creation is permissionless, so pools are created by users.
+
+The factory's `usdc`, `protocolTreasury` and `defaultSwapFeeBps` are constructor
+immutables and can never be changed, so the script refuses to guess them.
+
 ### Fuji Testnet Deployment
 
 ```bash
@@ -134,7 +156,7 @@ npm run dev -w packages/site
 
 App runs at `http://localhost:5173`. Supports MetaMask, WalletConnect, and any EIP-6963 injected wallet.
 
-Configured chains: **Hardhat localhost** (chainId 31337) and **Avalanche Fuji** (chainId 43113). Connect MetaMask to one of these; the app shows a chain switch prompt otherwise.
+Configured chain: **Avalanche C-Chain mainnet** (chainId 43114) — the only network the app shows. Connect MetaMask to it; the app shows a chain switch prompt otherwise. To bring back Fuji or a local node, add an entry to `packages/site/src/lib/chains.ts` (that list drives the router, the wagmi config and the chain guard).
 
 ### Production Build
 

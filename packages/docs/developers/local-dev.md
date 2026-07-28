@@ -74,7 +74,8 @@ docker run -d --name exnihilo-pg -p 5432:5432 \
 ```
 
 Copy `packages/indexer/.env.example` to `.env.local` and point it at the local
-chain (the defaults target Fuji), using the addresses `deployLocal.ts` wrote to
+chain (the defaults target Avalanche mainnet), using the addresses
+`deployLocal.ts` wrote to
 `packages/site/src/contracts/localAddresses.json`:
 
 ```bash
@@ -96,8 +97,9 @@ npm run dev:indexer
 Serves on `http://localhost:42069`. Point the frontend at it with
 `VITE_INDEXER_URL_LOCAL` in `packages/site/.env`.
 
-One instance indexes one chain — see [Indexer](./indexer) for running Fuji and
-local side by side, and for the storage, RPC-budget and schema-migration notes.
+One instance indexes one chain — see [Indexer](./indexer) for running mainnet
+and local side by side, and for the storage, RPC-budget and schema-migration
+notes.
 
 ## Running the docs
 
@@ -145,8 +147,8 @@ PROTOCOL_TREASURY=      # Optional: defaults to the deployer
 ```
 VITE_WC_PROJECT_ID=          # WalletConnect project id
 VITE_INDEXER_URL_LOCAL=      # e.g. http://localhost:42069
-VITE_INDEXER_URL_FUJI=       # Fuji indexer, if one is running
-VITE_RPC_FUJI=               # Optional: overrides the public Fuji RPC
+VITE_INDEXER_URL_AVALANCHE=  # Mainnet indexer (prod: https://indexer.exnihilo.markets)
+VITE_RPC_AVALANCHE=          # Optional: overrides the public Avalanche RPC
 VITE_FORMO_WRITE_KEY=        # Formo analytics; unset disables it
 ```
 

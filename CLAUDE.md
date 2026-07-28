@@ -42,7 +42,8 @@ npm run codegen -w packages/indexer   # Regenerate ponder:schema / ponder:regist
 ```
 
 Serves on port 42069 by default. Requires `packages/indexer/.env.local` — copy
-`packages/indexer/.env.example` and set `PONDER_RPC_URL_43113`. `DATABASE_URL` is
+`packages/indexer/.env.example` and set `PONDER_RPC_URL_43114` (the suffix is the
+indexed chain id, so it changes with `PONDER_CHAIN_ID`). `DATABASE_URL` is
 optional locally (falls back to embedded PGlite) but required in production.
 
 ### Workspace-level
@@ -55,8 +56,10 @@ npm run <script> -w packages/site    # Run script in a specific workspace
 ## Environment Setup
 
 Copy `packages/blockchain/.env.example` to `packages/blockchain/.env` and populate:
-- `INFURA_API_KEY` — for Linea Sepolia RPC connection
 - `ACCOUNT_PRIVATE_KEY` — for contract deployments
+- `PROTOCOL_TREASURY` — fee recipient (testnet scripts fall back to the deployer;
+  `deployMainnet.ts` requires `MAINNET_PROTOCOL_TREASURY` explicitly)
+- `SNOWTRACE_API_KEY` — optional; **not** used for verification, see below
 
 ## Architecture
 
@@ -66,16 +69,30 @@ Follows standard Hardhat layout:
 - `contracts/` — Solidity contracts (currently `Lock.sol`)
 - `ignition/modules/` — Hardhat Ignition deployment modules
 - `test/` — Chai/Hardhat tests using `loadFixture` and `time` helpers
-- `hardhat.config.ts` — configured for Solidity 0.8.24, Linea Sepolia via Infura
+- `hardhat.config.ts` — Solidity 0.8.24 (evmVersion `cancun`, viaIR), networks
+  `avalanche` (43114) and `avalancheFujiTestnet` (43113)
+
+**Verification goes through Routescan, not Etherscan.** Snowtrace is operated by
+Routescan, so `etherscan.apiKey` must stay an *object* (a plain string makes
+hardhat-verify route to the Etherscan v2 endpoint and ignore `customChains`), and
+the key is a placeholder — passing the real `rs_...` key makes Routescan answer
+`result: null`, which surfaces as `Cannot read properties of null (reading 'startsWith')`.
+
+Dry-run any mainnet script against a fork before spending:
+`FORK_AVALANCHE=1 DRY_RUN=1 npx hardhat run scripts/deployMainnet.ts`
 
 ### Site Package
 
 - **Entry**: `index.html` → `src/main.tsx` wraps `<App>` with `WagmiProvider` and `QueryClientProvider`
-- **Web3 config**: `src/providers/client.ts` (Wagmi client) + `wagmi.config.ts` (chain: Linea testnet, connector: MetaMask)
+- **Web3 config**: `src/providers/client.ts` (Wagmi client) + `wagmi.config.ts`; chains come from `src/lib/chains.ts`
 - **Styling**: Tailwind CSS + PostCSS
 - **Build**: Vite with `tsc -b` type-checking before bundling
 
-The only configured chain is **Linea Sepolia testnet**. Contract ABIs/addresses from the blockchain package need to be manually wired into the site after deployment.
+The only configured chain is **Avalanche C-Chain mainnet** (43114), declared in
+`src/lib/chains.ts` — that list drives the router, the wagmi config, the nav and
+the chain guard, so a chain left in it stays reachable by URL even if hidden.
+Addresses live in `src/contracts/addresses.ts` and are wired in by hand after a
+deploy (`deployMainnet.ts` writes `mainnetAddresses.json` as the source of truth).
 
 ### Indexer Package
 

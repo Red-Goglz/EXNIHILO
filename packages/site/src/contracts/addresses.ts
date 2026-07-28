@@ -1,7 +1,22 @@
+export const AVALANCHE_CHAIN_ID = 43114;
 export const FUJI_CHAIN_ID    = 43113;
 export const HARDHAT_CHAIN_ID = 31337;
 
 export const ADDRESSES = {
+  // ── Avalanche C-Chain mainnet ───────────────────────────────────────────────
+  // Must match src/contracts/mainnetAddresses.json, written by
+  // `npx hardhat run scripts/deployMainnet.ts --network avalanche`.
+  // Protocol only — no markets were seeded, and there is no faucet or test
+  // token on mainnet. `usdc` is Circle's native USDC, not a mock.
+  [AVALANCHE_CHAIN_ID]: {
+    factory:      "0xBe6Fb0e7b7d8EFD491FEbC436F737cE8B244F85a" as `0x${string}`,
+    poolDeployer: "0xCC2dF79E5B67874ceeBDB09225aCd62dE2C9CA44" as `0x${string}`,
+    positionNFT:  "0xa08E20fb4c157cf8E46c67A41250F54c1b53adfd" as `0x${string}`,
+    lpNFT:        "0x71a6802e1b1313822014D29c5Fe43Dd441a4dB9a" as `0x${string}`,
+    usdc:         "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E" as `0x${string}`,
+    router:       "0xCeDaa217205975a7a86322FEe13b9ee223F98B15" as `0x${string}`,
+  },
+
   // ── Avalanche Fuji testnet ──────────────────────────────────────────────────
   // Must match src/contracts/fujiAddresses.json, rewritten by
   // `npx hardhat run scripts/deployFuji.ts --network avalancheFujiTestnet`.

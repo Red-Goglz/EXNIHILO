@@ -90,8 +90,21 @@ indexer.exnihilo.markets {
   across 5 pools, against 95 before bundling.
   Do not go back to reading the fields individually — and prefer extending
   `indexerState()` over adding a second read if the indexer needs more.
-- **A paid RPC is still worth it** for a large backfill, but the public
-  Avalanche endpoint is now viable for modest volumes.
+- **The RPC endpoint is the thing that breaks on a VPS, and it fails
+  misleadingly.** Two separate traps, both hit on the Contabo deploy:
+  - `api.avax-test.network` is behind Cloudflare, which blocks datacenter IP
+    ranges. Every request returns a "Sorry, you have been blocked" HTML page,
+    viem raises `HttpRequestError`, and Ponder exits on the unhandled
+    rejection. It works fine from a laptop, which is what makes it such a
+    convincing default.
+  - PublicNode accepts hosting ranges but rejects *archive* queries
+    (`Archive requests require a personal token`). Realtime sync looks healthy
+    while the backfill never completes.
+
+  So when swapping endpoints, test with an archive `eth_getLogs` at
+  `START_BLOCK` — every endpoint that failed above answered `eth_blockNumber`
+  correctly. `avalanche-fuji.drpc.org` serves both and is what production uses;
+  a paid endpoint is still worth it for a large backfill.
 - **`START_BLOCK` is the factory's deploy block** (`src/chain.ts`). Never lower
   it — there is nothing to index before the factory exists, and doing so turns
   a minutes-long backfill into an hours-long one.

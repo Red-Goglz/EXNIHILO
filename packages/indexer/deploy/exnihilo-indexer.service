@@ -18,7 +18,21 @@ EnvironmentFile=/etc/exnihilo/indexer.env
 Environment=NODE_ENV=production
 Environment=PORT=42069
 
-ExecStart=/usr/bin/npm run start --workspace packages/indexer
+# Ponder builds a `conf` store for telemetry before it does anything else, and
+# `conf` resolves to $HOME/.config — which ProtectHome=true below makes
+# unreadable, crashing the process with EACCES at startup. Disabling telemetry
+# is the intent; XDG_CONFIG_HOME is the belt-and-braces, since the store is
+# constructed whether or not telemetry ends up being sent. The path is inside
+# ReadWritePaths.
+Environment=PONDER_TELEMETRY_DISABLED=1
+Environment=XDG_CONFIG_HOME=/srv/exnihilo/packages/indexer/.config
+
+# Run from inside the workspace, not from the repo root with --workspace:
+# npm resolves workspaces relative to the directory it starts in, so
+# `--workspace packages/indexer` from WorkingDirectory above fails with
+# "No workspaces found". Hoisted deps in /srv/exnihilo/node_modules still
+# resolve normally from here.
+ExecStart=/usr/bin/npm run start
 
 # Ponder exits non-zero on an indexing error (see the uncaughtException handler),
 # and a wedged sync should not require a human. Always restart, but back off so

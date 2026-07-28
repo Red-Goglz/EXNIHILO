@@ -30,7 +30,7 @@ export default function LandingPage() {
             Docs
           </a>
           <Link to="/app" className="btn btn-primary text-xs py-2 px-5">
-            Launch App (Testnet)
+            Launch App
           </Link>
         </div>
       </nav>
@@ -62,7 +62,7 @@ export default function LandingPage() {
 
         <div className="fade-up fade-up-d3 flex flex-col sm:flex-row gap-4">
           <Link to="/app" className="btn btn-primary">
-            Launch App (Testnet)
+            Launch App
           </Link>
           <a href="/docs" className="btn btn-outline">
             Read Docs
@@ -210,7 +210,7 @@ export default function LandingPage() {
       <section className="max-w-4xl mx-auto px-6 py-24">
         <p className="section-label mb-2 text-center">
           <span className="pulse-dot mr-2" />
-          Live on Avalanche Fuji Testnet
+          Live on Avalanche
         </p>
         <h2 className="font-display text-4xl md:text-5xl text-white text-center mb-16 tracking-wide">
           Protocol stats
@@ -227,7 +227,7 @@ export default function LandingPage() {
           className="text-center mt-6 text-xs"
           style={{ color: "var(--dim)" }}
         >
-          Stats update from on-chain data. Currently on Fuji testnet.
+          Stats update from on-chain data on Avalanche C-Chain.
         </p>
       </section>
 
@@ -243,7 +243,7 @@ export default function LandingPage() {
         </p>
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
           <Link to="/app" className="btn btn-primary">
-            Launch App (Testnet)
+            Launch App
           </Link>
           <a href="/docs" className="btn btn-outline">
             Read Docs

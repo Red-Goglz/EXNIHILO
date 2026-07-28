@@ -54,10 +54,17 @@ if [[ ! -f "$ENV_FILE" ]]; then
 # EXNIHILO indexer — secrets. Keep mode 0600.
 DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@127.0.0.1:5432/${DB_NAME}
 
-# Use a paid endpoint here. The indexer issues ~9 RPC reads per position event
-# (syncFees + snapshotPrices + getPosition); the public Avalanche RPC will
-# rate-limit a backfill of any real size.
-PONDER_RPC_URL_43113=https://api.avax-test.network/ext/bc/C/rpc
+# NOT api.avax-test.network. That endpoint sits behind Cloudflare, which blocks
+# datacenter IPs outright — from a VPS every request comes back as a "Sorry, you
+# have been blocked" HTML page, and Ponder dies on the unhandled rejection. It
+# works from a laptop, which is what makes it such a convincing default.
+#
+# Not PublicNode either: it accepts hosting ranges but answers any historical
+# eth_getLogs with "Archive requests require a personal token", which kills the
+# backfill while realtime sync looks fine. dRPC serves both. Verify a
+# replacement with an *archive* eth_getLogs against START_BLOCK, not
+# eth_blockNumber — every dead endpoint here passed eth_blockNumber.
+PONDER_RPC_URL_43113=https://avalanche-fuji.drpc.org
 ENV
   chown exnihilo:exnihilo "$ENV_FILE"
   chmod 0600 "$ENV_FILE"

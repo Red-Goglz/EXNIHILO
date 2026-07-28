@@ -1,5 +1,5 @@
 import { http, type Transport } from "wagmi";
-import { avalancheFuji, hardhat } from "wagmi/chains";
+import { avalanche } from "wagmi/chains";
 import type { Chain } from "wagmi/chains";
 
 /**
@@ -25,33 +25,28 @@ export interface AppChain {
   indexerUrl?: string;
 }
 
-const fujiRpcUrl =
-  import.meta.env.VITE_RPC_FUJI ?? "https://api.avax-test.network/ext/bc/C/rpc";
+const avalancheRpcUrl =
+  import.meta.env.VITE_RPC_AVALANCHE ?? "https://api.avax.network/ext/bc/C/rpc";
 
 // One Ponder instance follows one chain, so each chain gets its own URL.
-// VITE_INDEXER_URL is kept as the Fuji fallback for existing deployments.
-const fujiIndexerUrl: string | undefined =
-  import.meta.env.VITE_INDEXER_URL_FUJI || import.meta.env.VITE_INDEXER_URL || undefined;
+// VITE_INDEXER_URL is kept as a fallback for existing deployments.
+const avalancheIndexerUrl: string | undefined =
+  import.meta.env.VITE_INDEXER_URL_AVALANCHE || import.meta.env.VITE_INDEXER_URL || undefined;
 
-const localIndexerUrl: string | undefined =
-  import.meta.env.VITE_INDEXER_URL_LOCAL || undefined;
-
+/**
+ * Avalanche C-Chain mainnet is the only shown network. The Fuji and Hardhat
+ * entries were removed rather than hidden: this list drives the router, the
+ * wagmi config and the chain guard, so anything left here stays reachable by
+ * URL even when it is absent from the nav.
+ */
 export const APP_CHAINS = [
   {
-    slug: "fuji",
-    chain: avalancheFuji,
-    label: "FUJI TESTNET",
-    rpcUrl: fujiRpcUrl,
-    testnet: true,
-    indexerUrl: fujiIndexerUrl,
-  },
-  {
-    slug: "local",
-    chain: hardhat,
-    label: "HARDHAT LOCAL",
-    rpcUrl: "http://127.0.0.1:8545",
-    testnet: true,
-    indexerUrl: localIndexerUrl,
+    slug: "avalanche",
+    chain: avalanche,
+    label: "AVALANCHE",
+    rpcUrl: avalancheRpcUrl,
+    testnet: false,
+    indexerUrl: avalancheIndexerUrl,
   },
 ] as const satisfies readonly AppChain[];
 

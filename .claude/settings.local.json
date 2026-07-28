@@ -22,7 +22,10 @@
       "WebFetch(domain:indexer.exnihilo.markets)",
       "PowerShell(npm install *)",
       "PowerShell(npm ls *)",
-      "PowerShell(npm *)"
+      "PowerShell(npm *)",
+      "WebFetch(domain:contabo.com)",
+      "Bash(ssh deploy@100.65.57.84 \"cat > /tmp/lock-cf.sh\")",
+      "Bash(ssh deploy@100.65.57.84 'grep -E \"^CLOUDFLARE_ONLY_443|^CLOSE_PORT_80\" /tmp/lock-cf.sh; echo \"yes\" | sudo bash /tmp/lock-cf.sh 2>&1 | tail -30')"
     ]
   }
 }

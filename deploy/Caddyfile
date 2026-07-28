@@ -1,0 +1,59 @@
+# EXNIHILO — reverse proxy / static host.
+#
+# Install to /etc/caddy/Caddyfile. Caddy obtains and renews certificates
+# automatically, so DNS for all three names must already point at this box.
+
+{
+	# ACME contact address for Let's Encrypt expiry notices. Kept out of the
+	# repo because this one is public — set ACME_EMAIL in Caddy's environment,
+	# or leave it unset (an empty value registers the account with no contact).
+	# The live server already holds a registered ACME account in
+	# /var/lib/caddy, so changing this does not affect existing certificates.
+	email {$ACME_EMAIL}
+}
+
+exnihilo.markets {
+	encode zstd gzip
+	root * /srv/exnihilo/packages/site/dist
+
+	# Vite fingerprints everything under /assets, so it is safe to cache for a
+	# year. index.html deliberately is not cached — it is the file that names
+	# the current asset hashes, so a stale copy pins the whole app to an old
+	# build.
+	@assets path /assets/*
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+	header /index.html Cache-Control "no-cache"
+
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+
+	# The VitePress docs are real files under dist/docs. They must be matched
+	# before the SPA fallback: otherwise a missing docs page silently renders
+	# the trading app shell instead of a 404, which is how you end up shipping
+	# a "working" docs link that shows the wrong site.
+	@docs path /docs /docs/*
+	handle @docs {
+		try_files {path} {path}/index.html {path}.html
+		file_server
+	}
+
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+www.exnihilo.markets {
+	redir https://exnihilo.markets{uri} permanent
+}
+
+# Ponder's Hono API. It already sends permissive CORS headers itself
+# (`app.use("/*", cors())`), so do not add them here — duplicated
+# Access-Control-Allow-Origin headers make browsers reject the response.
+indexer.exnihilo.markets {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:42069
+}
