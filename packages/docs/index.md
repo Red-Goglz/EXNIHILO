@@ -18,8 +18,8 @@ features:
     details: One transaction creates a leveraged market for any ERC-20. No oracle, no market maker, no listing committee, no governance vote.
   - title: Positions are NFTs
     details: Every position is a transferable ERC-721 with on-chain SVG art and live P&L. Sell the position without closing it.
-  - title: No oracles, no admin keys, no token
-    details: Price comes from the AMM's own curves. Contracts are immutable — there is no upgrade path and no governance to capture.
+  - title: No oracles, no token, no upgrade path
+    details: Price comes from the AMM's own curves. Contracts are immutable and there is no governance to capture. One emergency role can wind a pool down; it cannot move funds.
 ---
 
 ## In one line

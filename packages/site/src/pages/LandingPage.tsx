@@ -186,7 +186,7 @@ export default function LandingPage() {
             }
             iconColor="var(--red)"
             title="Fully permissionless"
-            desc="Anyone can create a market for any token. No admin keys, no governance, no gatekeeping. The factory is immutable."
+            desc="Anyone can create a market for any token. No governance, no gatekeeping, no listing process. The factory is immutable."
           />
           <FeatureCard
             icon={
@@ -210,6 +210,79 @@ export default function LandingPage() {
             title="Positions are options"
             desc="A long is a call, a short is a put, the open fee is the premium. No strike to pick, no implied volatility, no Greeks — just a direction and a deadline."
           />
+        </div>
+      </section>
+
+      {/* ── TRUST STATS ──────────────────────────────────────────────────── */}
+      <section className="max-w-4xl mx-auto px-6 py-24">
+        <p className="section-label mb-2 text-center">Verify, don&rsquo;t trust</p>
+        <h2 className="font-display text-4xl md:text-5xl text-white text-center mb-4 tracking-wide">
+          Check the work.
+        </h2>
+        <p
+          className="text-center text-sm max-w-xl mx-auto mb-16"
+          style={{ color: "var(--muted)" }}
+        >
+          The protocol is young and the pools are small on purpose. What we can
+          offer instead of a track record is everything you need to audit it
+          yourself.
+        </p>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <StatBox label="Tests passing" value="414" />
+          <StatBox label="Audit rounds" value="4" />
+          <StatBox label="Upgrade paths" value="0" />
+          <StatBox label="Governance tokens" value="0" />
+        </div>
+
+        <div className="cyber-panel p-6 mt-6">
+          <p className="section-label mb-3">The one privileged role</p>
+          <p className="text-sm mb-4" style={{ color: "var(--muted)" }}>
+            The factory deployer can force any pool into wind-down. That is the
+            entire extent of it: it cannot move funds, cannot block a
+            settlement, and cannot take LP liquidity. Positions still settle and
+            LPs still withdraw on their own terms. The role is renounceable by
+            setting it to the zero address.
+          </p>
+          <p className="text-sm" style={{ color: "var(--muted)" }}>
+            We list it because you would find it anyway &mdash; and anyone
+            claiming a protocol has zero privileged roles is usually hoping you
+            will not look.
+          </p>
+        </div>
+
+        <div className="cyber-panel p-6 mt-4">
+          <p className="section-label mb-3">About those audits</p>
+          <p className="text-sm mb-4" style={{ color: "var(--muted)" }}>
+            Four rounds, each across 11 independent analysis passes &mdash;
+            performed by AI models, <em style={{ color: "var(--body)" }}>not</em>{" "}
+            a human security firm. Each round surfaced findings the previous one
+            missed, which tells you none of them should be treated as final.
+            Every finding and remediation is published.
+          </p>
+          <div className="flex flex-wrap gap-4">
+            <a
+              href="https://github.com/Red-Goglz/EXNIHILO/tree/main/.audit"
+              className="section-label"
+              style={{ color: "var(--cyan)" }}
+            >
+              Read the findings &rarr;
+            </a>
+            <a
+              href="/docs/protocol/security"
+              className="section-label"
+              style={{ color: "var(--cyan)" }}
+            >
+              Security overview &rarr;
+            </a>
+            <a
+              href="/docs/faq/risks"
+              className="section-label"
+              style={{ color: "var(--cyan)" }}
+            >
+              What can go wrong &rarr;
+            </a>
+          </div>
         </div>
       </section>
 

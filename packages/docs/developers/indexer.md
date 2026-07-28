@@ -135,6 +135,6 @@ schema name, let it sync, then repoint the reverse proxy.
 
 ## Deployment
 
-See [`packages/indexer/deploy/README.md`](https://github.com/bravenoob/exnihilo-dapp/tree/main/packages/indexer/deploy)
+See [`packages/indexer/deploy/README.md`](https://github.com/Red-Goglz/EXNIHILO/tree/main/packages/indexer/deploy)
 for the VPS runbook: `provision-postgres.sh`, a hardened systemd unit with
 restart-on-failure, and a Caddy reverse-proxy snippet.

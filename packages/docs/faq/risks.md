@@ -9,7 +9,7 @@ EXNIHILO is experimental software. Use at your own risk. Only trade with funds y
 **The protocol has not been audited by a human security firm.** Four automated audit
 rounds have been performed by AI models (most recently Claude Opus 5, 2026-07-27), each
 across 11 independent analysis passes, with all findings and remediations published in
-[`.audit/`](https://github.com/bravenoob/exnihilo-dapp/tree/main/.audit). Each round
+[`.audit/`](https://github.com/Red-Goglz/EXNIHILO/tree/main/.audit). Each round
 independently surfaced findings its predecessors missed — which is itself evidence that
 no round should be treated as exhaustive.
 

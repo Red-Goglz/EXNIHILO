@@ -137,7 +137,7 @@ Two fixes were applied during the round:
 Both shipped with mutation-tested coverage (`ShortCollateralInvariant.ts`,
 `ZeroOutputSwap.ts`).
 
-Full reports: [`.audit/findings-opus5/`](https://github.com/bravenoob/exnihilo-dapp/tree/main/.audit/findings-opus5).
+Full reports: [`.audit/findings-opus5/`](https://github.com/Red-Goglz/EXNIHILO/tree/main/.audit/findings-opus5).
 
 ### Claude Fable 5 (2026-07-09) — superseded
 
@@ -145,7 +145,7 @@ Reported 0 Critical / 0 High / 0 Medium / 4 Low. Retained here for the record,
 but its central claim — that nothing value-moving had changed since the 4.7
 round — did not hold, so its clean result should not be read as covering the
 renewal, auto-renew, keeper or claim subsystems. Superseded by the Opus 5 round
-above. Reports: [`.audit/findings-fable5/`](https://github.com/bravenoob/exnihilo-dapp/tree/main/.audit/findings-fable5).
+above. Reports: [`.audit/findings-fable5/`](https://github.com/Red-Goglz/EXNIHILO/tree/main/.audit/findings-fable5).
 
 ### Re-audit: Claude Opus 4.7 (2026-04-17, remediated 2026-04-18)
 
@@ -183,11 +183,11 @@ Cross-pass consensus was strong: the two top issues (`_trySendUsdc` accounting l
 
 Remaining open items are LOW or INFO: either mitigated by existing protocol mechanisms (atomic deployment, `closePool` fallback, MIN_POSITION_FEE), accepted by design (theoretical ERC-777 read-only reentrancy, treasury blacklist), or tied to pathological LP token choices (rebasing, extreme decimals).
 
-Full pass-by-pass reports: [`.audit/findings-4.7/`](https://github.com/bravenoob/exnihilo-dapp/tree/main/.audit/findings-4.7).
+Full pass-by-pass reports: [`.audit/findings-4.7/`](https://github.com/Red-Goglz/EXNIHILO/tree/main/.audit/findings-4.7).
 
 ### Original audit: Claude Opus 4.6 (2026-04-04)
 
-The 4.6 pass found 0 Critical, 0 High, 1 Medium (DoS-2: blacklisted holder blocks LP exit — fixed via `_trySendUsdc` try/catch), 7 Low, 6 Info. Nine dedicated tests in `BlacklistResilience.ts` confirmed the DoS-2 fix. Full reports: [`.audit/findings/`](https://github.com/bravenoob/exnihilo-dapp/tree/main/.audit/findings).
+The 4.6 pass found 0 Critical, 0 High, 1 Medium (DoS-2: blacklisted holder blocks LP exit — fixed via `_trySendUsdc` try/catch), 7 Low, 6 Info. Nine dedicated tests in `BlacklistResilience.ts` confirmed the DoS-2 fix. Full reports: [`.audit/findings/`](https://github.com/Red-Goglz/EXNIHILO/tree/main/.audit/findings).
 
 ::: warning
 All four rounds were performed by AI models, not human auditors. They cover a wide range of vulnerability classes, and each round has independently surfaced findings its predecessors missed — but they do not replace a formal professional audit. Use at your own risk.
