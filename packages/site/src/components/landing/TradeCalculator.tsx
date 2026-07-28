@@ -40,7 +40,10 @@ const POOL_FIELDS = [
   "maxPositionUsd",
   "positionDuration",
   "tokenDecimals",
-  "token",
+  // NOT "token" — that name exists only as a parameter of the
+  // SafeERC20FailedOperation error, so reading it reverts and every pool falls
+  // back to a placeholder symbol. PoolCard uses underlyingToken; so do we.
+  "underlyingToken",
 ] as const;
 
 interface PoolState {
@@ -186,18 +189,37 @@ export default function TradeCalculator() {
 
   const tokenAddrs = useMemo(() => {
     if (!raw) return [];
-    const tokIdx = POOL_FIELDS.indexOf("token");
+    const tokIdx = POOL_FIELDS.indexOf("underlyingToken");
     return poolAddrs.map(
       (_, i) => raw[i * POOL_FIELDS.length + tokIdx]?.result as `0x${string}` | undefined,
     );
   }, [raw, poolAddrs]);
 
-  const { data: symbols } = useReadContracts({
-    contracts: tokenAddrs
-      .filter((a): a is `0x${string}` => !!a)
-      .map((address) => ({ address, abi: erc20Abi, functionName: "symbol", chainId: CHAIN_ID })),
-    query: { enabled: tokenAddrs.some(Boolean), staleTime: 300_000 },
+  // Keyed by address rather than index: filtering the undefined entries out of
+  // the call list would otherwise shift every later symbol onto the wrong pool.
+  const symbolTargets = useMemo(
+    () => [...new Set(tokenAddrs.filter((a): a is `0x${string}` => !!a))],
+    [tokenAddrs],
+  );
+
+  const { data: symbolData } = useReadContracts({
+    contracts: symbolTargets.map((address) => ({
+      address,
+      abi: erc20Abi,
+      functionName: "symbol",
+      chainId: CHAIN_ID,
+    })),
+    query: { enabled: symbolTargets.length > 0, staleTime: 300_000 },
   });
+
+  const symbolByToken = useMemo(() => {
+    const m = new Map<string, string>();
+    symbolTargets.forEach((addr, i) => {
+      const s = symbolData?.[i]?.result as string | undefined;
+      if (s) m.set(addr.toLowerCase(), s);
+    });
+    return m;
+  }, [symbolTargets, symbolData]);
 
   const pools: PoolState[] = useMemo(() => {
     if (!raw) return [];
@@ -219,9 +241,11 @@ export default function TradeCalculator() {
           usdCap > 0 ? usdCap : null,
         ].filter((x): x is number => x !== null);
 
+        const tok = g("underlyingToken") as `0x${string}` | undefined;
+
         return {
           address,
-          symbol: (symbols?.[i]?.result as string | undefined) ?? "TOKEN",
+          symbol: (tok && symbolByToken.get(tok.toLowerCase())) ?? "…",
           backedAirUsd: bU,
           backedAirToken: bT,
           airTokenSupply: Number(g("airTokenSupply") ?? 0n) / tokScale,
@@ -232,7 +256,7 @@ export default function TradeCalculator() {
         } satisfies PoolState;
       })
       .filter((p): p is PoolState => p !== null);
-  }, [raw, poolAddrs, symbols]);
+  }, [raw, poolAddrs, symbolByToken]);
 
   const pool = pools[Math.min(poolIdx, pools.length - 1)];
 
