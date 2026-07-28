@@ -347,8 +347,8 @@ Subhead row (replacing the current four features):
 > **11/**
 > And because the minimum fee is $0.05, a $1 position is economically real.
 >
-> There is no other venue in DeFi where a dollar buys a genuine leveraged
-> position on a token that launched this morning.
+> There is no other venue in DeFi where a dollar buys a real option on a token
+> that launched this morning.
 >
 > Not because they won't. Because their model can't.
 >
@@ -409,7 +409,7 @@ Subhead row (replacing the current four features):
 >
 > You earned $0 from it.
 >
-> Be your own market's LP and 3% of every leveraged position on your token is
+> Be your own market's LP and 3% of every position opened on your token is
 > yours. Plus swap fees. Plus renewal fees.
 
 **f. The NFT hook**
@@ -465,8 +465,10 @@ Send from a personal account. Never paste this verbatim — the specifics are th
 > comes off the pool's own curve. That's why GMX can't list you and this can.
 >
 > You'd be the sole LP. 3% of every position opened on $[TICKER], plus swap fees,
-> plus renewal fees. You set the position size caps. Immutable contracts, no
-> admin keys — I can't touch your pool.
+> plus renewal fees. You set the position size caps, on-chain. The contracts are
+> immutable — I can't change the rules after you deposit, and I can't touch your
+> liquidity or your fees. The one thing I can do is force a pool into wind-down
+> in an emergency; positions still settle and you still withdraw normally.
 >
 > Straight about the risk: you're the counterparty. A big winner is paid from your
 > liquidity. That's what the caps are for, and there's an impact fee sized to
@@ -479,10 +481,10 @@ Send from a personal account. Never paste this verbatim — the specifics are th
 
 ### 6.5 Partner announcement template (they post, not you)
 
-> **$TICKER is now leveraged.**
+> **You can now go long or short $TICKER.**
 >
-> You can go long or short $TICKER on EXNIHILO — no collateral, no liquidations.
-> You pay a fee, and that fee is the most you can lose.
+> Live on EXNIHILO. You post no collateral and you cannot be liquidated — you
+> pay a fee, and that fee is the most you can lose.
 >
 > $5 gets you the same price exposure as $100.
 >
@@ -514,8 +516,32 @@ Send from a personal account. Never paste this verbatim — the specifics are th
 
 ## 7. Message discipline
 
+### The leverage rule, stated properly
+
+The blunt version of this rule ("never say leverage") is wrong and unusable — the
+chains in §2 depend on naming leverage in order to reject it. What matters is *whose
+product the word is attached to*:
+
+| Use | Verdict | Example |
+|---|---|---|
+| Naming what **incumbents** sell | ✅ Required | "The standard fix is leverage. And it works — right up until it doesn't." |
+| **Rejecting** it | ✅ Required — this is the pivot | "That's not leverage. That's an option." |
+| **Negating** it about us | ✅ Correct usage | "You pay a fee, not collateral." · "No margin call at 4am." |
+| Naming the **category a project can't access** | ✅ Fine (Chain B) | "You'll never get listed for leveraged trading." |
+| Describing **what we give the trader** | ❌ Never | ~~"a dollar buys a genuine leveraged position"~~ → "a dollar buys a real option" |
+
+**The test:** if swapping in "option" preserves the meaning, you were describing our
+product and must swap it. If swapping breaks the sentence, you were naming the
+incumbent category and should keep it.
+
+Describing what we sell as "leverage" doesn't just violate a style guide — it hands
+back the exact objection the option framing exists to answer. A reader who files us
+under "leverage" immediately asks who eats the loss and why there's no liquidation,
+and the whole chain has to be rebuilt from link 4.
+
 **Always:**
-- "Option" / "premium" / "expiry" — not "leverage" / "collateral" / "margin"
+- "Option" / "premium" / "expiry" for our product; "leverage" / "margin" only for
+  theirs, or when negating (see the table above)
 - Lead with the capped downside before the upside
 - State expiry unprompted, every time
 - Express payoffs as **ratios of the premium**, never as fixed dollar amounts —
