@@ -32,18 +32,30 @@ eats the loss? this is a scam."* "It's an option, the premium is the max loss" i
 instantly, structurally believable, because everyone already knows options work that
 way. You convert a credibility *liability* into a credibility *asset* with a word swap.
 
-**The arithmetic that powers the entire trader story:**
+**The arithmetic that powers the entire trader story.** State it as *ratios*, never as
+fixed dollar amounts — the openable size is a function of pool depth, and hardcoded
+figures go false the moment caps bind (see the Phase 0 post-mortem in §5):
 
 ```
-Notional        $100
-Cost to open    ~$5.08   (5% base + impact in a $10k pool)
-Token +50%      →  ~$50 profit on $5.08 spent   ≈ 10x on capital
-Token +200%     →  ~$200 profit on $5.08 spent  ≈ 40x on capital
-Token -90%      →  you lose $5.08. That is the floor. Always.
+Premium          5% of notional  (minimum 0.05 USDC — see below)
+Token +200%   →  ~1.9x notional paid out   ≈ 36x on the premium
+Token +50%    →  ~0.4x notional paid out   ≈  7x on the premium
+Break-even    →  ~+8.3% move, for a position sized at 1% of pool reserves
+Any move down →  you lose the premium. That is the floor. Always.
 ```
 
-And the fee floor is **0.05 USDC**, so a $1 position is economically real. Nobody else
-in DeFi sells a $1 option on a token that launched this morning.
+You receive the **profit only** — the notional is never deposited, so it is never
+returned. A $100 position that doubles pays about $100, not $200.
+
+**The 0.05 USDC fee floor is the constraint that matters at small scale.** Below $1
+notional the floor beats the 5% rate, and the effective cost explodes: at $0.25 the
+trader pays 20%, at $0.05 they pay 100%. A pool must therefore support at least a $1
+position before any of the above is true — which at `maxPositionBps = 100` means
+**$100 of reserves, minimum**. Above that line, break-even is a flat +8.3% regardless
+of how large the pool gets.
+
+Once that floor is cleared, nobody else in DeFi sells a $1 option on a token that
+launched this morning.
 
 ---
 
@@ -79,10 +91,10 @@ survives while the framing stays defensible: the enemy is **structural**, not pe
 | 6 | "That's impossible with borrowed money. Something borrowed can always be recalled." | Definitional. One step. |
 | 7 | "…so it would have to not be borrowed at all." | The gap. Now they *want* the mechanism. |
 | 8 | "EXNIHILO mints exposure out of thin air instead of lending it — nothing to recall." | The unique mechanism. Name it: **three-curve AMM, synthetic mint.** |
-| 9 | "Then my cost is the fee, and the fee is all I can ever lose." | Arithmetic. Show the $5.08 table. |
-| 10 | "So $5 moves like $100, and no one can take it from me before I'm right." | The desire. They say it, not you. |
+| 9 | "Then my cost is the fee, and the fee is all I can ever lose." | Arithmetic. Point at the live calculator, never a hardcoded figure. |
+| 10 | "So a few dollars moves like a position many times its size, and no one can take it from me before I'm right." | The desire. They say it, not you. |
 | 11 | "But it expires — I have to be right inside the window." | **Pre-handled objection.** Never hide this. It is what makes 1–10 believable. |
-| 12 | "Fine. $5 to find out." | The action. |
+| 12 | "Fine. A dollar to find out." | The action. Keep it at or below the live max position — check before publishing. |
 
 **Link 11 is non-negotiable.** Volunteering the expiry is what buys belief for links
 9–10. Copy that hides it will convert worse, not better.
@@ -110,7 +122,7 @@ audience permanently — a trader who lands on an empty market feed does not com
 | 7 | "EXNIHILO prices off its own curve. No oracle. No market maker. No listing desk." | The mechanism. |
 | 8 | "And I'd be the **sole** LP — the speculation on my token pays *me*." | 3% of every open + impact fee + renewal fees + swap fees. |
 | 9 | "The volume my community already creates for free becomes revenue." | Their own DEX volume × 3%. **Compute this number for them by name.** |
-| 10 | "And my downside is bounded — caps, my pool, no admin keys, I can't be rugged." | `maxPositionBps`, immutability, LP NFT. |
+| 10 | "And my downside is bounded — caps, my pool, immutable contracts, I can't be rugged." | `maxPositionBps`, immutability, LP NFT. Disclose the deployer wind-down role here rather than let them find it. |
 | 11 | "But I'm the counterparty — a big winner is paid from my liquidity." | **Pre-handled objection.** See honesty note below. |
 | 12 | "Which is what caps are for. One transaction, ~$1K, and I own the market." | Action. |
 
@@ -133,7 +145,7 @@ is short and entirely mechanical. No emotion, no benefit language.
 2. "The LP does — and they're a single, consenting, capped, isolated party per pool."
 3. "So it's a written option, and the LP is the writer."
 4. "Oracle-free, so the usual manipulation vector is gone — but pool price can diverge."
-5. "Immutable, no admin keys, no governance token, no upgrade path."
+5. "Immutable, no governance token, no upgrade path — and one disclosed emergency role that can wind a pool down but cannot move value."
 6. "This is a real design with real, disclosed tradeoffs. Worth a look."
 
 Content for this audience = the mechanism thread, the reserve-accounting table, and the
@@ -145,14 +157,30 @@ security page. **Never** market to them; only explain. They convert on rigor.
 
 ### Phase 0 — Preconditions (do these before *any* public post)
 
-| # | Action | Why it blocks everything |
+| # | Action | Status |
 |---|---|---|
-| 0.1 | **Fix the audit contradiction.** `gtm.md:79` claims an evmbench audit; `faq/risks.md:9` says no formal audit. Standardize on the honest `protocol/security.md` version: four AI-model audit rounds, remediated, *not* a substitute for a human audit. | First thing a skeptic finds. One contradiction kills Chain C entirely. |
-| 0.2 | **Seed 2–3 pools yourself.** AVAX-ecosystem tokens with real volatility. Fund the USDC side properly. | An empty market feed converts at zero and burns first impressions permanently. |
-| 0.3 | **Size caps so the trader story is actually true.** At `maxPositionBps = 100` on a $1K pool, max notional is $10 — the "$100 exposure" story is false there. Either seed deeper (~$10K+) or raise caps on your own pools. | Do not publish a claim your own pools can't honor. |
-| 0.4 | **Rewrite the landing hero as an option.** See §6.1. | Every downstream link points here. |
-| 0.5 | **Ship a "what did $5 do" calculator** on the landing page — token move in, P&L out. | It makes links 9–10 of Chain A self-verifying instead of claimed. |
-| 0.6 | Pin one long-form mechanism thread on X. | Chain C's entire conversion surface. |
+| 0.1 | **Fix the audit contradiction.** Standardize on the honest `protocol/security.md` version: four AI-model audit rounds, remediated, *not* a substitute for a human audit. | ✅ **Done.** `gtm.md` evmbench claim removed; `risks.md` rewritten. Also verified the 414-test figure by running the suite. |
+| 0.2 | **Seed 2–3 pools yourself.** | ✅ **Done.** 3 pools live. Depth is being raised deliberately (see 0.3). |
+| 0.3 | **Size caps so the trader story is actually true.** | ✅ **Done at $100/pool.** Was $25/pool = $0.25 max position = 20% effective fee. Topped to $100 → $1 max position, 5% flat, break-even +8.3%. **$100 is the hard floor** — below it the 0.05 USDC fee floor makes the product look like a 20–100% fee. |
+| 0.4 | **Rewrite the landing hero as an option.** | ✅ **Done.** Shipped as "Nothing here can liquidate you" — see §6.1 for why the original `$5 → $100` hero was pulled. |
+| 0.5 | **Ship a calculator** on the landing page — token move in, P&L out. | ✅ **Done, and better than specified.** Reads reserves, caps, swap fee and duration live from the pool contracts; fee from `quoteOpenFee` on-chain. Shows effective fee rate, break-even move, and warns when the floor binds. Cannot go stale. |
+| 0.6 | Pin one long-form mechanism thread on X. | ⬜ **Open.** Content is §6.2 below, revised. This is the only remaining Phase 0 item. |
+| 0.7 | **Trust stats on the landing page** (added). | ✅ **Done.** 414 tests / 4 audit rounds / 0 upgrade paths / 0 governance tokens, plus disclosure of the deployer role and the AI-vs-human audit distinction. |
+
+### Phase 0 post-mortem — read before writing any copy
+
+Three things nearly shipped as public claims that were false. All three came from
+writing copy against the *intended* design instead of the deployed one:
+
+1. **"$5 moves like $100"** — the live pools capped positions at $0.25. The trade in
+   the headline would have reverted.
+2. **"No admin keys"** — `EXNIHILOFactory.deployer` is set to the deploy wallet on
+   mainnet and can force any pool into wind-down. Now disclosed rather than denied.
+3. **Every audit link 404'd** — they pointed at a repo path that does not exist. A
+   trust section whose evidence links are dead is worse than no trust section.
+
+**Rule going forward: verify every numeric or absolute claim against mainnet state
+before it goes public.** Read the contract, not the spec.
 
 ### Phase 1 — Weeks 1–4: projects only (Chain B)
 
@@ -181,8 +209,9 @@ security page. **Never** market to them; only explain. They convert on rigor.
   protocols have nothing like it; a winning position is a *screenshot people post*).
 - "Token of the week" long/short callouts.
 - Joint X Spaces where the *project* tells the story, not you.
-- KOLs only now, and only mid-tier degen accounts who will actually place a $5 trade
-  on stream.
+- KOLs only now, and only mid-tier degen accounts who will actually place a live trade
+  on stream. Confirm the current max position first — asking someone to demo a size
+  the pool will reject is the worst possible first impression.
 
 ### The one metric per phase
 
@@ -197,10 +226,10 @@ security page. **Never** market to them; only explain. They convert on rigor.
 
 ## 6. Content
 
-### 6.1 Landing page hero (replaces "Leveraged trading with no collateral")
+### 6.1 Landing page hero — SHIPPED
 
 > # EXNIHILO
-> ### $5 moves like $100. And nothing can liquidate you.
+> ### Nothing here can liquidate you.
 >
 > Long or short any ERC-20 token on Avalanche. You pay a fee, not collateral —
 > and that fee is the most you can ever lose.
@@ -209,12 +238,23 @@ security page. **Never** market to them; only explain. They convert on rigor.
 >
 > *Every position expires. Renew it, or let it settle.*
 
+::: warning Why not "$5 moves like $100"
+That was the original recommendation and it was **pulled before launch**: the live
+pools capped positions at $0.25, so the headline described a trade that would revert.
+
+The lesson generalizes — **never put a dollar figure in evergreen copy.** Position size
+is a function of pool depth and caps, both of which move. "Nothing here can liquidate
+you" is true at any depth and needs no maintenance. Concrete numbers belong in the live
+calculator, which reads them from the contracts.
+:::
+
 Subhead row (replacing the current four features):
 
 - **Your loss is capped at the fee** — no collateral, no margin, no liquidation engine.
 - **No one lists your token? Now you do.** One transaction creates the market.
 - **Positions are NFTs** — on-chain SVG art with live P&L. Transferable, sellable.
-- **No oracles, no admin keys, no token.** Immutable from day one.
+- **No oracles, no token, no upgrade path.** Immutable from day one. One emergency
+  role can wind a pool down; it cannot move funds.
 
 ### 6.2 Flagship X thread — Chain A, trader-facing
 
@@ -270,11 +310,13 @@ Subhead row (replacing the current four features):
 > **7/**
 > Which changes the arithmetic completely:
 >
-> You don't post collateral. You pay a fee — about 5% of your position size.
+> You don't post collateral. You pay a premium — about 5% of your position size.
 >
-> $100 of exposure costs ~$5.
-> Token doubles → ~$100 profit on $5 spent.
-> Token goes to zero → you lose $5.
+> Token doubles → you're paid roughly your notional back as profit, on 5% spent.
+> Token +200% → about 36x the premium.
+> Token goes to zero → you lose the premium. Nothing else.
+>
+> Break-even is about +8.3%.
 >
 > **8/**
 > That's not "leverage."
@@ -303,25 +345,36 @@ Subhead row (replacing the current four features):
 > Your worst case was priced and paid upfront.
 >
 > **11/**
-> And because the fee floor is $0.05, a $1 position is real.
+> And because the minimum fee is $0.05, a $1 position is economically real.
 >
-> There is no other venue in DeFi where $5 buys a genuine leveraged position on
-> a token that launched this morning.
+> There is no other venue in DeFi where a dollar buys a genuine leveraged
+> position on a token that launched this morning.
 >
 > Not because they won't. Because their model can't.
 >
 > **12/**
+> Sizes are small right now — deliberately. Pools are being scaled up slowly
+> while the protocol takes real-world punishment.
+>
+> The site shows you the exact max position, fee and break-even, read live from
+> the contracts. Nothing is hardcoded.
+>
+> **13/**
 > Any ERC-20. Permissionless — if no market exists, you create one.
-> Avalanche C-Chain. USDC. No token, no governance, no admin keys, immutable.
+> Avalanche C-Chain. USDC. No token, no governance, immutable.
 >
 > exnihilo.markets
 >
-> **13/**
-> Risk, said out loud: unaudited by a human firm (4 AI audit rounds, all public).
-> Pool prices can diverge from external markets. LPs are the counterparty.
-> Positions expire worthless if you're wrong.
+> **14/**
+> Risk, said out loud:
 >
-> Trade $5 before you trade $500.
+> · Not audited by a human firm (4 AI audit rounds, every finding public)
+> · One emergency role can wind a pool down — it can't move your funds
+> · LPs are the counterparty
+> · Pool prices can diverge from other venues
+> · Positions expire worthless if you're wrong
+>
+> Trade $1 before you trade $100.
 
 ### 6.3 Short-form posts
 
@@ -333,9 +386,9 @@ Subhead row (replacing the current four features):
 > On EXNIHILO you're never early with borrowed money, because nothing is borrowed.
 
 **b. The arithmetic**
-> $5.08 → $100 of exposure.
-> Coin does 3x → ~$200.
-> Coin does -100% → you're out $5.08.
+> Premium: 5% of your position size.
+> Coin does 3x → about 36x that premium back.
+> Coin does -100% → you're out the premium. That's the floor.
 >
 > Not leverage. An option. The premium is the whole risk.
 
@@ -375,10 +428,29 @@ Subhead row (replacing the current four features):
 >
 > It's a written option. The LP is the writer. Nothing is hidden.
 
-**h. Anti-hype flex**
-> No token. No points. No airdrop. No governance. No admin keys. No upgrade path.
+**h. Anti-hype flex** *(rewritten — the original claimed "no admin keys", which is false)*
+> No token. No points. No airdrop. No governance. No upgrade path.
 >
-> We can't rug you because we deployed ourselves out of the ability to.
+> One privileged role exists: we can force a pool into wind-down. It can't move
+> your funds, block a settlement, or touch LP liquidity — and it's renounceable.
+>
+> We list it because you'd find it anyway.
+
+**i. The break-even honesty post**
+> Most leverage products won't tell you what move you need just to break even.
+>
+> Ours is ~+8.3%, and the site computes it live from the pool you're looking at.
+>
+> If that number is bad for a trade, we'd rather you knew before paying us.
+
+**j. Deliberately small**
+> Yes, the pools are tiny. On purpose.
+>
+> The contracts are immutable and unaudited by a human firm. Scaling liquidity
+> slowly is the only honest way to run that — every dollar in there is a dollar
+> we're asking someone to risk on code that hasn't been battle-tested yet.
+>
+> It grows as it earns the right to.
 
 ### 6.4 Project DM template (Chain B, compressed)
 
@@ -434,6 +506,9 @@ Send from a personal account. Never paste this verbatim — the specifics are th
 | "Is it audited" | Four AI-model audit rounds, all findings and remediations public. No human firm yet. Stated on the risk page. |
 | "Is there a token" | No, and no plans. Contracts are immutable. |
 | "What if the LP rugs" | LP can only withdraw when no positions are open. They cannot force-close a profitable position. |
+| **"You have admin keys"** | Yes — one, and it's on the site. The factory deployer can force a pool into wind-down. It cannot move funds, block settlement, or take LP liquidity, and it's renounceable. Never deny this. |
+| **"Max position is a dollar, this is a toy"** | Correct, and deliberate. Immutable contracts with no human audit, so liquidity scales as the protocol earns it. The caps are the LP's, set on-chain, and you can read them yourself. |
+| **"Your fee is 20%, not 5%"** | Only below $1 notional, where the 0.05 USDC minimum beats the 5% rate. The calculator shows the effective rate for the exact size you pick, and flags when the floor is binding. At $1+ it's 5%. |
 
 ---
 
@@ -443,7 +518,10 @@ Send from a personal account. Never paste this verbatim — the specifics are th
 - "Option" / "premium" / "expiry" — not "leverage" / "collateral" / "margin"
 - Lead with the capped downside before the upside
 - State expiry unprompted, every time
-- Use real numbers ($5.08, $0.05 floor, 3%), never ranges or "up to"
+- Express payoffs as **ratios of the premium**, never as fixed dollar amounts —
+  openable size depends on pool depth, so dollar figures rot
+- Say "profit", never "payout of your position size": you receive the surplus only
+- Verify any absolute claim ("no X", "zero Y") against mainnet before publishing
 
 **Never:**
 - "Up to Nx"
@@ -452,6 +530,8 @@ Send from a personal account. Never paste this verbatim — the specifics are th
   shouldn't decide who wins. Same insight, defensible in public, and it doesn't
   hand a critic a screenshot.
 - Marketing a pool whose caps make the headline claim false
+- Claiming "no admin keys" — one privileged role exists and is disclosed on the site
+- Quoting a position size larger than the live pools can actually open
 
 ---
 

@@ -70,6 +70,16 @@ is 1% of pool reserves behaves close to the table above; one that is 20% does no
 Because the fee has a **0.05 USDC floor**, a $1 position costs $0.05 and is
 economically real. There is no minimum account size.
 
+::: warning The floor cuts both ways
+Below $1 of notional the floor *exceeds* the 5% base rate, and the effective cost rises
+sharply — a $0.25 position still pays $0.05, which is 20%. Above $1 the rate settles at
+5% and break-even lands around **+8.3%** for a position sized at 1% of pool reserves,
+regardless of how large the pool is.
+
+The pool sizes above are illustrative. The [app](https://exnihilo.markets/app) computes
+the real maximum position, effective fee rate and break-even for each live pool.
+:::
+
 ## Where the option analogy breaks
 
 Four differences that matter, stated plainly:

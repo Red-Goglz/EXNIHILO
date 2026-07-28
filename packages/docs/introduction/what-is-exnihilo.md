@@ -44,6 +44,19 @@ nothing more.
 The fee has a **0.05 USDC floor**, so a $1 position is economically real. There is no
 minimum account size.
 
+::: tip These figures scale with the pool
+$100 is an illustration, not what is currently openable. Each pool's LP sets a position
+cap (commonly 1% of reserves), and liquidity is being scaled up deliberately while the
+protocol is young — so today's maximum position is much smaller.
+
+The [app](https://exnihilo.markets/app) shows each pool's live maximum position,
+effective fee rate and break-even move, read straight from the contracts. Trust those
+over any number written in the docs.
+
+Note also that below $1 of notional the 0.05 USDC floor exceeds the 5% base rate, so
+very small positions pay a proportionally higher fee.
+:::
+
 ::: warning Two things to understand before you trade
 **Positions expire.** Each pool sets a `positionDuration` (default 7 days). Renew before
 the deadline, opt into auto-renewal, or the position settles. You must be right *within
