@@ -66,6 +66,20 @@ if ! command -v caddy &>/dev/null; then
 fi
 echo "    $(caddy version)"
 
+echo "==> Caddy restart policy"
+# The packaged unit has no Restart=, so Caddy defaults to Restart=no and a crash
+# takes the site and the indexer proxy down until a human notices. A drop-in
+# rather than an edit: the package overwrites its own unit on upgrade.
+CADDY_DROPIN="$(dirname "$0")/systemd/caddy-restart.conf"
+if [[ -f "$CADDY_DROPIN" ]]; then
+  install -d -m 0755 /etc/systemd/system/caddy.service.d
+  install -m 0644 "$CADDY_DROPIN" /etc/systemd/system/caddy.service.d/restart.conf
+  systemctl daemon-reload
+  echo "    Restart=$(systemctl show caddy -p Restart --value), RestartSec=$(systemctl show caddy -p RestartUSec --value)"
+else
+  echo "    !! ${CADDY_DROPIN} not found — Caddy will not restart on failure" >&2
+fi
+
 echo "==> Postgres + service user + indexer secrets"
 PG_SCRIPT="$(dirname "$0")/../packages/indexer/deploy/provision-postgres.sh"
 if [[ -f "$PG_SCRIPT" ]]; then

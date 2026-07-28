@@ -23,6 +23,20 @@ apt-get install -y -qq postgresql postgresql-contrib
 
 systemctl enable --now postgresql
 
+echo "==> Postgres restart policy"
+# Debian disables Restart= on purpose; postgresql-restart.conf documents why we
+# override it and how to back it out. Installed against the postgresql@.service
+# *template* so it covers every cluster instance, not just the current major.
+PG_DROPIN="$(dirname "$0")/../../../deploy/systemd/postgresql-restart.conf"
+if [[ -f "$PG_DROPIN" ]]; then
+  install -d -m 0755 /etc/systemd/system/postgresql@.service.d
+  install -m 0644 "$PG_DROPIN" /etc/systemd/system/postgresql@.service.d/restart.conf
+  systemctl daemon-reload
+  echo "    stop the cluster with 'systemctl stop postgresql@16-main', not pg_ctlcluster"
+else
+  echo "    !! ${PG_DROPIN} not found — Postgres will not restart on failure" >&2
+fi
+
 echo "==> Creating role and database"
 # Bind on localhost only. The indexer runs on the same box, so Postgres never
 # needs to listen on a public interface — that is the single biggest win for

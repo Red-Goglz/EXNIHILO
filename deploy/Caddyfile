@@ -3,14 +3,16 @@
 # Install to /etc/caddy/Caddyfile. Caddy obtains and renews certificates
 # automatically, so DNS for all three names must already point at this box.
 
-{
-	# ACME contact address for Let's Encrypt expiry notices. Kept out of the
-	# repo because this one is public — set ACME_EMAIL in Caddy's environment,
-	# or leave it unset (an empty value registers the account with no contact).
-	# The live server already holds a registered ACME account in
-	# /var/lib/caddy, so changing this does not affect existing certificates.
-	email {$ACME_EMAIL}
-}
+# No global `email` directive: this repo is public, and an ACME contact address
+# is a personal email. Caddy registers the ACME account without a contact, which
+# only costs you Let's Encrypt expiry-warning mails — renewal itself is
+# automatic. `email {$ACME_EMAIL}` is NOT a working substitute: with the var
+# unset it expands to nothing and Caddy refuses the config with "wrong argument
+# count or unexpected line ending after 'email'".
+#
+# To get the notices, add `email you@example.com` here on the server only.
+# The live box already has a registered ACME account under /var/lib/caddy, so
+# its existing certificates are unaffected either way.
 
 exnihilo.markets {
 	encode zstd gzip
