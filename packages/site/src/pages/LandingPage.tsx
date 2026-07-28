@@ -1,4 +1,8 @@
 import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { DEFAULT_CHAIN } from "../lib/chains.ts";
+import { hasIndexer, indexerFetch } from "../lib/indexer.ts";
+import { formatUsdcCompact } from "../lib/format.ts";
 
 export default function LandingPage() {
   return (
@@ -296,34 +300,8 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <div className="divider max-w-4xl mx-auto" />
-
       {/* ── LIVE STATS ───────────────────────────────────────────────────── */}
-      <section className="max-w-4xl mx-auto px-6 py-24">
-        <p className="section-label mb-2 text-center">
-          <span className="pulse-dot mr-2" />
-          Live on Avalanche
-        </p>
-        <h2 className="font-display text-4xl md:text-5xl text-white text-center mb-16 tracking-wide">
-          Protocol stats
-        </h2>
-
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatBox label="Markets" value="—" />
-          <StatBox label="Total TVL" value="—" />
-          <StatBox label="Positions opened" value="—" />
-          <StatBox label="Total fees" value="—" />
-        </div>
-
-        <p
-          className="text-center mt-6 text-xs"
-          style={{ color: "var(--dim)" }}
-        >
-          Stats update from on-chain data on Avalanche C-Chain.
-        </p>
-      </section>
-
-      <div className="divider max-w-4xl mx-auto" />
+      <ProtocolStats />
 
       {/* ── CTA ──────────────────────────────────────────────────────────── */}
       <section className="max-w-2xl mx-auto px-6 py-24 text-center">
@@ -423,6 +401,74 @@ function FeatureCard({
         </p>
       </div>
     </div>
+  );
+}
+
+interface ProtocolMetrics {
+  totalFees: string;
+  totalPositions: number;
+  poolCount: number;
+}
+
+/**
+ * Protocol stats, read from the indexer's `/metrics/protocol`.
+ *
+ * Renders nothing until there is something worth showing. A landing page
+ * advertising "0 positions opened / $0 fees" is worse than one that stays
+ * quiet — it is proof of no traction to the exact visitor we are trying to
+ * convert. The section appears on its own once the first position is opened,
+ * so this needs no follow-up once markets are live.
+ *
+ * TVL is deliberately absent: the indexer exposes no aggregate TVL figure.
+ * `backedAirUsd` only exists inside per-event `priceSnapshot` rows, so a real
+ * number would mean a new endpoint summing the latest snapshot per pool.
+ * Better nothing than a placeholder dash.
+ */
+function ProtocolStats() {
+  const chainId = DEFAULT_CHAIN.chain.id;
+
+  const { data } = useQuery({
+    queryKey: ["landingProtocolMetrics", chainId],
+    enabled: hasIndexer(chainId),
+    staleTime: 60_000,
+    retry: false,
+    queryFn: () => indexerFetch<ProtocolMetrics>(chainId, "/metrics/protocol"),
+  });
+
+  if (!data || data.totalPositions === 0) return null;
+
+  return (
+    <>
+      <div className="divider max-w-4xl mx-auto" />
+
+      <section className="max-w-4xl mx-auto px-6 py-24">
+        <p className="section-label mb-2 text-center">
+          <span className="pulse-dot mr-2" />
+          Live on Avalanche
+        </p>
+        <h2 className="font-display text-4xl md:text-5xl text-white text-center mb-16 tracking-wide">
+          Protocol stats
+        </h2>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <StatBox label="Markets" value={String(data.poolCount)} />
+          <StatBox
+            label="Positions opened"
+            value={String(data.totalPositions)}
+          />
+          <StatBox
+            label="Total fees"
+            value={formatUsdcCompact(BigInt(data.totalFees))}
+          />
+        </div>
+
+        <p className="text-center mt-6 text-xs" style={{ color: "var(--dim)" }}>
+          Stats update from on-chain data on Avalanche C-Chain.
+        </p>
+      </section>
+
+      <div className="divider max-w-4xl mx-auto" />
+    </>
   );
 }
 
