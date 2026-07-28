@@ -48,16 +48,17 @@ export default function LandingPage() {
         </div>
 
         <p
-          className="fade-up fade-up-d1 font-mono text-lg md:text-xl max-w-2xl mb-3"
+          className="fade-up fade-up-d1 font-mono text-xl md:text-3xl max-w-2xl mb-3"
           style={{ color: "var(--body)" }}
         >
-          Long or short any ERC-20 token
+          $5 moves like $100. And nothing can liquidate you.
         </p>
         <p
-          className="fade-up fade-up-d2 font-mono text-base md:text-lg max-w-xl mb-10"
+          className="fade-up fade-up-d2 font-mono text-base md:text-lg max-w-2xl mb-10"
           style={{ color: "var(--muted)" }}
         >
-          Leveraged trading with no collateral, and no liquidations!
+          Long or short any ERC-20 token on Avalanche. You pay a fee, not
+          collateral &mdash; and that fee is the most you can ever lose.
         </p>
 
         <div className="fade-up fade-up-d3 flex flex-col sm:flex-row gap-4">
@@ -129,6 +130,97 @@ export default function LandingPage() {
 
       <div className="divider max-w-4xl mx-auto" />
 
+      {/* ── THE MATH ─────────────────────────────────────────────────────── */}
+      <section className="max-w-3xl mx-auto px-6 py-24">
+        <p className="section-label mb-2 text-center">The math</p>
+        <h2 className="font-display text-4xl md:text-5xl text-white text-center mb-4 tracking-wide">
+          What $5 actually buys.
+        </h2>
+        <p
+          className="text-center text-sm max-w-xl mx-auto mb-12"
+          style={{ color: "var(--muted)" }}
+        >
+          Opening a $100 position in a pool with $10,000 of USDC reserves. You
+          post no collateral &mdash; only the fee.
+        </p>
+
+        <div className="cyber-panel p-6 md:p-8">
+          <div className="font-mono text-sm space-y-3">
+            <div className="flex justify-between">
+              <span style={{ color: "var(--muted)" }}>Position size</span>
+              <span style={{ color: "var(--body)" }}>$100.00</span>
+            </div>
+            <div className="flex justify-between">
+              <span style={{ color: "var(--muted)" }}>Base fee (5%)</span>
+              <span style={{ color: "var(--body)" }}>$5.00</span>
+            </div>
+            <div className="flex justify-between">
+              <span style={{ color: "var(--muted)" }}>Impact fee</span>
+              <span style={{ color: "var(--body)" }}>$0.08</span>
+            </div>
+            <div
+              className="flex justify-between pt-3"
+              style={{ borderTop: "1px solid var(--border)" }}
+            >
+              <span style={{ color: "var(--body)" }}>
+                Total paid &mdash; your entire downside
+              </span>
+              <span style={{ color: "var(--green)" }}>$5.08</span>
+            </div>
+          </div>
+
+          <div
+            className="mt-8 pt-6 font-mono text-sm space-y-3"
+            style={{ borderTop: "1px solid var(--border)" }}
+          >
+            <div className="flex justify-between">
+              <span style={{ color: "var(--muted)" }}>Token +200%</span>
+              <span style={{ color: "var(--green)" }}>
+                &asymp; +$200 &nbsp;<span style={{ color: "var(--dim)" }}>(~40&times;)</span>
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span style={{ color: "var(--muted)" }}>Token +50%</span>
+              <span style={{ color: "var(--green)" }}>
+                &asymp; +$50 &nbsp;<span style={{ color: "var(--dim)" }}>(~10&times;)</span>
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span style={{ color: "var(--muted)" }}>Any move down</span>
+              <span style={{ color: "var(--red)" }}>&minus;$5.08. Never more.</span>
+            </div>
+          </div>
+
+          <p className="mt-6 text-xs" style={{ color: "var(--dim)" }}>
+            Illustrative. Settlement runs through the pool&rsquo;s AMM curves, so
+            realized profit is reduced by slippage &mdash; significantly if your
+            position is large relative to pool reserves. The fee has a 0.05 USDC
+            floor, so a $1 position costs $0.05.
+          </p>
+        </div>
+
+        <div
+          className="cyber-panel p-6 mt-6"
+          style={{ borderColor: "var(--orange)" }}
+        >
+          <p
+            className="section-label mb-2"
+            style={{ color: "var(--orange)" }}
+          >
+            The catch
+          </p>
+          <p className="text-sm" style={{ color: "var(--muted)" }}>
+            Positions expire &mdash; 7 days by default. Renew before the
+            deadline, let a winner auto-renew from its own profit, or it
+            settles. An underwater position cannot be closed at all and settles
+            for nothing. You have to be right{" "}
+            <em style={{ color: "var(--body)" }}>within the window</em>.
+          </p>
+        </div>
+      </section>
+
+      <div className="divider max-w-4xl mx-auto" />
+
       {/* ── FEATURES ─────────────────────────────────────────────────────── */}
       <section className="max-w-4xl mx-auto px-6 py-24">
         <p className="section-label mb-2 text-center">Why EXNIHILO</p>
@@ -144,8 +236,8 @@ export default function LandingPage() {
               </svg>
             }
             iconColor="var(--green)"
-            title="No liquidations"
-            desc="Positions never get force-closed. You decide when to exit — the protocol doesn't."
+            title="Your loss is capped at the fee"
+            desc="No collateral, no margin, no liquidation engine. The premium you pay to open is your entire downside — enforced by the contract, not by policy."
           />
           <FeatureCard
             icon={
@@ -198,8 +290,8 @@ export default function LandingPage() {
               </svg>
             }
             iconColor="var(--cyan)"
-            title="Buy now, pay later"
-            desc="Get leveraged exposure with just your trade size. No extra collateral. No margin requirements. Just USDC in, position out."
+            title="Positions are options"
+            desc="A long is a call, a short is a put, the open fee is the premium. No strike to pick, no implied volatility, no Greeks — just a direction and a deadline."
           />
         </div>
       </section>

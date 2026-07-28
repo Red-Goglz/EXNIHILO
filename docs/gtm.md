@@ -76,7 +76,9 @@ This works because token projects already HAVE a community that wants to specula
 - [x] 170+ unit tests, coverage tests, security hardening (CEI, reentrancy, fee-on-transfer guards)
 - [x] Frontend MVP: cyberpunk UI, pool feed, trade panel, portfolio, pool creation
 - [x] Testing on Fuji, 
-- [x] Smart contract audit by evmbench (OpenAI & Paradigm)
+- [x] Four automated audit rounds (AI models, 11 analysis passes each, all findings
+      public in `.audit/`). **Not** a human audit firm — never describe it as one.
+      See `packages/docs/protocol/security.md` for the canonical wording.
 
 
 ### 2.4 Phase 1 — First Atomic Networks (Q2 2026)

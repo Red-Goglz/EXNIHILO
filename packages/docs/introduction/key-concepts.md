@@ -1,10 +1,32 @@
 # Key Concepts
 
-## Buy Now, Pay Later Trading
+## Positions Are Options
 
-Unlike traditional perps where you post collateral and face liquidation, EXNIHILO positions only require the fees. You pay USDC to open a position and receive an NFT. Those fees have to be paid again to extend the duration of a position. When you close in profit, you get back USDC — depending on price movement.
+The single most useful frame: **an EXNIHILO position is an option**. The open fee is the
+premium, a long is a call, a short is a put, and the premium is the maximum you can
+lose. [Positions Are Options](./positions-are-options) covers the full mapping — and,
+importantly, the four places where the analogy breaks.
 
-There is no margin and no liquidation engine. Instead of a funding rate, positions have a **deadline** — after which anyone can settle the position. Traders pay a fee to extend the deadline, repriced each period at the position's current value and the pool's open interest. Winners can opt into **auto-renewal**, where the fee is paid out of the position's own profit — a winning position sustains itself; one that can't pay settles. See [Expiry & Renewal](/positions/expiry).
+## Premium, Not Collateral
+
+Unlike traditional perps where you post collateral and face liquidation, EXNIHILO
+positions only require the fees. You pay USDC to open a position and receive an NFT.
+Those fees have to be paid again to extend the duration of a position. When you close in
+profit, you get back USDC — depending on price movement.
+
+There is no margin and no liquidation engine. Instead of a funding rate, positions have
+a **deadline** — after which anyone can settle the position. Traders pay a fee to extend
+the deadline, repriced each period at the position's current value and the pool's open
+interest. Winners can opt into **auto-renewal**, where the fee is paid out of the
+position's own profit — a winning position sustains itself; one that can't pay settles.
+See [Expiry & Renewal](/positions/expiry).
+
+::: tip Why no liquidations is not a marketing claim
+Margin products *lend* you exposure, and anything lent can be recalled — liquidation is
+simply that recall. EXNIHILO lends nothing; it mints synthetic units instead. With
+nothing borrowed, there is nothing to call back. The tradeoff is that the premium is
+non-refundable and a losing position cannot be closed at all.
+:::
 
 ## Three-Curve AMM
 

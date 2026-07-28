@@ -6,13 +6,34 @@ EXNIHILO is experimental software. Use at your own risk. Only trade with funds y
 
 ## Smart contract risk
 
-The protocol has not undergone a formal security audit. While the codebase follows security best practices (ReentrancyGuard, CEI, SafeERC20, reserve invariants) and has ~400 tests, undiscovered vulnerabilities may exist.
+**The protocol has not been audited by a human security firm.** Four automated audit
+rounds have been performed by AI models (most recently Claude Opus 5, 2026-07-27), each
+across 11 independent analysis passes, with all findings and remediations published in
+[`.audit/`](https://github.com/bravenoob/exnihilo-dapp/tree/main/.audit). Each round
+independently surfaced findings its predecessors missed — which is itself evidence that
+no round should be treated as exhaustive.
+
+The codebase follows security best practices (ReentrancyGuard, CEI, SafeERC20, reserve
+invariants) and has 414 tests. Undiscovered vulnerabilities may exist. See
+[Security](/protocol/security) for the full pass-by-pass record.
 
 ## Loss of funds
 
-- Your maximum loss on any position is 100% of the USDC fees or the full liquidity if you are LP provider
+**As a trader**, your maximum loss on any position is the fees you paid — the premium.
+This is a hard bound enforced by the contract, not a policy.
+
+**As an LP, your risk is materially different and much larger.** You are the counterparty
+to every position in your pool. Trader profits are paid out of your liquidity, and your
+maximum loss is your full deposited liquidity. Position caps and the impact fee exist to
+bound this, but do not eliminate it — see
+[Fee Earnings](/lp/fees#you-are-the-counterparty).
+
+Additionally:
 - Positions can lose value rapidly if the price moves against you
 - There are no stop-losses or automated risk management tools
+- **A losing position cannot be closed at all.** There is no salvage value — unlike an
+  option you could sell back for remaining time value, an underwater EXNIHILO position
+  either recovers before its deadline or settles for nothing.
 
 ## Position expiry
 

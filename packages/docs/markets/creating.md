@@ -23,6 +23,22 @@ Calling `createMarket()` on the Factory:
 
 All of this happens in a single atomic transaction.
 
+## Sizing your pool so it is actually tradable
+
+Position caps interact with pool depth, and it is easy to create a market nobody can
+trade. At the recommended `maxPositionBps = 100` (1%):
+
+| Your USDC seed | Max position size | Practical result |
+|---|---|---|
+| $1,000 | $10 | Too small — traders bounce |
+| $10,000 | $100 | Workable for retail-size positions |
+| $50,000 | $500 | Comfortable |
+
+If you want to seed shallow, raise `maxPositionBps` deliberately rather than leaving
+traders with a $10 ceiling — but understand you are accepting more risk per position
+(see [Fee Earnings](/lp/fees#you-are-the-counterparty)). Seeding deeper is the safer way
+to get the same tradability.
+
 ## Initial price
 
 The initial spot price is determined by the ratio of your seed liquidity:
