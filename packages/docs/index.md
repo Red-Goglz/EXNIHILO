@@ -2,8 +2,8 @@
 layout: home
 hero:
   name: EXNIHILO
-  text: $5 moves like $100
-  tagline: Long or short any ERC-20 token on Avalanche. You pay a fee, not collateral — and that fee is the most you can ever lose. Nothing can liquidate you.
+  text: Nothing here can liquidate you
+  tagline: Long or short any ERC-20 token on Avalanche. You pay a fee, not collateral — and that fee is the most you can ever lose.
   actions:
     - theme: brand
       text: Get Started
