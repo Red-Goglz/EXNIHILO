@@ -2,6 +2,16 @@
 
 A short position profits when the token price goes down relative to USDC.
 
+**In option terms, a short is a put.** You pay a premium (the open fee), you post no
+collateral, and that premium is the most you can lose — unlike shorting on margin, where
+losses are theoretically unbounded. See
+[Positions Are Options](/introduction/positions-are-options).
+
+::: tip Why this matters more for shorts than longs
+A margin short can lose far more than you put in if the token squeezes. An EXNIHILO
+short cannot. Your worst case was priced and paid at open.
+:::
+
 ## How it works
 
 1. You specify a USDC amount (your position size)

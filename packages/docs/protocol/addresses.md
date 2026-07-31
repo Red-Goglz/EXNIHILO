@@ -1,12 +1,51 @@
 # Contract Addresses
 
-::: warning Testnet only
-Nothing here is a mainnet deployment. The USDC and every base token are mocks
-with an open `mint()`, so balances carry no value. Addresses change on every
-redeploy — see [Keeping this page correct](#keeping-this-page-correct).
+## Avalanche C-Chain Mainnet (Chain ID: 43114)
+
+The live deployment, and the only network the app shows. Source of truth:
+`packages/site/src/contracts/mainnetAddresses.json`, written by
+`scripts/deployMainnet.ts`. Values below were read back from chain.
+
+| Contract | Address |
+|---|---|
+| EXNIHILOFactory | `0xBe6Fb0e7b7d8EFD491FEbC436F737cE8B244F85a` |
+| PoolDeployer | `0xCC2dF79E5B67874ceeBDB09225aCd62dE2C9CA44` |
+| PositionNFT | `0xa08E20fb4c157cf8E46c67A41250F54c1b53adfd` |
+| LpNFT | `0x71a6802e1b1313822014D29c5Fe43Dd441a4dB9a` |
+| EXNIHILORouter | `0xCeDaa217205975a7a86322FEe13b9ee223F98B15` |
+| USDC (native, Circle) | `0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E` |
+| Treasury | `0x10b17CC3cb1BB186D30e430495371b61B497dD37` |
+| Deployer | `0xE15405a36fdbB3197e1B690E87303CCFcd038e97` |
+
+Factory deployed at block **91,382,693** — this is the indexer's `START_BLOCK`.
+
+**The protocol was deployed without any markets.** Market creation is
+permissionless, so the first pools will be created by users via
+`createMarket`; there are no seeded or "official" markets.
+
+::: tip Mainnet USDC is real
+Unlike the testnet deployment, `usdc` here is Circle's native USDC on Avalanche
+(6 decimals) — not a mock with an open `mint()`. It is **not** the bridged
+`USDC.e` at `0xA7D7...C664`.
+:::
+
+::: warning Immutable by construction
+The factory has no owner and no admin functions: `usdc`, `protocolTreasury` and
+`defaultSwapFeeBps` (100 bps) are constructor immutables and can never be
+changed. Correcting any of them requires deploying a whole new protocol.
+
+The one exception is the `deployer` role, an emergency admin that can call
+`closePool` on any pool. It is currently the deploying EOA above and can be
+transferred, or renounced permanently by setting it to `address(0)`.
 :::
 
 ## Avalanche Fuji Testnet (Chain ID: 43113)
+
+::: warning Testnet — no longer shown in the app
+The app now ships mainnet only, so these are kept for reference and local
+testing. The USDC and every base token here are mocks with an open `mint()`,
+so balances carry no value.
+:::
 
 Source of truth: `packages/site/src/contracts/fujiAddresses.json`, rewritten by
 `scripts/deployFuji.ts`. Values below were read back from chain.
@@ -85,6 +124,11 @@ After a redeploy, update all three:
 1. `packages/site/src/contracts/addresses.ts` — what the dApp reads
 2. `packages/indexer/src/chain.ts` — addresses **and** `START_BLOCK`
 3. this page
+
+For a mainnet redeploy also bump the indexer's Ponder schema
+(`--schema` in `packages/indexer/package.json`). Ponder does not migrate a
+schema in place, so pointing an existing schema at a different deployment
+leaves the old chain's rows behind it.
 
 A mismatch is silent: the dApp reads an abandoned deployment and simply shows an
 empty or stale market.

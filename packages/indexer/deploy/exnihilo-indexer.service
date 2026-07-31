@@ -18,15 +18,49 @@ EnvironmentFile=/etc/exnihilo/indexer.env
 Environment=NODE_ENV=production
 Environment=PORT=42069
 
-ExecStart=/usr/bin/npm run start --workspace packages/indexer
+# Ponder builds a `conf` store for telemetry before it does anything else, and
+# `conf` resolves to $HOME/.config — which ProtectHome=true below makes
+# unreadable, crashing the process with EACCES at startup. Disabling telemetry
+# is the intent; XDG_CONFIG_HOME is the belt-and-braces, since the store is
+# constructed whether or not telemetry ends up being sent. The path is inside
+# ReadWritePaths.
+Environment=PONDER_TELEMETRY_DISABLED=1
+Environment=XDG_CONFIG_HOME=/srv/exnihilo/packages/indexer/.config
+
+# Run from inside the workspace, not from the repo root with --workspace:
+# npm resolves workspaces relative to the directory it starts in, so
+# `--workspace packages/indexer` from WorkingDirectory above fails with
+# "No workspaces found". Hoisted deps in /srv/exnihilo/node_modules still
+# resolve normally from here.
+ExecStart=/usr/bin/npm run start
 
 # Ponder exits non-zero on an indexing error (see the uncaughtException handler),
 # and a wedged sync should not require a human. Always restart, but back off so
 # a genuine crash-loop does not hammer the RPC provider.
+#
+# Exponential backoff rather than StartLimitIntervalSec/StartLimitBurst. Two
+# reasons, in order of how much they bit:
+#
+#   1. Those two keys are only valid in [Unit]. Sitting here in [Service] they
+#      were silently dropped ("Unknown key name 'StartLimitIntervalSec' in
+#      section 'Service', ignoring") and the window fell back to the 10s
+#      default — and since RestartSec=10 lets at most one start land inside a
+#      10s window, the burst limit could never trip. The backoff this comment
+#      claimed to provide did not exist; the service restarted every 10s
+#      forever, which is precisely the RPC hammering it was meant to prevent.
+#   2. Even placed correctly, a start limit *gives up*: after the burst the
+#      unit sits failed until someone runs `systemctl reset-failed`. For an
+#      indexer whose commonest failure is a flaky RPC endpoint, permanent death
+#      is a worse outcome than slow retries.
+#
+# RestartSteps interpolates the delay from RestartSec to RestartMaxDelaySec, so
+# retries go 10s → ~1m → ~5m and then stay at 5m indefinitely. A transient
+# failure still recovers in seconds; a sustained one settles at 12 attempts an
+# hour instead of 360. Requires systemd 254+ (Ubuntu 24.04 ships 255).
 Restart=always
 RestartSec=10
-StartLimitIntervalSec=300
-StartLimitBurst=5
+RestartSteps=5
+RestartMaxDelaySec=300
 
 # Ponder's shutdown path can hang; give it room, then SIGKILL.
 KillSignal=SIGTERM

@@ -2,6 +2,23 @@
 
 A long position profits when the token price goes up relative to USDC.
 
+**In option terms, a long is a call.** You pay a premium (the open fee), you post no
+collateral, and that premium is the most you can lose. See
+[Positions Are Options](/introduction/positions-are-options).
+
+## What it costs and what you can lose
+
+| | |
+|---|---|
+| Position size (notional) | $100 |
+| Base fee (5%) | $5.00 |
+| Impact fee (in a $10k pool) | $0.08 |
+| **Total paid — your entire downside** | **$5.08** |
+| Token +50% → | ≈ +$50 before slippage |
+| Token −90% → | −$5.08. Never more. |
+
+The fee has a 0.05 USDC floor, so a $1 long costs $0.05.
+
 ## How it works
 
 1. You specify a USDC amount (your position size)

@@ -25,7 +25,9 @@ EXNIHILO lets anyone deploy a leveraged trading market for any ERC-20 token. No 
 
 ### Design Principles
 
-1. **Permissionless first** — no admin keys, no governance gates, no whitelists
+1. **Permissionless first** — no governance gates, no whitelists, no listing process.
+   (One privileged role exists: the factory deployer can force a pool into wind-down.
+   It cannot move funds and is renounceable — disclose it, never deny it.)
 2. **Oracle-free** — pure AMM pricing eliminates oracle manipulation, stale prices, and Chainlink dependency
 3. **NFT-native positions** — every position and LP share is a composable ERC-721
 4. **Risk isolation** — each pool is independent; one pool blowing up doesn't affect others
@@ -76,7 +78,9 @@ This works because token projects already HAVE a community that wants to specula
 - [x] 170+ unit tests, coverage tests, security hardening (CEI, reentrancy, fee-on-transfer guards)
 - [x] Frontend MVP: cyberpunk UI, pool feed, trade panel, portfolio, pool creation
 - [x] Testing on Fuji, 
-- [x] Smart contract audit by evmbench (OpenAI & Paradigm)
+- [x] Four automated audit rounds (AI models, 11 analysis passes each, all findings
+      public in `.audit/`). **Not** a human audit firm — never describe it as one.
+      See `packages/docs/protocol/security.md` for the canonical wording.
 
 
 ### 2.4 Phase 1 — First Atomic Networks (Q2 2026)

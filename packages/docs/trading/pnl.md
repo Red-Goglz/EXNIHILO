@@ -2,29 +2,47 @@
 
 Position profit and loss is computed entirely from on-chain pool state — no oracles involved.
 
+::: warning You receive the profit, not the position size
+The notional is never deposited — opening a position transfers only the fee
+(`_transferIn(underlyingUsdc, msg.sender, totalFee)` in `openLong`). So closing
+returns the **surplus only**. A $100 position that gains 50% pays out roughly
+$50, not $150. Your total outlay was the premium, and your total return is the
+surplus minus the 1% close fee.
+:::
+
 ## Long P&L
 
-When closing a long, the locked airToken tokens are swapped back to airUsd via SWAP-3:
+When closing a long, the locked airToken is valued back through SWAP-3. Note
+that the position's own locked amount is excluded from the reserve it trades
+against:
 
 ```
-airUsdOut = lockedAmount * backedAirUsd / airToken.totalSupply()
-pnl = airUsdOut - airUsdMinted
+airUsdOut = cpAmountOut(lockedAmount, airTokenSupply - lockedAmount, backedAirUsd)
+surplus   = airUsdOut - airUsdMinted        // airUsdMinted == the notional
+payout    = surplus - 1% close fee
 ```
 
-- If `pnl > 0` — profit. You receive `usdcIn + pnl` (minus 1% close fee on profit).
-- If `pnl < 0` — loss. You can't close the position.
+- If `surplus > 0` — profit. You receive `payout`.
+- If `surplus <= 0` — underwater. You cannot close the position at all; it can
+  only be held (renewed) or left to settle for nothing at the deadline.
 
 ## Short P&L
 
 When closing a short, the synthetic airToken debt is bought back via SWAP-2:
 
 ```
-cost = airUsd.totalSupply() * airTokenMinted / (backedAirToken - airTokenMinted)
-pnl = lockedAmount - cost
+totalBuyable = cpAmountOut(lockedAmount, airUsdSupply - lockedAmount, backedAirToken)
+cost         = ceil(lockedAmount * airTokenMinted / totalBuyable)
+surplus      = lockedAmount - cost
+payout       = surplus - 1% close fee
 ```
 
-- If `pnl > 0` — the token price dropped, buying back the debt is cheap. Profit.
-- If `pnl < 0` — the token price rose, you can't close the position.
+`cost` is what it takes to buy back the synthetic airToken debt; the remainder
+of the locked collateral is your profit. The division rounds **up**, in the
+pool's favour.
+
+- If `surplus > 0` — the token price dropped, buying back the debt is cheap. Profit.
+- If `surplus <= 0` — the token price rose; you cannot close the position.
 
 ## Live P&L on your NFT
 

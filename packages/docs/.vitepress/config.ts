@@ -2,7 +2,7 @@ import { defineConfig } from "vitepress";
 
 export default defineConfig({
   title: "EXNIHILO",
-  description: "Long or short on any ERC-20 token. Leveraged trading with no collateral, and no liquidations!",
+  description: "Long or short any ERC-20 token. You pay a fee, not collateral — and that fee is the most you can lose.",
   base: "/docs/",
   outDir: "../site/public/docs",
   appearance: "dark",
@@ -33,6 +33,10 @@ export default defineConfig({
         collapsed: false,
         items: [
           { text: "What is EXNIHILO", link: "/introduction/what-is-exnihilo" },
+          {
+            text: "Positions Are Options",
+            link: "/introduction/positions-are-options",
+          },
           { text: "Key Concepts", link: "/introduction/key-concepts" },
           { text: "Glossary", link: "/introduction/glossary" },
         ],

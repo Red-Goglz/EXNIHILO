@@ -1,5 +1,39 @@
 # LP Fee Earnings
 
+## You are the counterparty
+
+Read this before depositing.
+
+In option terms, **the LP is the writer**. Every position opened in your pool is written
+against your liquidity: you collect the premium, and when a trader closes in profit,
+that profit is paid out of your backed reserves. There is no shared insurance fund and
+no other party absorbing it.
+
+This is not a hidden risk — it is the business you are entering. Writing options is
+profitable when premiums collected exceed payouts made, and loss-making when a trader
+catches a large move in a pool that let them size into it.
+
+**Three things protect you, and you control two of them:**
+
+| Protection | Who sets it |
+|---|---|
+| **Position caps** — bound the size of any single position | You. `maxPositionBps = 100` (1% of reserves) is the recommended default |
+| **Impact fee** — scales quadratically with position size and open interest, sized to compensate above the price-distortion cost of writing the position | Protocol, automatic |
+| **Pool isolation** — one pool's losses never touch another | Protocol, structural |
+
+The impact fee is what makes the math work. A position small relative to your reserves
+pays almost nothing extra — and can only win a correspondingly small amount. A position
+large relative to your reserves pays sharply more, precisely because it is the one that
+could hurt you. Caps exist so you decide where that line sits.
+
+::: warning
+Do not disable position caps on a pool you cannot afford to see drawn down. Setting both
+caps to 0 maximizes volume and maximizes your exposure to a single trader catching a
+large move.
+:::
+
+## Revenue sources
+
 LPs earn fees from three sources.
 
 ## 1. Position open fees — 3% of notional

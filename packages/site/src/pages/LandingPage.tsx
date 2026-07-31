@@ -1,4 +1,9 @@
 import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { DEFAULT_CHAIN } from "../lib/chains.ts";
+import { hasIndexer, indexerFetch } from "../lib/indexer.ts";
+import { formatUsdcCompact } from "../lib/format.ts";
+import TradeCalculator from "../components/landing/TradeCalculator.tsx";
 
 export default function LandingPage() {
   return (
@@ -30,7 +35,7 @@ export default function LandingPage() {
             Docs
           </a>
           <Link to="/app" className="btn btn-primary text-xs py-2 px-5">
-            Launch App (Testnet)
+            Launch App
           </Link>
         </div>
       </nav>
@@ -48,21 +53,22 @@ export default function LandingPage() {
         </div>
 
         <p
-          className="fade-up fade-up-d1 font-mono text-lg md:text-xl max-w-2xl mb-3"
+          className="fade-up fade-up-d1 font-mono text-xl md:text-3xl max-w-2xl mb-3"
           style={{ color: "var(--body)" }}
         >
-          Long or short any ERC-20 token
+          Nothing here can liquidate you.
         </p>
         <p
-          className="fade-up fade-up-d2 font-mono text-base md:text-lg max-w-xl mb-10"
+          className="fade-up fade-up-d2 font-mono text-base md:text-lg max-w-2xl mb-10"
           style={{ color: "var(--muted)" }}
         >
-          Leveraged trading with no collateral, and no liquidations!
+          Long or short any ERC-20 token on Avalanche. You pay a fee, not
+          collateral &mdash; and that fee is the most you can ever lose.
         </p>
 
         <div className="fade-up fade-up-d3 flex flex-col sm:flex-row gap-4">
           <Link to="/app" className="btn btn-primary">
-            Launch App (Testnet)
+            Launch App
           </Link>
           <a href="/docs" className="btn btn-outline">
             Read Docs
@@ -127,6 +133,9 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* ── LIVE TRADE CALCULATOR ──────────────────────────────────────── */}
+      <TradeCalculator />
+
       <div className="divider max-w-4xl mx-auto" />
 
       {/* ── FEATURES ─────────────────────────────────────────────────────── */}
@@ -144,8 +153,8 @@ export default function LandingPage() {
               </svg>
             }
             iconColor="var(--green)"
-            title="No liquidations"
-            desc="Positions never get force-closed. You decide when to exit — the protocol doesn't."
+            title="Your loss is capped at the fee"
+            desc="No collateral, no margin, no liquidation engine. The premium you pay to open is your entire downside — enforced by the contract, not by policy."
           />
           <FeatureCard
             icon={
@@ -177,7 +186,7 @@ export default function LandingPage() {
             }
             iconColor="var(--red)"
             title="Fully permissionless"
-            desc="Anyone can create a market for any token. No admin keys, no governance, no gatekeeping. The factory is immutable."
+            desc="Anyone can create a market for any token. No governance, no gatekeeping, no listing process. The factory is immutable."
           />
           <FeatureCard
             icon={
@@ -198,40 +207,87 @@ export default function LandingPage() {
               </svg>
             }
             iconColor="var(--cyan)"
-            title="Buy now, pay later"
-            desc="Get leveraged exposure with just your trade size. No extra collateral. No margin requirements. Just USDC in, position out."
+            title="Positions are options"
+            desc="A long is a call, a short is a put, the open fee is the premium. No strike to pick, no implied volatility, no Greeks — just a direction and a deadline."
           />
         </div>
       </section>
 
-      <div className="divider max-w-4xl mx-auto" />
-
-      {/* ── LIVE STATS ───────────────────────────────────────────────────── */}
+      {/* ── TRUST STATS ──────────────────────────────────────────────────── */}
       <section className="max-w-4xl mx-auto px-6 py-24">
-        <p className="section-label mb-2 text-center">
-          <span className="pulse-dot mr-2" />
-          Live on Avalanche Fuji Testnet
-        </p>
-        <h2 className="font-display text-4xl md:text-5xl text-white text-center mb-16 tracking-wide">
-          Protocol stats
+        <p className="section-label mb-2 text-center">Verify, don&rsquo;t trust</p>
+        <h2 className="font-display text-4xl md:text-5xl text-white text-center mb-4 tracking-wide">
+          Check the work.
         </h2>
+        <p
+          className="text-center text-sm max-w-xl mx-auto mb-16"
+          style={{ color: "var(--muted)" }}
+        >
+          The protocol is young and the pools are small on purpose. What we can
+          offer instead of a track record is everything you need to audit it
+          yourself.
+        </p>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatBox label="Markets" value="—" />
-          <StatBox label="Total TVL" value="—" />
-          <StatBox label="Positions opened" value="—" />
-          <StatBox label="Total fees" value="—" />
+          <StatBox label="Tests passing" value="414" />
+          <StatBox label="Audit rounds" value="4" />
+          <StatBox label="Upgrade paths" value="0" />
+          <StatBox label="Governance tokens" value="0" />
         </div>
 
-        <p
-          className="text-center mt-6 text-xs"
-          style={{ color: "var(--dim)" }}
-        >
-          Stats update from on-chain data. Currently on Fuji testnet.
-        </p>
+        <div className="cyber-panel p-6 mt-6">
+          <p className="section-label mb-3">The one privileged role</p>
+          <p className="text-sm mb-4" style={{ color: "var(--muted)" }}>
+            The factory deployer can force any pool into wind-down. That is the
+            entire extent of it: it cannot move funds, cannot block a
+            settlement, and cannot take LP liquidity. Positions still settle and
+            LPs still withdraw on their own terms. The role is renounceable by
+            setting it to the zero address.
+          </p>
+          <p className="text-sm" style={{ color: "var(--muted)" }}>
+            We list it because you would find it anyway &mdash; and anyone
+            claiming a protocol has zero privileged roles is usually hoping you
+            will not look.
+          </p>
+        </div>
+
+        <div className="cyber-panel p-6 mt-4">
+          <p className="section-label mb-3">About those audits</p>
+          <p className="text-sm mb-4" style={{ color: "var(--muted)" }}>
+            Four rounds, each across 11 independent analysis passes &mdash;
+            performed by AI models, <em style={{ color: "var(--body)" }}>not</em>{" "}
+            a human security firm. Each round surfaced findings the previous one
+            missed, which tells you none of them should be treated as final.
+            Every finding and remediation is published.
+          </p>
+          <div className="flex flex-wrap gap-4">
+            <a
+              href="https://github.com/Red-Goglz/EXNIHILO/tree/main/.audit"
+              className="section-label"
+              style={{ color: "var(--cyan)" }}
+            >
+              Read the findings &rarr;
+            </a>
+            <a
+              href="/docs/protocol/security"
+              className="section-label"
+              style={{ color: "var(--cyan)" }}
+            >
+              Security overview &rarr;
+            </a>
+            <a
+              href="/docs/faq/risks"
+              className="section-label"
+              style={{ color: "var(--cyan)" }}
+            >
+              What can go wrong &rarr;
+            </a>
+          </div>
+        </div>
       </section>
 
-      <div className="divider max-w-4xl mx-auto" />
+      {/* ── LIVE STATS ───────────────────────────────────────────────────── */}
+      <ProtocolStats />
 
       {/* ── CTA ──────────────────────────────────────────────────────────── */}
       <section className="max-w-2xl mx-auto px-6 py-24 text-center">
@@ -243,7 +299,7 @@ export default function LandingPage() {
         </p>
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
           <Link to="/app" className="btn btn-primary">
-            Launch App (Testnet)
+            Launch App
           </Link>
           <a href="/docs" className="btn btn-outline">
             Read Docs
@@ -331,6 +387,74 @@ function FeatureCard({
         </p>
       </div>
     </div>
+  );
+}
+
+interface ProtocolMetrics {
+  totalFees: string;
+  totalPositions: number;
+  poolCount: number;
+}
+
+/**
+ * Protocol stats, read from the indexer's `/metrics/protocol`.
+ *
+ * Renders nothing until there is something worth showing. A landing page
+ * advertising "0 positions opened / $0 fees" is worse than one that stays
+ * quiet — it is proof of no traction to the exact visitor we are trying to
+ * convert. The section appears on its own once the first position is opened,
+ * so this needs no follow-up once markets are live.
+ *
+ * TVL is deliberately absent: the indexer exposes no aggregate TVL figure.
+ * `backedAirUsd` only exists inside per-event `priceSnapshot` rows, so a real
+ * number would mean a new endpoint summing the latest snapshot per pool.
+ * Better nothing than a placeholder dash.
+ */
+function ProtocolStats() {
+  const chainId = DEFAULT_CHAIN.chain.id;
+
+  const { data } = useQuery({
+    queryKey: ["landingProtocolMetrics", chainId],
+    enabled: hasIndexer(chainId),
+    staleTime: 60_000,
+    retry: false,
+    queryFn: () => indexerFetch<ProtocolMetrics>(chainId, "/metrics/protocol"),
+  });
+
+  if (!data || data.totalPositions === 0) return null;
+
+  return (
+    <>
+      <div className="divider max-w-4xl mx-auto" />
+
+      <section className="max-w-4xl mx-auto px-6 py-24">
+        <p className="section-label mb-2 text-center">
+          <span className="pulse-dot mr-2" />
+          Live on Avalanche
+        </p>
+        <h2 className="font-display text-4xl md:text-5xl text-white text-center mb-16 tracking-wide">
+          Protocol stats
+        </h2>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <StatBox label="Markets" value={String(data.poolCount)} />
+          <StatBox
+            label="Positions opened"
+            value={String(data.totalPositions)}
+          />
+          <StatBox
+            label="Total fees"
+            value={formatUsdcCompact(BigInt(data.totalFees))}
+          />
+        </div>
+
+        <p className="text-center mt-6 text-xs" style={{ color: "var(--dim)" }}>
+          Stats update from on-chain data on Avalanche C-Chain.
+        </p>
+      </section>
+
+      <div className="divider max-w-4xl mx-auto" />
+    </>
   );
 }
 

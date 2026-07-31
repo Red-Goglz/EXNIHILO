@@ -14,11 +14,11 @@ carrying a different `?chainId=` with a 404 rather than answering with
 wrong-chain data:
 
 ```json
-{ "error": "This indexer serves chainId 43113, got 31337" }
+{ "error": "This indexer serves chainId 43114, got 31337" }
 ```
 
-To serve both Fuji and a local node, run **two instances on different ports** and
-give each chain its own URL in the frontend (`VITE_INDEXER_URL_FUJI`,
+To serve both mainnet and a local node, run **two instances on different ports**
+and give each chain its own URL in the frontend (`VITE_INDEXER_URL_AVALANCHE`,
 `VITE_INDEXER_URL_LOCAL`). The site's chain registry
 (`packages/site/src/lib/chains.ts`) only queries chains that have an
 `indexerUrl`, so an unindexed chain shows an "unavailable" state instead of
@@ -27,12 +27,13 @@ firing requests that can only fail.
 ## Configuration
 
 Everything lives in `packages/indexer/.env.local` (copy `.env.example`).
-Chain id, contract addresses and start block default to the Fuji deployment in
-`src/chain.ts` and are all overridable:
+Chain id, contract addresses and start block default to the Avalanche mainnet
+deployment in `src/chain.ts` and are all overridable. The RPC variable name is
+derived from the chain id, so it must match `PONDER_CHAIN_ID`:
 
 ```bash
-# Fuji (defaults — only the RPC is required)
-PONDER_RPC_URL_43113=https://api.avax-test.network/ext/bc/C/rpc
+# Avalanche mainnet (defaults — only the RPC is required)
+PONDER_RPC_URL_43114=https://api.avax.network/ext/bc/C/rpc
 
 # Local Hardhat node
 # PONDER_CHAIN_ID=31337
@@ -134,6 +135,6 @@ schema name, let it sync, then repoint the reverse proxy.
 
 ## Deployment
 
-See [`packages/indexer/deploy/README.md`](https://github.com/bravenoob/exnihilo-dapp/tree/main/packages/indexer/deploy)
+See [`packages/indexer/deploy/README.md`](https://github.com/Red-Goglz/EXNIHILO/tree/main/packages/indexer/deploy)
 for the VPS runbook: `provision-postgres.sh`, a hardened systemd unit with
 restart-on-failure, and a Caddy reverse-proxy snippet.

@@ -23,6 +23,20 @@ apt-get install -y -qq postgresql postgresql-contrib
 
 systemctl enable --now postgresql
 
+echo "==> Postgres restart policy"
+# Debian disables Restart= on purpose; postgresql-restart.conf documents why we
+# override it and how to back it out. Installed against the postgresql@.service
+# *template* so it covers every cluster instance, not just the current major.
+PG_DROPIN="$(dirname "$0")/../../../deploy/systemd/postgresql-restart.conf"
+if [[ -f "$PG_DROPIN" ]]; then
+  install -d -m 0755 /etc/systemd/system/postgresql@.service.d
+  install -m 0644 "$PG_DROPIN" /etc/systemd/system/postgresql@.service.d/restart.conf
+  systemctl daemon-reload
+  echo "    stop the cluster with 'systemctl stop postgresql@16-main', not pg_ctlcluster"
+else
+  echo "    !! ${PG_DROPIN} not found — Postgres will not restart on failure" >&2
+fi
+
 echo "==> Creating role and database"
 # Bind on localhost only. The indexer runs on the same box, so Postgres never
 # needs to listen on a public interface — that is the single biggest win for
@@ -54,10 +68,17 @@ if [[ ! -f "$ENV_FILE" ]]; then
 # EXNIHILO indexer — secrets. Keep mode 0600.
 DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@127.0.0.1:5432/${DB_NAME}
 
-# Use a paid endpoint here. The indexer issues ~9 RPC reads per position event
-# (syncFees + snapshotPrices + getPosition); the public Avalanche RPC will
-# rate-limit a backfill of any real size.
-PONDER_RPC_URL_43113=https://api.avax-test.network/ext/bc/C/rpc
+# NOT api.avax-test.network. That endpoint sits behind Cloudflare, which blocks
+# datacenter IPs outright — from a VPS every request comes back as a "Sorry, you
+# have been blocked" HTML page, and Ponder dies on the unhandled rejection. It
+# works from a laptop, which is what makes it such a convincing default.
+#
+# Not PublicNode either: it accepts hosting ranges but answers any historical
+# eth_getLogs with "Archive requests require a personal token", which kills the
+# backfill while realtime sync looks fine. dRPC serves both. Verify a
+# replacement with an *archive* eth_getLogs against START_BLOCK, not
+# eth_blockNumber — every dead endpoint here passed eth_blockNumber.
+PONDER_RPC_URL_43113=https://avalanche-fuji.drpc.org
 ENV
   chown exnihilo:exnihilo "$ENV_FILE"
   chmod 0600 "$ENV_FILE"

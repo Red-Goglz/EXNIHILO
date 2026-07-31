@@ -2,6 +2,15 @@
 
 EXNIHILO has four fee types plus a dynamic impact fee. All fees are deterministic and enforced on-chain.
 
+::: tip Compare it to a premium, not to a taker fee
+5% looks enormous next to a perp's 0.05% taker fee, but they are not the same kind of
+charge. A perp taker fee sits *on top of* collateral you must also post and can lose
+entirely. EXNIHILO's open fee **is** an option premium: it replaces collateral, and it
+is the whole of your downside. The right comparison is to what an at-the-money option on
+a volatile token costs — where 5% of notional for a 7-day term is cheap.
+See [Positions Are Options](/introduction/positions-are-options).
+:::
+
 ## Position Open Fee — 5% base + impact fee
 
 Applied to the USDC notional when opening a long or short:

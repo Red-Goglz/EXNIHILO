@@ -5,6 +5,10 @@
 | **airToken / airUsd**       | The pool's two internal supply counters — **not** deployed tokens. `airTokenSupply` tracks synthetic exposure to the underlying, `airUsdSupply` tracks synthetic USDC. Both are plain `uint256` values inside `EXNIHILOPool`; nothing is minted, transferable, or holdable. |
 | **Backed reserves**         | The portion of each supply counter covered by real collateral the pool actually holds. `backedAirToken` and `backedAirUsd` track these. The gap between a supply counter and its backed reserve **is** the outstanding synthetic debt. |
 | **BNPL**                    | Buy Now, Pay Later — the trading model where you only pay the fee based on trading amount, with no additional collateral or margin.                 |
+| **Premium**                 | The open fee (5% of notional + impact fee, minimum 0.05 USDC), paid upfront and non-refundable. It is the maximum a trader can lose on a position. See [Positions Are Options](./positions-are-options). |
+| **Writer**                  | The pool's LP, in option terms. They are the counterparty to every position in their pool, collect the premium, and pay profitable settlements out of their liquidity. |
+| **Expires worthless**       | An underwater position at its deadline: collateral returns to the LP, synthetic debt is cancelled, the holder receives nothing. The option analogue of expiry out-of-the-money. |
+| **Roll**                    | Extending a position past its deadline via `renewPosition` or auto-renewal. Unlike an option premium paid once, EXNIHILO's premium recurs each period and is repriced on the position's current mark. |
 | **Constant-product**        | AMM formula `x * y = k` used for all three swap curves.                                                                                             |
 | **EXNIHILOFactory**         | Permissionless, immutable factory contract that deploys new markets.                                                                                |
 | **EXNIHILOPool**            | The core AMM + trading contract. One per market. Handles swaps, position opens/closes, and LP operations.                                           |

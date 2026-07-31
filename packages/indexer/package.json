@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "ponder dev --schema exnihilo",
-    "start": "ponder start --schema exnihilo",
+    "dev": "ponder dev --schema exnihilo_avax",
+    "start": "ponder start --schema exnihilo_avax",
     "build": "echo 'No build step needed — ponder start handles everything'",
     "codegen": "ponder codegen"
   },
