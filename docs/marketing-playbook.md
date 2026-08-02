@@ -197,6 +197,8 @@ before it goes public.** Read the contract, not the spec.
 
 - Publish weekly pool stats: fees earned by LP, unique traders, volume. Screenshot-first.
 - Now run Chain A content — you finally have markets to point at.
+- Run the **refunded-premium field test** (§6.7) early in this phase. ~$5 of budget, and
+  it manufactures the honest testimonials the rest of Phase 2 needs.
 - Trading competition per partner pool ($100–300). Prize structure should reward
   **% return, not absolute P&L**, so small accounts can win. That single rule choice
   *is* the "small capital can win" thesis made real, and it generates your best
@@ -511,6 +513,111 @@ Send from a personal account. Never paste this verbatim — the specifics are th
 | **"You have admin keys"** | Yes — one, and it's on the site. The factory deployer can force a pool into wind-down. It cannot move funds, block settlement, or take LP liquidity, and it's renounceable. Never deny this. |
 | **"Max position is a dollar, this is a toy"** | Correct, and deliberate. Immutable contracts with no human audit, so liquidity scales as the protocol earns it. The caps are the LP's, set on-chain, and you can read them yourself. |
 | **"Your fee is 20%, not 5%"** | Only below $1 notional, where the 0.05 USDC minimum beats the 5% rate. The calculator shows the effective rate for the exact size you pick, and flags when the floor is binding. At $1+ it's 5%. |
+
+### 6.7 The refunded-premium field test (X campaign)
+
+**Status: ⬜ not yet run.** Sequencing: this is trader-facing, so it violates the
+"projects only" rule in Phase 1 if run early. Run it once 3 pools have depth, framed
+publicly as a *test*, not a launch. Don't boost it, don't buy reach. The deliverable is
+30 honest verdicts, not impressions.
+
+#### The one thing that makes or breaks it
+
+At $100/pool and `maxPositionBps = 100` the max position is $1 and the premium on it is
+$0.05. **"Trade and get your fees back" is a five-cent offer** — dead on arrival as a
+financial incentive.
+
+It works only when sold as a *proof demo* instead of a rebate: the premium is the
+product's entire downside, so refunding it takes the max loss to literally zero. Frame
+it that way and the tiny number becomes the joke you're in on. Frame it as money and it
+looks like you're broke.
+
+#### Mechanics
+
+| | |
+|---|---|
+| **Refund** | Open premium + gas, in USDC. Not the 1% close fee — it's only paid on wins and adds words for nothing. |
+| **Paid regardless of verdict** | State it loudly. This is the whole credibility play and the difference between feedback and purchased praise. |
+| **Real payment** | Not the $0.05 — you reply to and quote *every* participant from the main account. For a small account attention beats a $5 bounty, and it seeds the timeline with other people's words instead of yours. |
+| **Cap** | First 50 wallets, one refund per X account **and** per wallet. Budget ≈ $5. |
+| **Disclosure** | Structural: everyone replies under the campaign post, so the terms travel with every testimonial. Nothing hidden, no `#ad` needed. |
+| **Window** | 7 days — matches `positionDuration`, so campaign and position expire together. |
+| **Claim format** | Reply with tx hash + one honest paragraph. No form, no Discord role, no email. |
+
+**Do not add a cash bounty on top.** The moment you pay $5 for a post, every Chain C
+skeptic reclassifies the entire reply thread as bought — you lose more credibility than
+the reach is worth.
+
+#### The post
+
+> Every EXNIHILO position has exactly one cost: the premium. It's also the most you can
+> ever lose.
+>
+> For the next 7 days we're refunding it.
+>
+> Open any position, then post what you actually thought — and we send the premium back.
+> Including if what you thought is that it's bad.
+>
+> Max loss on this trade: nothing. Terms below.
+
+Pinned self-reply:
+
+> How it works:
+>
+> 1. Open any long or short on exnihilo.markets/app
+> 2. Reply here with your tx hash and what you made of it — the UI, the fee, the
+>    mechanism, whatever stood out
+> 3. We refund the premium + your gas in USDC, same day
+>
+> Paid whether you liked it or not. We'd rather have 30 honest reads than 30 nice ones.
+>
+> First 50 wallets. One per person.
+>
+> Two things to know going in: positions expire in 7 days — if you're up, close it, and
+> if you're down at expiry it settles worthless. And max position is about a dollar right
+> now, on purpose. The pools are small while the contracts take real punishment.
+
+**Why it's shaped like that:** the honest-verdict clause does the persuading, not the
+refund. "We pay you to criticize us" is a claim almost nobody in this category can make,
+and it pre-empts the astroturf read before anyone types it. Expiry and the $1 cap go in
+the terms rather than hidden — same logic as link 11 in §2 and the "this is a toy" row
+in §6.6: volunteering the weakness is what buys belief for everything else.
+
+#### Alternative hook (riskier)
+
+> We'll pay you five cents to tell us we got it wrong.
+>
+> That's not a joke about our budget — five cents is the entire cost of opening a
+> position on EXNIHILO, and it's the most you can lose on one. Open a trade this week,
+> post your honest read, we refund it.
+>
+> Max loss: zero. Downside: you have to have an opinion.
+
+Leads with a dollar figure, which §7 says rots. One-off only, and only if you re-verify
+the live cap the morning you post.
+
+#### Reply bank for the thread
+
+| They say | You say |
+|---|---|
+| "$0.05 lol" | That's the point. Five cents is the whole premium, and the premium is the whole downside. Most of DeFi can't quote a number that small because their model needs collateral. |
+| "So you're paying for reviews" | Paid whether it's good or bad, terms are in the post everyone's replying under. Trash it and you still get paid — a few people already have. |
+| "Max position is $1?" | Yes, deliberately. Immutable contracts, no human audit yet. Liquidity scales as the protocol earns it. Caps are the LP's, set on-chain, you can read them. |
+| "What's the catch" | Positions expire in 7 days. Underwater at expiry settles worthless. Same catch as any option, and it's why the premium is the max loss. |
+| "Just farming engagement" | Yes, and 50 honest reads is what we're buying with it. Cheaper than a KOL and the feedback is real. |
+
+#### Ops checklist
+
+1. **Re-verify the live max position and premium against mainnet.** The §5 post-mortem
+   exists because three false claims nearly shipped from writing against the spec instead
+   of the deploy. If a cap moved, the copy is wrong.
+2. Confirm all 3 pools have depth. A participant landing on an empty feed does not return.
+3. USDC ready in a hot wallet, refunds same-day. A slow refund on a five-cent promise
+   reads worse than no campaign at all.
+4. Log every claim: X handle, wallet, tx hash, verdict, paid y/n. The verdicts are Phase 2
+   ammunition — that's the actual deliverable, not the reach.
+5. Screenshot the negative ones. A week-2 follow-up — "here's what people said was bad,
+   here's what changed" — is worth more than the campaign itself.
 
 ---
 
