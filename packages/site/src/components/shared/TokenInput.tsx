@@ -1,7 +1,7 @@
 import { type ChangeEvent } from "react";
 import { useAccount, useReadContract } from "wagmi";
 import { erc20Abi } from "@exnihilio/abis";
-import { formatToken } from "../../lib/format.ts";
+import { formatToken, formatExact } from "../../lib/format.ts";
 import { useAppChain } from "../../hooks/useAppChain.ts";
 
 interface TokenInputProps {
@@ -47,13 +47,7 @@ export default function TokenInput({
     if (/^\d*\.?\d*$/.test(val)) onChange(val);
   };
 
-  const formatRaw = (raw: bigint) => {
-    const scale = 10n ** BigInt(decimals);
-    const whole = raw / scale;
-    const frac = raw % scale;
-    const fracStr = frac.toString().padStart(decimals, "0").replace(/0+$/, "");
-    return fracStr ? `${whole}.${fracStr}` : whole.toString();
-  };
+  const formatRaw = (raw: bigint) => formatExact(raw, decimals);
 
   const setMax = () => {
     if (balance === undefined) return;

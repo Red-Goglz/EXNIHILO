@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAccount, useReadContracts } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
 import { useFormo } from "@formo/analytics";
 import { exnihiloPoolAbi, lpNFTAbi, erc20Abi } from "@exnihilio/abis";
-import { parseUnits, formatUsdc, formatToken } from "../../lib/format.ts";
+import { parseUnits, formatUsdc, formatToken, formatExact } from "../../lib/format.ts";
 import { useTx } from "../../hooks/useTx.ts";
 import { useAppChain } from "../../hooks/useAppChain.ts";
 import TokenInput from "../shared/TokenInput.tsx";
@@ -108,7 +108,35 @@ export default function LpPanel({
 
   const hasOpenPositions = openPositionCount !== undefined && openPositionCount > 0n;
 
-  const { writeContract, status: txStatus, isSuccess } = useTx("LP TRANSACTION");
+  // One useTx per action, never one shared instance. `status` stays "success"
+  // until the underlying mutation is reset, and TxButton renders "DONE" for
+  // success regardless of its idleLabel — so a shared hook makes every later
+  // button in the flow inherit the previous step's success and show "DONE"
+  // instead of its own label.
+  const {
+    writeContract: writeApprove,
+    status: approveStatus,
+    isSuccess: approveSuccess,
+    reset: resetApprove,
+  } = useTx("APPROVAL");
+
+  const {
+    writeContract: writeAdd,
+    status: addStatus,
+    isSuccess: addSuccess,
+  } = useTx("ADD LIQUIDITY");
+
+  const {
+    writeContract: writeRemove,
+    status: removeStatus,
+    isSuccess: removeSuccess,
+  } = useTx("REMOVE LIQUIDITY");
+
+  const {
+    writeContract: writeClaim,
+    status: claimStatus,
+    isSuccess: claimSuccess,
+  } = useTx("CLAIM FEES");
 
   const {
     writeContract: writeCaps,
@@ -123,8 +151,36 @@ export default function LpPanel({
   } = useTx("MARKET CLOSE");
 
   useEffect(() => {
-    if (isSuccess || capsSuccess || closeSuccess) queryClient.invalidateQueries();
-  }, [isSuccess, capsSuccess, closeSuccess, queryClient]);
+    if (
+      approveSuccess ||
+      addSuccess ||
+      removeSuccess ||
+      claimSuccess ||
+      capsSuccess ||
+      closeSuccess
+    )
+      queryClient.invalidateQueries();
+  }, [
+    approveSuccess,
+    addSuccess,
+    removeSuccess,
+    claimSuccess,
+    capsSuccess,
+    closeSuccess,
+    queryClient,
+  ]);
+
+  // Both approvals share one button, so clear the previous approval's success
+  // when the flow advances from token → USDC. Without this the second step
+  // renders "DONE" before it has been signed.
+  const approvalStep = needsTokenApproval ? "token" : needsUsdcApproval ? "usdc" : "none";
+  const prevApprovalStep = useRef(approvalStep);
+  useEffect(() => {
+    if (prevApprovalStep.current !== approvalStep) {
+      prevApprovalStep.current = approvalStep;
+      resetApprove();
+    }
+  }, [approvalStep, resetApprove]);
 
   const isPoolClosing = closeDate !== undefined && closeDate > 0n;
   const positionDurationHours = positionDuration !== undefined ? Number(positionDuration) / 3600 : 168;
@@ -154,6 +210,54 @@ export default function LpPanel({
     setTokenInput("");
     setUsdcInput("");
   };
+
+  // ── Ratio pairing ────────────────────────────────────────────────────────
+  // addLiquidity() rejects any deposit that would move the price: it
+  // cross-multiplies against the current reserves and reverts with
+  // RatioMismatch outside a 0.01 % tolerance. Deriving the paired amount is
+  // therefore not a convenience — hand-entered pairs revert almost every time.
+  //
+  // An empty pool has no ratio to match (the contract skips the check), so the
+  // first depositor sets the opening price and both fields stay free.
+  const hasRatio =
+    backedAirToken !== undefined &&
+    backedAirUsd !== undefined &&
+    backedAirToken > 0n &&
+    backedAirUsd > 0n;
+
+  // Derived from the counterpart's raw value, then rendered with formatExact —
+  // a lossy formatter here would feed a rounded string back into parseUnits and
+  // submit exactly the off-ratio deposit this is meant to prevent.
+  const handleTokenInput = (v: string) => {
+    setTokenInput(v);
+    if (!hasRatio) return;
+    const raw = parseUnits(v, tokenDecimals);
+    setUsdcInput(raw === 0n ? "" : formatExact((raw * backedAirUsd) / backedAirToken, 6));
+  };
+
+  const handleUsdcInput = (v: string) => {
+    setUsdcInput(v);
+    if (!hasRatio) return;
+    const raw = parseUnits(v, 6);
+    setTokenInput(
+      raw === 0n ? "" : formatExact((raw * backedAirToken) / backedAirUsd, tokenDecimals)
+    );
+  };
+
+  // Mirrors the contract's own check so a mismatch is caught before it costs
+  // a reverted transaction. Only reachable by editing one side after pairing.
+  const ratioMismatch = (() => {
+    if (!hasRatio || tokenRaw === 0n || usdcRaw === 0n) return false;
+    const lhs = tokenRaw * backedAirUsd;
+    const rhs = usdcRaw * backedAirToken;
+    const tolerance = (lhs > rhs ? lhs : rhs) / 10_000n + 1n;
+    return lhs > rhs + tolerance || rhs > lhs + tolerance;
+  })();
+
+  /** Pool price as USDC (6 dec) per whole token — the pairing rate shown to the LP. */
+  const pricePerToken = hasRatio
+    ? (backedAirUsd * 10n ** BigInt(tokenDecimals)) / backedAirToken
+    : 0n;
 
   if (!isLpHolder) {
     return (
@@ -278,10 +382,40 @@ export default function LpPanel({
         >
           ADD LIQUIDITY
         </div>
+
+        {/* Pairing rate — deposits must match the pool ratio exactly. */}
+        <div
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "var(--fs-label)",
+            color: "var(--muted)",
+            letterSpacing: "0.05em",
+            lineHeight: 1.5,
+          }}
+        >
+          {hasRatio ? (
+            <>
+              POOL RATIO · 1 {tokenSymbol} = {formatExact(pricePerToken, 6)} USDC
+              <br />
+              <span style={{ color: "var(--dim)" }}>
+                Enter either amount — the other is paired automatically.
+              </span>
+            </>
+          ) : (
+            <>
+              POOL EMPTY
+              <br />
+              <span style={{ color: "var(--dim)" }}>
+                Your deposit sets the opening price.
+              </span>
+            </>
+          )}
+        </div>
+
         <TokenInput
           label={tokenSymbol}
           value={tokenInput}
-          onChange={setTokenInput}
+          onChange={handleTokenInput}
           tokenAddress={underlyingToken}
           decimals={tokenDecimals}
           symbol={tokenSymbol}
@@ -289,19 +423,34 @@ export default function LpPanel({
         <TokenInput
           label="USDC"
           value={usdcInput}
-          onChange={setUsdcInput}
+          onChange={handleUsdcInput}
           tokenAddress={underlyingUsdc}
           decimals={6}
           symbol="USDC"
         />
 
+        {ratioMismatch && (
+          <p
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: "var(--fs-label)",
+              color: "var(--red)",
+              letterSpacing: "0.05em",
+              lineHeight: 1.5,
+            }}
+          >
+            OFF-RATIO — would revert. For {tokenInput || "0"} {tokenSymbol} deposit{" "}
+            {formatExact((tokenRaw * backedAirUsd!) / backedAirToken!, 6)} USDC.
+          </p>
+        )}
+
         {(needsTokenApproval || needsUsdcApproval) && (
           <TxButton
             idleLabel={`Approve ${needsTokenApproval ? tokenSymbol : "USDC"}`}
-            status={txStatus}
+            status={approveStatus}
             onClick={() => {
               if (needsTokenApproval) {
-                writeContract({
+                writeApprove({
                   address: underlyingToken,
                   abi: erc20Abi,
                   functionName: "approve",
@@ -309,7 +458,7 @@ export default function LpPanel({
                   chainId,
                 });
               } else {
-                writeContract({
+                writeApprove({
                   address: underlyingUsdc,
                   abi: erc20Abi,
                   functionName: "approve",
@@ -318,7 +467,7 @@ export default function LpPanel({
                 });
               }
             }}
-            disabled={tokenRaw === 0n || usdcRaw === 0n}
+            disabled={tokenRaw === 0n || usdcRaw === 0n || ratioMismatch}
             style={{ width: "100%", justifyContent: "center" }}
           />
         )}
@@ -326,10 +475,10 @@ export default function LpPanel({
         {!needsTokenApproval && !needsUsdcApproval && (
           <TxButton
             idleLabel="Add Liquidity"
-            status={txStatus}
+            status={addStatus}
             variant="green"
             onClick={() =>
-              writeContract(
+              writeAdd(
                 {
                   address: poolAddress,
                   abi: exnihiloPoolAbi,
@@ -343,7 +492,7 @@ export default function LpPanel({
                 }}
               )
             }
-            disabled={tokenRaw === 0n || usdcRaw === 0n}
+            disabled={tokenRaw === 0n || usdcRaw === 0n || ratioMismatch}
             style={{ width: "100%", justifyContent: "center" }}
           />
         )}
@@ -387,10 +536,10 @@ export default function LpPanel({
         )}
         <TxButton
           idleLabel="Remove All Liquidity"
-          status={txStatus}
+          status={removeStatus}
           variant="red"
           onClick={() =>
-            writeContract(
+            writeRemove(
               {
                 address: poolAddress,
                 abi: exnihiloPoolAbi,
@@ -456,13 +605,13 @@ export default function LpPanel({
           )}
           <TxButton
             idleLabel={`Claim $${formatUsdc(lpFeesClaimable)}`}
-            status={txStatus}
+            status={claimStatus}
             variant="default"
             onClick={() => {
               const recipient = (claimAddrInput !== ""
                 ? claimAddrInput
                 : address) as `0x${string}`;
-              writeContract(
+              writeClaim(
                 {
                   address: poolAddress,
                   abi: exnihiloPoolAbi,

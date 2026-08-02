@@ -1,0 +1,19 @@
+{
+  "name": "exnihilo-arbbot",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Detects arbitrage between EXNIHILO pools and the wider Avalanche DEX market. Read-only — reports, never trades.",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env.local src/index.ts",
+    "once": "node --env-file-if-exists=.env.local src/index.ts --once",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@exnihilio/abis": "*",
+    "viem": "^2.48.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}

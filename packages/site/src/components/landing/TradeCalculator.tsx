@@ -104,19 +104,90 @@ function simulateLong(p: PoolState, notional: number, m: number): number {
 }
 
 /**
- * Smallest upward price move where the payout covers the premium, as a
- * percentage. Binary search — `simulateLong` is monotonic in `m`, so this
- * converges cleanly. Returns null if even a 100× move does not cover it,
- * which happens when the fee floor dominates a very small position.
+ * Estimated USDC paid out when closing a short of `notional` after the token
+ * price moves by factor `m` (m < 1 is a fall, which is where a short profits).
+ *
+ * Mirrors openShort → _priceClose (short branch) → _settle. The short is NOT
+ * the long's mirror image and cannot be derived by symmetry — it mints
+ * synthetic *airToken* at the backed rate and locks *real* airUsd out of
+ * backedAirUsd via SWAP-3, then settles by buying the token debt back through
+ * SWAP-2. The two legs use different reserves, so each is modelled directly.
  */
-function breakEvenPct(p: PoolState, notional: number, premium: number): number | null {
+function simulateShort(p: PoolState, notional: number, m: number): number {
+  if (notional <= 0 || p.backedAirUsd <= 0 || p.airTokenSupply <= 0) return 0;
+
+  // openShort: airTokenMinted = notional * airTokenSupply / backedAirUsd,
+  // then SWAP-3 prices it against (airTokenSupply, backedAirUsd) — the supply
+  // BEFORE the synthetic mint.
+  const airTokenMinted = (notional * p.airTokenSupply) / p.backedAirUsd;
+  if (airTokenMinted <= 0) return 0;
+
+  const locked = cpOut(airTokenMinted, p.airTokenSupply, p.backedAirUsd, p.swapFee);
+  if (locked <= 0 || locked > p.backedAirUsd) return 0;
+
+  // State immediately after the open. The locked airUsd leaves the backed
+  // reserves but stays counted in airUsdSupply, so that counter is unchanged.
+  const backedUsd1 = p.backedAirUsd - locked;
+  const backedToken1 = p.backedAirToken;
+  if (backedUsd1 <= 0) return 0;
+
+  // Price move applied to the backed reserves along x*y=k.
+  const r = Math.sqrt(m);
+  const backedUsd2 = backedUsd1 * r;
+  const backedToken2 = backedToken1 / r;
+
+  // Supply counters move by the same delta as their backed reserve. Only the
+  // airUsd side is needed: the short branch of _priceClose values the debt
+  // through SWAP-2 on (airUsdSupply - lockedAmount, backedAirToken).
+  const airUsdSupply2 = p.airUsdSupply + (backedUsd2 - backedUsd1);
+  if (airUsdSupply2 < locked) return 0;
+
+  const totalBuyable = cpOut(locked, airUsdSupply2 - locked, backedToken2, p.swapFee);
+  if (totalBuyable <= 0 || totalBuyable < airTokenMinted) return 0;
+
+  const cost = (locked * airTokenMinted) / totalBuyable;
+  const surplus = locked - cost;
+  if (surplus <= 0) return 0;
+  return surplus * (1 - CLOSE_FEE);
+}
+
+/**
+ * Smallest price move where the payout covers the premium, as a percentage.
+ *
+ * Binary search over the move factor — both simulators are monotonic in `m`,
+ * just in opposite directions, so the bracket is chosen per side: a long needs
+ * `m` above 1 and a short needs it below. Returns null when even an extreme
+ * move does not cover the premium, which happens once the 0.05 USDC fee floor
+ * dominates a very small position.
+ */
+function breakEvenPct(
+  p: PoolState,
+  notional: number,
+  premium: number,
+  isShort: boolean,
+): number | null {
   if (notional <= 0 || premium <= 0) return null;
-  if (simulateLong(p, notional, 100) < premium) return null;
+  const sim = isShort ? simulateShort : simulateLong;
+
+  if (isShort) {
+    // Profit rises as m falls. lo = deep fall (profitable), hi = flat (not).
+    if (sim(p, notional, 0.01) < premium) return null;
+    let lo = 0.01;
+    let hi = 1;
+    for (let i = 0; i < 60; i++) {
+      const mid = (lo + hi) / 2;
+      if (sim(p, notional, mid) >= premium) lo = mid;
+      else hi = mid;
+    }
+    return (1 - lo) * 100;
+  }
+
+  if (sim(p, notional, 100) < premium) return null;
   let lo = 1;
   let hi = 100;
   for (let i = 0; i < 60; i++) {
     const mid = (lo + hi) / 2;
-    if (simulateLong(p, notional, mid) < premium) lo = mid;
+    if (sim(p, notional, mid) < premium) lo = mid;
     else hi = mid;
   }
   return (hi - 1) * 100;
@@ -130,16 +201,43 @@ function money(n: number): string {
   return `$${Math.round(n).toLocaleString()}`;
 }
 
-const MOVES = [
+/**
+ * Return on the premium, which is the only capital actually at risk — the
+ * notional is synthetic and never deposited, so a percentage of it would be
+ * meaningless. A total loss is therefore exactly −100 %, and the upside runs
+ * into the thousands of percent on a small premium.
+ */
+function pnlPct(net: number, premium: number): string | null {
+  if (!(premium > 0) || !Number.isFinite(net)) return null;
+  const pct = (net / premium) * 100;
+  const abs = Math.abs(pct);
+  const digits = abs >= 100 ? 0 : 1;
+  return `${pct >= 0 ? "+" : "−"}${abs.toLocaleString("en-US", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  })}%`;
+}
+
+const LONG_MOVES = [
   { label: "+200%", m: 3 },
   { label: "+100%", m: 2 },
   { label: "+50%", m: 1.5 },
   { label: "+10%", m: 1.1 },
 ];
 
+// A short cannot gain more than 100 %, so the ladder runs toward zero rather
+// than mirroring the long's multiples.
+const SHORT_MOVES = [
+  { label: "−75%", m: 0.25 },
+  { label: "−50%", m: 0.5 },
+  { label: "−25%", m: 0.75 },
+  { label: "−10%", m: 0.9 },
+];
+
 export default function TradeCalculator() {
   const [poolIdx, setPoolIdx] = useState(0);
-  const [sizePct, setSizePct] = useState(100);
+  // Signed: negative is short, positive is long, 0 is the centred rest state.
+  const [sliderVal, setSliderVal] = useState(0);
 
   const { data: poolCount } = useReadContract({
     address: FACTORY,
@@ -263,25 +361,35 @@ export default function TradeCalculator() {
   // Uncapped pools still need a sane slider ceiling; 10% of reserves is well
   // past the point where slippage dominates, which the payoff table will show.
   const maxSize = pool ? (pool.maxPosition ?? pool.backedAirUsd * 0.1) : 0;
+  const isShort = sliderVal < 0;
+  const sizePct = Math.abs(sliderVal);
   const size = (maxSize * sizePct) / 100;
+  const active = sizePct > 0;
 
   const notionalRaw = BigInt(Math.max(0, Math.floor(size * 1e6)));
+  // The caps and the fee both differ by side — quoteOpenFee reads the matching
+  // open-interest counter — so the direction is part of the query key, not a
+  // cosmetic flag.
   const { data: feeRaw } = useReadContract({
     address: pool?.address,
     abi: exnihiloPoolAbi,
     functionName: "quoteOpenFee",
-    args: [notionalRaw, true],
+    args: [notionalRaw, !isShort],
     chainId: CHAIN_ID,
     query: { enabled: !!pool && notionalRaw > 0n, staleTime: 60_000 },
   });
 
-  const premium = feeRaw !== undefined ? Number(feeRaw) / 1e6 : null;
+  const premium = active && feeRaw !== undefined ? Number(feeRaw) / 1e6 : null;
   const feeRate = premium !== null && size > 0 ? (premium / size) * 100 : null;
   const floorBinds = feeRate !== null && feeRate > 5.5;
   const breakEven = useMemo(
-    () => (pool && premium !== null ? breakEvenPct(pool, size, premium) : null),
-    [pool, size, premium],
+    () => (pool && premium !== null ? breakEvenPct(pool, size, premium, isShort) : null),
+    [pool, size, premium, isShort],
   );
+
+  const dirColor = isShort ? "var(--magenta)" : "var(--cyan)";
+  const moves = isShort ? SHORT_MOVES : LONG_MOVES;
+  const simulate = isShort ? simulateShort : simulateLong;
 
   if (!pool) return null;
 
@@ -327,10 +435,22 @@ export default function TradeCalculator() {
         <div className="cyber-panel p-6 md:p-8">
           {/* Pool facts */}
           <div className="grid grid-cols-3 gap-4 mb-8 font-mono text-center">
+            {/* USDC depth, not TVL. This is the side that actually backs
+                payouts and that maxPositionBps is a percentage of, so it is
+                the number that governs what you can open — but it is half the
+                pool, and the markets table reports TVL. Showing both keeps the
+                two pages reconcilable.
+
+                TVL needs no extra read: the token side valued at the pool's
+                own spot price (backedAirUsd / backedAirToken) is exactly
+                backedAirUsd, so total TVL is always 2 × backedAirUsd. */}
             <div>
-              <p className="section-label mb-1">Pool depth</p>
+              <p className="section-label mb-1">USDC depth</p>
               <p className="font-display text-2xl text-white">
                 {money(pool.backedAirUsd)}
+              </p>
+              <p className="text-xs mt-1" style={{ color: "var(--dim)" }}>
+                {money(pool.backedAirUsd * 2)} total TVL
               </p>
             </div>
             <div>
@@ -347,20 +467,38 @@ export default function TradeCalculator() {
             </div>
           </div>
 
-          {/* Size slider */}
+          {/* Direction + size on one control. Centre is flat: drag left to
+              short, right to long. */}
           <label className="section-label block mb-3">
-            Position size &mdash; {money(size)}
+            {active ? (
+              <>
+                Position size &mdash;{" "}
+                <span style={{ color: dirColor, fontWeight: 600 }}>
+                  {isShort ? "SHORT" : "LONG"} {money(size)}
+                </span>
+              </>
+            ) : (
+              <>Position size &mdash; drag left to SHORT, right to LONG</>
+            )}
           </label>
           <input
             type="range"
-            min={5}
+            min={-100}
             max={100}
             step={5}
-            value={sizePct}
-            onChange={(e) => setSizePct(Number(e.target.value))}
-            className="w-full mb-8"
-            style={{ accentColor: "var(--cyan)" }}
+            value={sliderVal}
+            onChange={(e) => setSliderVal(Number(e.target.value))}
+            className="w-full mb-1"
+            style={{ accentColor: active ? dirColor : "var(--border)" }}
           />
+          <div
+            className="flex justify-between font-mono mb-8"
+            style={{ fontSize: "var(--fs-micro)", color: "var(--dim)" }}
+          >
+            <span>SHORT {money(maxSize)}</span>
+            <span>flat</span>
+            <span>LONG {money(maxSize)}</span>
+          </div>
 
           {/* Cost */}
           <div
@@ -370,27 +508,31 @@ export default function TradeCalculator() {
             <div className="flex justify-between">
               <span style={{ color: "var(--muted)" }}>You pay (premium)</span>
               <span style={{ color: "var(--body)" }}>
-                {premium === null ? "…" : money(premium)}
+                {/* "—" means no position selected; "…" means the quote is
+                    still in flight. Collapsing the two would read as a stall. */}
+                {!active ? "—" : premium === null ? "…" : money(premium)}
               </span>
             </div>
             <div className="flex justify-between">
               <span style={{ color: "var(--muted)" }}>Effective fee rate</span>
               <span style={{ color: floorBinds ? "var(--orange)" : "var(--body)" }}>
-                {feeRate === null ? "…" : `${feeRate.toFixed(1)}%`}
+                {!active ? "—" : feeRate === null ? "…" : `${feeRate.toFixed(1)}%`}
               </span>
             </div>
             <div className="flex justify-between">
               <span style={{ color: "var(--muted)" }}>Maximum you can lose</span>
               <span style={{ color: "var(--red)" }}>
-                {premium === null ? "…" : money(premium)}
+                {!active ? "—" : premium === null ? "…" : money(premium)}
               </span>
             </div>
             <div className="flex justify-between">
               <span style={{ color: "var(--muted)" }}>
-                {pool.symbol} must rise
+                {pool.symbol} must {isShort ? "fall" : "rise"}
               </span>
               <span style={{ color: "var(--orange)" }}>
-                {breakEven === null ? "…" : `+${breakEven.toFixed(0)}% to break even`}
+                {breakEven === null
+                  ? "—"
+                  : `${isShort ? "−" : "+"}${breakEven.toFixed(0)}% to break even`}
               </span>
             </div>
           </div>
@@ -403,34 +545,62 @@ export default function TradeCalculator() {
             </p>
           )}
 
-          {/* Payoff */}
-          <p className="section-label mt-8 mb-3">If {pool.symbol} goes up</p>
+          {/* Payoff — same amounts and calcs, flipped to the chosen side. */}
+          <p className="section-label mt-8 mb-3">
+            If {pool.symbol} goes {isShort ? "down" : "up"}
+            {active && (
+              <span style={{ color: dirColor }}>
+                {" "}
+                &mdash; {isShort ? "SHORT" : "LONG"} {money(size)}
+              </span>
+            )}
+          </p>
           <div className="font-mono text-sm space-y-3">
-            {MOVES.map(({ label, m }) => {
-              const payout = simulateLong(pool, size, m);
+            {moves.map(({ label, m }) => {
+              const payout = active ? simulate(pool, size, m) : 0;
               const net = premium === null ? null : payout - premium;
               return (
                 <div key={label} className="flex justify-between">
                   <span style={{ color: "var(--muted)" }}>{label}</span>
                   <span style={{ color: "var(--body)" }}>
-                    {money(payout)}
+                    {!active ? "—" : money(payout)}
+                    {/* The net inherits the payout's colour — both are the same
+                        kind of fact. Only the return on premium is signed, so
+                        it alone carries the green/red. */}
                     {net !== null && (
-                      <span
-                        style={{ color: net >= 0 ? "var(--green)" : "var(--red)" }}
-                      >
+                      <>
                         {" "}
                         ({net >= 0 ? "+" : "−"}
                         {money(Math.abs(net))} net)
-                      </span>
+                        {premium !== null && pnlPct(net, premium) && (
+                          <span
+                            style={{
+                              color: net >= 0 ? "var(--green)" : "var(--red)",
+                            }}
+                          >
+                            {" "}
+                            {pnlPct(net, premium)}
+                          </span>
+                        )}
+                      </>
                     )}
                   </span>
                 </div>
               );
             })}
             <div className="flex justify-between">
-              <span style={{ color: "var(--muted)" }}>Any move down</span>
-              <span style={{ color: "var(--red)" }}>
-                {premium === null ? "…" : `−${money(premium)}`}
+              <span style={{ color: "var(--muted)" }}>
+                Any move {isShort ? "up" : "down"}
+              </span>
+              <span style={{ color: "var(--body)" }}>
+                {premium === null ? (
+                  "—"
+                ) : (
+                  <>
+                    $0 (−{money(premium)} net)
+                    <span style={{ color: "var(--red)" }}> −100%</span>
+                  </>
+                )}
               </span>
             </div>
           </div>
@@ -440,7 +610,8 @@ export default function TradeCalculator() {
             estimates: they assume the price move happens with no other trading
             flow, and they already account for AMM slippage and the 1% close fee.
             You receive the profit only &mdash; the position size is never
-            deposited, so it is never returned.
+            deposited, so it is never returned. Percentages are the return on
+            the premium, which is the only capital at risk.
           </p>
         </div>
       </section>

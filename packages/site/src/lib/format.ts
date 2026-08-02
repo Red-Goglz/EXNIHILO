@@ -131,3 +131,22 @@ export function parseUnits(value: string, decimals: number): bigint {
     return 0n;
   }
 }
+
+/**
+ * Exact inverse of parseUnits: render a raw bigint at full precision, with
+ * trailing zeros trimmed. Round-trips losslessly.
+ *
+ * Unlike formatToken (4 dp) and formatUsdc (2 dp), this loses no information,
+ * so it is the only safe formatter for a value that will be written back into
+ * an input and re-parsed — e.g. the auto-paired LP amounts, where truncating
+ * the display would silently submit an off-ratio deposit.
+ */
+export function formatExact(raw: bigint, decimals: number): string {
+  if (decimals === 0) return raw.toString();
+  const neg = raw < 0n;
+  const abs = neg ? -raw : raw;
+  const scale = 10n ** BigInt(decimals);
+  const whole = abs / scale;
+  const frac = (abs % scale).toString().padStart(decimals, "0").replace(/0+$/, "");
+  return `${neg ? "-" : ""}${whole}${frac ? `.${frac}` : ""}`;
+}
