@@ -1,3 +1,7 @@
+---
+description: "EXNIHILO's security posture — reentrancy guards, the CEI pattern, immutability, the single privileged role, and four published AI audit rounds."
+---
+
 # Security
 
 EXNIHILO prioritizes security through multiple layers of protection.

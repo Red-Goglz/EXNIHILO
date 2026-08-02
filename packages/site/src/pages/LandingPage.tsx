@@ -4,8 +4,16 @@ import { DEFAULT_CHAIN } from "../lib/chains.ts";
 import { hasIndexer, indexerFetch } from "../lib/indexer.ts";
 import { formatUsdcCompact } from "../lib/format.ts";
 import TradeCalculator from "../components/landing/TradeCalculator.tsx";
+import { useSeo } from "../lib/seo.ts";
 
 export default function LandingPage() {
+  useSeo({
+    title: "EXNIHILO",
+    description:
+      "Trade any ERC-20 token on Avalanche with capped downside. You pay a fee instead of posting collateral, and that fee is the most you can lose — no margin calls, no liquidation engine, no oracles.",
+    path: "/",
+  });
+
   return (
     <div style={{ fontFamily: "var(--font-mono)", color: "var(--body)" }}>
       {/* ── NAV ──────────────────────────────────────────────────────────── */}

@@ -1,3 +1,7 @@
+---
+description: "Create a permissionless market for any ERC-20 token. What you need to seed the pool, the optional position caps, and what the factory deploys."
+---
+
 # Creating a Market
 
 Anyone can create a new market for any ERC-20 token. No approvals, no governance votes, no admin permissions.

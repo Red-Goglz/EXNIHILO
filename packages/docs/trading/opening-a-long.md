@@ -1,3 +1,7 @@
+---
+description: "A long is a call: pay the premium, post no collateral, and lose no more than you paid. Worked cost example and how the upside is calculated."
+---
+
 # Opening a Long
 
 A long position profits when the token price goes up relative to USDC.

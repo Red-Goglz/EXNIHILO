@@ -1,3 +1,7 @@
+---
+description: "EXNIHILO's four fee types plus the dynamic impact fee — and why a 5% open fee is an option premium rather than a taker fee, since it replaces collateral."
+---
+
 # Fees
 
 EXNIHILO has four fee types plus a dynamic impact fee. All fees are deterministic and enforced on-chain.

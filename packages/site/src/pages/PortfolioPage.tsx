@@ -9,8 +9,19 @@ import ChainGuard from "../components/wallet/ChainGuard.tsx";
 import PositionCard from "../components/position/PositionCard.tsx";
 import PositionRow from "../components/position/PositionRow.tsx";
 import TxButton from "../components/shared/TxButton.tsx";
+import { useSeo } from "../lib/seo.ts";
 
 export default function PortfolioPage() {
+  // noindex: the content is whatever the connected wallet holds. To a crawler
+  // (which has no wallet) this is a permanently empty page, and indexing it
+  // would put a blank result under a query someone meant for the app.
+  useSeo({
+    title: "Your portfolio",
+    description:
+      "Your open EXNIHILO positions, LP holdings and balances on Avalanche.",
+    noindex: true,
+  });
+
   return (
     <ChainGuard>
       <PortfolioContent />

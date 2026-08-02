@@ -1,3 +1,7 @@
+---
+description: "What can go wrong: smart contract risk, the absence of a human audit, LP counterparty exposure, expiry loss and thin liquidity. Read before trading."
+---
+
 # Risk Disclosure
 
 ::: danger

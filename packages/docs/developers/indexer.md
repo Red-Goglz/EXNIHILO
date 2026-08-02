@@ -1,3 +1,7 @@
+---
+description: "How the Ponder indexer serves price history, LP APR and protocol analytics, why it runs one instance per chain, and what breaks without it."
+---
+
 # Indexer
 
 The dApp reads live state directly from the chain, but anything **historical or

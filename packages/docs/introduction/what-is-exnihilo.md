@@ -1,3 +1,7 @@
+---
+description: "EXNIHILO lets you go long or short any ERC-20 token with no collateral and no liquidation. You pay a premium, and that premium is your entire downside."
+---
+
 # What is EXNIHILO
 
 EXNIHILO ("Out of Thin Air") lets you go long or short on any ERC-20 token without

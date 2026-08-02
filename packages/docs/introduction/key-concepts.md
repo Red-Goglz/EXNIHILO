@@ -1,3 +1,7 @@
+---
+description: "The core ideas behind EXNIHILO: positions as options, premium instead of collateral, synthetic supply, the three-curve AMM, and position expiry."
+---
+
 # Key Concepts
 
 ## Positions Are Options

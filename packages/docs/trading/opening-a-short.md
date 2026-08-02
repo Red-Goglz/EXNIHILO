@@ -1,3 +1,7 @@
+---
+description: "A short is a put with bounded loss. Unlike shorting on margin, a squeeze can never cost you more than the premium you paid when you opened."
+---
+
 # Opening a Short
 
 A short position profits when the token price goes down relative to USDC.

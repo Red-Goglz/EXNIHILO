@@ -1,3 +1,7 @@
+---
+description: "An EXNIHILO long is a call and a short is a put. The full mapping from option mechanics onto the protocol — and the four places the analogy breaks down."
+---
+
 # Positions Are Options
 
 If you already know how options work, you already know how EXNIHILO works. This page

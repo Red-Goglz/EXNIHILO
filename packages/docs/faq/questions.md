@@ -1,3 +1,7 @@
+---
+description: "Common questions about EXNIHILO — what the name means, whether positions are genuinely options, how the fees work, and what happens at expiry."
+---
+
 # Common Questions
 
 ## General

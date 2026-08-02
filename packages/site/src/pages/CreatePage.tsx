@@ -11,8 +11,17 @@ import { parseUnits, formatUsdc } from "../lib/format.ts";
 import { useTx } from "../hooks/useTx.ts";
 import TokenInput from "../components/shared/TokenInput.tsx";
 import TxButton from "../components/shared/TxButton.tsx";
+import { useSeo } from "../lib/seo.ts";
 
 export default function CreatePage() {
+  const { slug } = useAppChain();
+  useSeo({
+    title: "Create a market",
+    description:
+      "Deploy a permissionless EXNIHILO market for any ERC-20 token on Avalanche. No governance vote, no listing process, no gatekeeping — the factory is immutable.",
+    path: `/app/${slug}/create`,
+  });
+
   return <CreateContent />;
 }
 

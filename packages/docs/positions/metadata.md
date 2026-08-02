@@ -1,3 +1,7 @@
+---
+description: "Position NFT artwork is generated fully on-chain with no IPFS and no servers. The SVG shows side, size, fees paid and live estimated P&L."
+---
+
 # On-chain SVG Metadata
 
 Every Position NFT has fully on-chain artwork — no IPFS, no external servers.

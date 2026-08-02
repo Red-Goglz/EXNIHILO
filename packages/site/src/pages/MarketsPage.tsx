@@ -5,6 +5,7 @@ import { useAppChain } from "../hooks/useAppChain.ts";
 import PoolCard from "../components/pool/PoolCard.tsx";
 import type { PoolMeta } from "../components/pool/PoolCard.tsx";
 import { Link } from "react-router-dom";
+import { useSeo } from "../lib/seo.ts";
 
 type SortCol = "market" | "spot" | "long" | "short" | "tvl" | "apr" | "positions" | "pctLong" | "pctShort" | "oi";
 type SortDir = "asc" | "desc";
@@ -44,6 +45,14 @@ function comparePools(a: PoolMeta | undefined, b: PoolMeta | undefined, col: Sor
 }
 
 export default function MarketsPage() {
+  const { slug } = useAppChain();
+  useSeo({
+    title: "All markets",
+    description:
+      "Every live EXNIHILO market on Avalanche, with spot and entry prices, total value locked, LP APR and the long/short split of open interest.",
+    path: `/app/${slug}/markets`,
+  });
+
   return <MarketsContent />;
 }
 

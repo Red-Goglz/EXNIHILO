@@ -1,3 +1,7 @@
+---
+description: "Two independent limits on individual position size — a hard USDC cap and a soft cap in basis points of pool reserves, both adjustable by the LP."
+---
+
 # Position Caps
 
 The LP can set caps to limit individual position sizes, managing pool risk.

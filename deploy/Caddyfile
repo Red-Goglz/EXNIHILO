@@ -18,13 +18,29 @@ exnihilo.markets {
 	encode zstd gzip
 	root * /srv/exnihilo/packages/site/dist
 
+	# Every path react-router can actually render. Kept next to the router in
+	# packages/site/src/main.tsx — if you add a top-level route there, add it
+	# here too, or it will 404 on a hard refresh while working fine in-app.
+	@spa path / /app /app/*
+
 	# Vite fingerprints everything under /assets, so it is safe to cache for a
-	# year. index.html deliberately is not cached — it is the file that names
-	# the current asset hashes, so a stale copy pins the whole app to an old
-	# build.
+	# year. The shell is handled separately below.
 	@assets path /assets/*
 	header @assets Cache-Control "public, max-age=31536000, immutable"
-	header /index.html Cache-Control "no-cache"
+
+	# Self-hosted fonts are fingerprint-free but versioned by filename, and they
+	# change only when the typeface does. A year is fine.
+	@fonts path /fonts/*
+	header @fonts Cache-Control "public, max-age=31536000, immutable"
+
+	# The shell must not be cached — it is the file that names the current asset
+	# hashes, so a stale copy pins the whole app to an old build. This matches on
+	# the *request* path rather than /index.html: the SPA rewrite below happens
+	# inside a `handle` block, which runs after `header`, so by the time the path
+	# is /index.html this directive has already been evaluated and skipped.
+	# `header /index.html ...` therefore only ever fired for a literal request to
+	# /index.html, and the homepage shipped with no Cache-Control at all.
+	header @spa Cache-Control "no-cache"
 
 	header {
 		X-Content-Type-Options nosniff
@@ -42,9 +58,35 @@ exnihilo.markets {
 		file_server
 	}
 
-	handle {
-		try_files {path} /index.html
+	# The app shell, but only for paths the router knows. The previous rule here
+	# was `try_files {path} /index.html`, which served the shell with 200 for
+	# *any* URL: /sitemap.xml, /llms.txt and every typo returned a byte-identical
+	# 783-byte page. That is a soft 404 — Google indexes an unbounded set of URLs
+	# all carrying the same content, and genuinely broken links never surface in
+	# Search Console because nothing ever reports failure.
+	handle @spa {
+		rewrite * /index.html
 		file_server
+	}
+
+	# Real files only: /assets/*, /fonts/*, favicon.svg, robots.txt, sitemap.xml,
+	# og-image.png. A miss falls through to handle_errors below.
+	handle {
+		file_server
+	}
+
+	# `file_server` emits a 404 *error*, which by default renders Caddy's own
+	# empty body. Route it to the branded page instead. The explicit `status 404`
+	# matters: file_server would otherwise write 200 alongside the 404 body,
+	# which is the same soft-404 bug wearing a different hat.
+	handle_errors {
+		@notfound expression {err.status_code} == 404
+		handle @notfound {
+			rewrite * /404.html
+			file_server {
+				status 404
+			}
+		}
 	}
 }
 

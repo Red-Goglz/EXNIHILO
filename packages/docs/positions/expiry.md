@@ -1,3 +1,7 @@
+---
+description: "Every position carries a deadline: full value until it passes, then anyone may close it. How renewal, auto-renewal and the keeper bounty work."
+---
+
 # Position Expiry & Renewal
 
 Every position in EXNIHILO has a **deadline**. After the deadline, anyone can close the position. Before the deadline, only the holder can close it. Positions can be renewed by paying a fee.

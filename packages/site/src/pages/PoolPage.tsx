@@ -12,6 +12,7 @@ import PoolPriceChart from "../components/pool/PoolPriceChart.tsx";
 import LongShortPanel from "../components/trade/LongShortPanel.tsx";
 import LpPanel from "../components/trade/LpPanel.tsx";
 import SwapPanel from "../components/trade/SwapPanel.tsx";
+import { useSeo } from "../lib/seo.ts";
 
 type Tab = "trade" | "swap" | "lp";
 
@@ -98,6 +99,22 @@ function PoolContent() {
 
   const tokenSymbol   = (tokenMeta?.[0]?.result as string | undefined) ?? "…";
   const tokenDecimals = (tokenMeta?.[1]?.result as number | undefined) ?? 18;
+
+  // Sits here rather than in the PoolPage wrapper because the title needs the
+  // symbol, which is only known after the token metadata read resolves. It
+  // reruns when tokenSymbol goes from the "…" placeholder to the real ticker.
+  //
+  // The canonical is the pool address, not the symbol: addresses are unique and
+  // permanent, symbols are neither — anyone can deploy a second token calling
+  // itself USDC and create a market for it.
+  useSeo({
+    title: tokenSymbol === "…" ? "Market" : `${tokenSymbol} market`,
+    description:
+      tokenSymbol === "…"
+        ? "Long or short this market on EXNIHILO, with your loss capped at the premium you pay."
+        : `Go long or short ${tokenSymbol} on Avalanche with no liquidation risk. Live entry prices, open interest and LP depth for the ${tokenSymbol} market on EXNIHILO.`,
+    path: path(`markets/${poolAddress}`),
+  });
 
   // LP ownership — only query once lpNftId is known
   const { data: lpOwnerData } = useReadContracts({

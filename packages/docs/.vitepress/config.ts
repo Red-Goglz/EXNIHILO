@@ -1,25 +1,104 @@
 import { defineConfig } from "vitepress";
 
+const SITE = "https://exnihilo.markets";
+
+/**
+ * Site-wide description. Still needed as the fallback for any page that forgets
+ * its own `description` frontmatter — but it should never be the *only* one in
+ * play. Every page under this directory carries a specific description; when
+ * they did not, all 31 of them shipped this same sentence, which meant a page
+ * titled "Risk Disclosure" was described to searchers as a sales pitch.
+ */
+const SITE_DESCRIPTION =
+  "Long or short any ERC-20 token. You pay a fee, not collateral — and that fee is the most you can lose.";
+
+/** `trading/pnl.md` → `https://exnihilo.markets/docs/trading/pnl.html` */
+function pageUrl(relativePath: string): string {
+  const rel = relativePath
+    .replace(/\.md$/, ".html")
+    .replace(/(^|\/)index\.html$/, "$1");
+  return `${SITE}/docs/${rel}`;
+}
+
 export default defineConfig({
   title: "EXNIHILO",
-  description: "Long or short any ERC-20 token. You pay a fee, not collateral — and that fee is the most you can lose.",
+  description: SITE_DESCRIPTION,
   base: "/docs/",
   outDir: "../site/public/docs",
   appearance: "dark",
+
+  // Absolute paths into the host site's /fonts, which is where the app's own
+  // shell loads them from too — so a visitor moving between the app and the
+  // docs reuses the same cached files instead of fetching a second copy.
   head: [
-    ["link", { rel: "preconnect", href: "https://fonts.googleapis.com" }],
-    [
-      "link",
-      { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "" },
-    ],
     [
       "link",
       {
-        href: "https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@300;400;500;600;700&display=swap",
-        rel: "stylesheet",
+        rel: "preload",
+        href: "/fonts/ibm-plex-mono-latin-400.woff2",
+        as: "font",
+        type: "font/woff2",
+        crossorigin: "",
       },
     ],
+    ["link", { rel: "stylesheet", href: "/fonts/fonts.css" }],
   ],
+
+  /**
+   * Per-page canonical, social tags and article markup.
+   *
+   * VitePress emits <title> and <meta name="description"> on its own; none of
+   * the rest existed, so every docs page was unshareable (a bare grey box in
+   * any link preview) and had no canonical at all.
+   */
+  transformHead({ pageData }) {
+    const url = pageUrl(pageData.relativePath);
+    const description =
+      (pageData.frontmatter.description as string | undefined) ??
+      SITE_DESCRIPTION;
+    const title = pageData.frontmatter.layout === "home"
+      ? "EXNIHILO Documentation"
+      : `${pageData.title} | EXNIHILO`;
+
+    const head: [string, Record<string, string>, string?][] = [
+      ["link", { rel: "canonical", href: url }],
+      ["meta", { property: "og:type", content: "article" }],
+      ["meta", { property: "og:site_name", content: "EXNIHILO" }],
+      ["meta", { property: "og:url", content: url }],
+      ["meta", { property: "og:title", content: title }],
+      ["meta", { property: "og:description", content: description }],
+      ["meta", { property: "og:image", content: `${SITE}/og-image.png` }],
+      ["meta", { name: "twitter:card", content: "summary_large_image" }],
+      ["meta", { name: "twitter:site", content: "@exnihiloFinance" }],
+      ["meta", { name: "twitter:title", content: title }],
+      ["meta", { name: "twitter:description", content: description }],
+      ["meta", { name: "twitter:image", content: `${SITE}/og-image.png` }],
+    ];
+
+    // TechArticle on real pages only — the home layout is a landing page, not
+    // an article, and marking it up as one would be describing it wrongly.
+    //
+    // Deliberately no FAQPage on /docs/faq/*: Google retired FAQ rich results
+    // for every site in May 2026, so it buys nothing in search today.
+    if (pageData.frontmatter.layout !== "home") {
+      head.push([
+        "script",
+        { type: "application/ld+json" },
+        JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "TechArticle",
+          headline: pageData.title,
+          description,
+          url,
+          inLanguage: "en-US",
+          isPartOf: { "@type": "WebSite", "@id": `${SITE}/#website` },
+          publisher: { "@id": `${SITE}/#organization` },
+        }),
+      ]);
+    }
+
+    return head;
+  },
   themeConfig: {
     logo: "/logo.svg",
     siteTitle: "EXNIHILO",

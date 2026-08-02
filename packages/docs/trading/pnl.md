@@ -1,3 +1,7 @@
+---
+description: "How position P&L is computed from pool state alone with no oracles, and why closing returns the surplus only rather than the full notional."
+---
+
 # P&L Calculation
 
 Position profit and loss is computed entirely from on-chain pool state — no oracles involved.

@@ -1,3 +1,7 @@
+---
+description: "EXNIHILO uses a single-LP model. The LP NFT minted at market creation carries exclusive rights to add, withdraw and set caps — and is transferable."
+---
+
 # LP NFT & Ownership
 
 EXNIHILO uses a single-LP model. Each pool has exactly one liquidity provider, identified by an LP NFT.

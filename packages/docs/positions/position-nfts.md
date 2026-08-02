@@ -1,3 +1,7 @@
+---
+description: "Every open position is an ERC-721 NFT that custodies the locked collateral. The fields it stores for longs and shorts, and what each one means."
+---
+
 # Position NFTs
 
 Every open position in EXNIHILO is represented as an ERC-721 NFT.

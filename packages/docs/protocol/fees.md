@@ -1,3 +1,7 @@
+---
+description: "Every EXNIHILO fee in one table: the 5% open premium, the dynamic impact fee, renewal, swaps, the 1% close fee on profit, and the keeper bounty."
+---
+
 # Fee Structure
 
 All fees are deterministic, on-chain, and non-upgradeable.

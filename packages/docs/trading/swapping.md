@@ -1,3 +1,7 @@
+---
+description: "EXNIHILO pools double as ordinary AMM swap venues using the SWAP-1 curve. How swaps are priced and how the default 1% fee accrues to the LP."
+---
+
 # Swapping Tokens
 
 EXNIHILO pools also function as standard AMM swap venues.

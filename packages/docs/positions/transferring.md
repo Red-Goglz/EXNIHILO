@@ -1,3 +1,7 @@
+---
+description: "Position NFTs are standard ERC-721s and freely transferable. What the new owner gains — and the one setting that deliberately does not transfer."
+---
+
 # Transferring Positions
 
 Position NFTs are standard ERC-721 tokens and are fully transferable.

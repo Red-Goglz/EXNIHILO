@@ -1,3 +1,7 @@
+---
+description: "Definitions for every EXNIHILO term — airToken and airUsd supply counters, backed versus synthetic supply, premium, impact fee and position caps."
+---
+
 # Glossary
 
 | Term                        | Definition                                                                                                                                          |

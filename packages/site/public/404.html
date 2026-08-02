@@ -1,0 +1,92 @@
+<!doctype html>
+<!--
+  Static 404. Deliberately not a copy of index.html: the build used to do
+  `cp dist/index.html dist/404.html`, which shipped the SPA shell as the error
+  page. React Router has no top-level route for an unknown path, so that page
+  booted the whole app — wallet connectors and all — only to render nothing.
+
+  Self-contained on purpose. An error page that depends on the JS bundle cannot
+  be trusted to render when the thing that broke *is* the bundle.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Page not found — EXNIHILO</title>
+    <meta name="robots" content="noindex, follow" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preload" href="/fonts/bebas-neue-latin-400.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/fonts/fonts.css" />
+    <style>
+      :root {
+        --bg: #000;
+        --border: #1a1a1a;
+        --cyan: #00e5ff;
+        --body: #c8c8c8;
+        --muted: #6a6a6a;
+        --dim: #3a3a3a;
+        --font-display: "Bebas Neue", "Arial Black", sans-serif;
+        --font-mono: "IBM Plex Mono", "Courier New", monospace;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1.5rem;
+        padding: 2rem 1.5rem;
+        background: var(--bg);
+        color: var(--body);
+        font-family: var(--font-mono);
+        text-align: center;
+      }
+      .code {
+        font-family: var(--font-display);
+        font-size: clamp(5rem, 22vw, 11rem);
+        line-height: 0.85;
+        letter-spacing: 0.04em;
+        color: #fff;
+        margin: 0;
+      }
+      .label {
+        font-size: 0.7rem;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--cyan);
+        margin: 0;
+      }
+      p.msg { max-width: 34rem; font-size: 0.9rem; color: var(--muted); margin: 0; }
+      nav { display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: center; margin-top: 0.5rem; }
+      a {
+        font-size: 0.75rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        text-decoration: none;
+        padding: 0.7rem 1.4rem;
+        border: 1px solid var(--border);
+        color: var(--body);
+        transition: border-color 0.15s, color 0.15s;
+      }
+      a:hover { border-color: var(--cyan); color: var(--cyan); }
+      a.primary { border-color: var(--cyan); color: var(--cyan); }
+      footer { margin-top: 2rem; font-size: 0.7rem; color: var(--dim); }
+    </style>
+  </head>
+  <body>
+    <p class="label">Error 404</p>
+    <h1 class="code">NOT FOUND</h1>
+    <p class="msg">
+      This page was made out of thin air — and stayed there. The link may be
+      stale, or the address mistyped.
+    </p>
+    <nav>
+      <a class="primary" href="/app">Launch App</a>
+      <a href="/">Home</a>
+      <a href="/docs/">Docs</a>
+    </nav>
+    <footer>© 2026 EXNIHILO</footer>
+  </body>
+</html>

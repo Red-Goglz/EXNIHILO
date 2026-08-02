@@ -1,3 +1,7 @@
+---
+description: "As the LP you are the option writer: you collect every premium and pay every winning close. How fee income accrues and what it genuinely costs you."
+---
+
 # LP Fee Earnings
 
 ## You are the counterparty

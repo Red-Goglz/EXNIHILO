@@ -4,13 +4,98 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>EXNIHILO — Out of Thin Air</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@300;400;500;600;700&display=swap"
-      rel="stylesheet"
+
+    <!--
+      These tags are the *static* defaults, and for social platforms they are
+      the only ones that exist. Per-route <title>/<meta>/<link rel=canonical>
+      are set from React (see src/lib/seo.tsx), which React 19 hoists into this
+      head — but that only helps clients which execute JavaScript. The link
+      unfurlers on X, Telegram, Discord and Slack do not. Whatever og:* says
+      here is what every shared link renders as, on every route.
+    -->
+    <title>EXNIHILO — Long or short any ERC-20, with no liquidation</title>
+    <meta
+      name="description"
+      content="Trade any ERC-20 token on Avalanche with capped downside. You pay a fee instead of posting collateral, and that fee is the most you can lose — no margin calls, no liquidation engine, no oracles."
     />
+    <link rel="canonical" href="https://exnihilo.markets/" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="EXNIHILO" />
+    <meta property="og:url" content="https://exnihilo.markets/" />
+    <meta property="og:title" content="EXNIHILO — Nothing here can liquidate you" />
+    <meta
+      property="og:description"
+      content="Long or short any ERC-20 token on Avalanche. You pay a fee, not collateral — and that fee is the most you can ever lose."
+    />
+    <meta property="og:image" content="https://exnihilo.markets/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="EXNIHILO — long or short any ERC-20 token, with your loss capped at the fee you pay."
+    />
+    <meta property="og:locale" content="en_US" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@exnihiloFinance" />
+    <meta name="twitter:creator" content="@exnihiloFinance" />
+    <meta name="twitter:title" content="EXNIHILO — Nothing here can liquidate you" />
+    <meta
+      name="twitter:description"
+      content="Long or short any ERC-20 token on Avalanche. You pay a fee, not collateral — and that fee is the most you can ever lose."
+    />
+    <meta name="twitter:image" content="https://exnihilo.markets/og-image.png" />
+
+    <meta name="theme-color" content="#000000" />
+
+    <!--
+      Self-hosted. The previous <link>s to fonts.googleapis.com put a
+      third-party DNS lookup, TLS handshake and round-trip on the critical path
+      of a page that already needs its JS bundle before it can paint anything.
+      Preload only the two faces used above the fold; unicode-range in fonts.css
+      lets the browser skip every cut it does not need.
+    -->
+    <link rel="preload" href="/fonts/bebas-neue-latin-400.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/ibm-plex-mono-latin-400.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/fonts/fonts.css" />
+
+    <!--
+      Organization + WebSite, inlined rather than rendered from React so that it
+      is present for crawlers that do not run scripts. Both describe the site as
+      a whole, so they belong on every route and never need to vary.
+
+      No FAQPage despite /docs/faq/*: Google retired FAQ rich results for all
+      sites in May 2026, so the markup earns nothing in search now.
+    -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://exnihilo.markets/#organization",
+            "name": "EXNIHILO",
+            "url": "https://exnihilo.markets/",
+            "logo": "https://exnihilo.markets/favicon.svg",
+            "description": "A permissionless protocol for taking long or short exposure to any ERC-20 token on Avalanche, with losses capped at the premium paid.",
+            "sameAs": [
+              "https://github.com/Red-Goglz/EXNIHILO",
+              "https://x.com/exnihiloFinance"
+            ]
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://exnihilo.markets/#website",
+            "url": "https://exnihilo.markets/",
+            "name": "EXNIHILO",
+            "description": "Long or short any ERC-20 token. You pay a fee, not collateral — and that fee is the most you can lose.",
+            "publisher": { "@id": "https://exnihilo.markets/#organization" },
+            "inLanguage": "en-US"
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

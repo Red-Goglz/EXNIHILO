@@ -1,3 +1,7 @@
+---
+description: "Deployed EXNIHILO contract addresses on Avalanche C-Chain mainnet (chain ID 43114), read back from chain after deployment."
+---
+
 # Contract Addresses
 
 ## Avalanche C-Chain Mainnet (Chain ID: 43114)

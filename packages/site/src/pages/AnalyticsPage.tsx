@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAccount } from "wagmi";
 import { useAppChain } from "../hooks/useAppChain.ts";
 import { hasIndexer, indexerFetch } from "../lib/indexer.ts";
+import { useSeo } from "../lib/seo.ts";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -152,7 +153,14 @@ function MiniBarChart({
 
 export default function AnalyticsPage() {
   const { address } = useAccount();
-  const { chainId, label: chainLabel } = useAppChain();
+  const { chainId, label: chainLabel, slug } = useAppChain();
+
+  useSeo({
+    title: "Protocol analytics",
+    description:
+      "Live EXNIHILO protocol metrics on Avalanche: position volume, payouts, fees split between LPs and the treasury, and per-market activity — all read from on-chain data.",
+    path: `/app/${slug}/analytics`,
+  });
 
   const indexed = hasIndexer(chainId);
 
