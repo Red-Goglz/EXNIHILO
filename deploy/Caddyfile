@@ -21,7 +21,15 @@ exnihilo.markets {
 	# Every path react-router can actually render. Kept next to the router in
 	# packages/site/src/main.tsx — if you add a top-level route there, add it
 	# here too, or it will 404 on a hard refresh while working fine in-app.
-	@spa path / /app /app/*
+	#
+	# Split into two because they are served different files. index.html carries
+	# the landing page prerendered to static HTML (scripts/prerender.mjs), which
+	# is the right answer for "/" and the wrong one for every other route: a
+	# crawler on /app/avalanche/markets would otherwise be handed the landing
+	# page's content under that URL. app.html is the untouched shell.
+	@shell path / /app /app/*
+	@home path /
+	@app path /app /app/*
 
 	# Vite fingerprints everything under /assets, so it is safe to cache for a
 	# year. The shell is handled separately below.
@@ -40,7 +48,7 @@ exnihilo.markets {
 	# is /index.html this directive has already been evaluated and skipped.
 	# `header /index.html ...` therefore only ever fired for a literal request to
 	# /index.html, and the homepage shipped with no Cache-Control at all.
-	header @spa Cache-Control "no-cache"
+	header @shell Cache-Control "no-cache"
 
 	header {
 		X-Content-Type-Options nosniff
@@ -64,8 +72,13 @@ exnihilo.markets {
 	# 783-byte page. That is a soft 404 — Google indexes an unbounded set of URLs
 	# all carrying the same content, and genuinely broken links never surface in
 	# Search Console because nothing ever reports failure.
-	handle @spa {
+	handle @home {
 		rewrite * /index.html
+		file_server
+	}
+
+	handle @app {
+		rewrite * /app.html
 		file_server
 	}
 
