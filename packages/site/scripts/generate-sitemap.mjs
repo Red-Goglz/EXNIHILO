@@ -21,12 +21,18 @@ const DIST = join(dirname(fileURLToPath(import.meta.url)), "..", "dist");
  *   /app/:chain/portfolio   noindex; its content is whatever wallet is connected
  *   /app/:chain/markets/:addr  enumerable only from chain state, not at build time
  */
+// Priorities are relative to each other, and they used to say the wrong thing:
+// the two app routes sat at 0.9, above every docs page, while serving a shell
+// with no content in it until React mounts. The pages actually worth crawling
+// and quoting are the docs, which ship as real HTML. So the app routes now sit
+// below the docs landing page — high enough to stay crawled, low enough not to
+// claim they are the substance of the site.
 const APP_ROUTES = [
   { path: "/", priority: "1.0", changefreq: "weekly" },
-  { path: "/app/avalanche", priority: "0.9", changefreq: "daily" },
-  { path: "/app/avalanche/markets", priority: "0.9", changefreq: "daily" },
-  { path: "/app/avalanche/create", priority: "0.6", changefreq: "monthly" },
-  { path: "/app/avalanche/analytics", priority: "0.6", changefreq: "daily" },
+  { path: "/app/avalanche", priority: "0.7", changefreq: "daily" },
+  { path: "/app/avalanche/markets", priority: "0.7", changefreq: "daily" },
+  { path: "/app/avalanche/create", priority: "0.5", changefreq: "monthly" },
+  { path: "/app/avalanche/analytics", priority: "0.5", changefreq: "daily" },
 ];
 
 function walk(dir) {

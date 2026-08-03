@@ -54,6 +54,14 @@ exnihilo.markets {
 		X-Content-Type-Options nosniff
 		X-Frame-Options DENY
 		Referrer-Policy strict-origin-when-cross-origin
+
+		# One year, subdomains included. `indexer.exnihilo.markets` is covered by
+		# includeSubDomains and is already HTTPS-only under Caddy, so this costs
+		# it nothing — but note that it locks *every* future subdomain to HTTPS
+		# for a year in any browser that has seen this header. That is the point,
+		# and it is also why `preload` is deliberately absent: getting onto the
+		# preload list is easy and getting off it takes months.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 	}
 
 	# The VitePress docs are real files under dist/docs. They must be matched
