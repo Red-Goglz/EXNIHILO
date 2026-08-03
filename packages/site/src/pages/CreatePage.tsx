@@ -18,7 +18,7 @@ export default function CreatePage() {
   useSeo({
     title: "Create a market",
     description:
-      "Deploy a permissionless EXNIHILO market for any ERC-20 token on Avalanche. No governance vote, no listing process, no gatekeeping — the factory is immutable.",
+      "Deploy a permissionless EXNIHILO market for any ERC-20 token. No governance vote, no listing process, no gatekeeping — the factory is immutable.",
     path: `/app/${slug}/create`,
   });
 

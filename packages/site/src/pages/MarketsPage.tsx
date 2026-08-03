@@ -49,7 +49,7 @@ export default function MarketsPage() {
   useSeo({
     title: "All markets",
     description:
-      "Every live EXNIHILO market on Avalanche, with spot and entry prices, total value locked, LP APR and the long/short split of open interest.",
+      "Every live EXNIHILO market with spot and entry prices, total value locked, LP APR and the long/short split of open interest.",
     path: `/app/${slug}/markets`,
   });
 

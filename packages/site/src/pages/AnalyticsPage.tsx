@@ -158,7 +158,7 @@ export default function AnalyticsPage() {
   useSeo({
     title: "Protocol analytics",
     description:
-      "Live EXNIHILO protocol metrics on Avalanche: position volume, payouts, fees split between LPs and the treasury, and per-market activity — all read from on-chain data.",
+      "Live EXNIHILO protocol metrics: position volume, payouts, fees split between LPs and the treasury, and per-market activity — all read on-chain.",
     path: `/app/${slug}/analytics`,
   });
 

@@ -9,8 +9,10 @@ import { useSeo } from "../lib/seo.ts";
 export default function LandingPage() {
   useSeo({
     title: "EXNIHILO",
+    // Kept under 160 characters: Google truncates past roughly that, and the
+    // clause that gets cut is the one doing the persuading.
     description:
-      "Trade any ERC-20 token on Avalanche with capped downside. You pay a fee instead of posting collateral, and that fee is the most you can lose — no margin calls, no liquidation engine, no oracles.",
+      "Long or short any ERC-20 token without posting collateral. You pay a fee instead, and that fee is the most you can lose. No margin calls, no liquidations.",
     path: "/",
   });
 
@@ -50,28 +52,36 @@ export default function LandingPage() {
 
       {/* ── HERO ─────────────────────────────────────────────────────────── */}
       <section className="min-h-screen flex flex-col items-center justify-center text-center px-6 pt-20">
+        {/*
+          The wordmark is a div, not the h1. It renders identically — every
+          .logo-glitch rule is class-based, and Tailwind's preflight strips the
+          h1 defaults anyway — but "EXNIHILO" is a brand name nobody searches
+          for, so spending the page's single h1 on it wasted the strongest
+          on-page signal we have. The h1 is now the line below, which is both
+          the actual proposition and the phrase people search ("liquidate").
+        */}
         <div className="fade-up">
           <p className="section-label mb-4">Out of Thin Air</p>
-          <h1
+          <div
             className="logo-glitch text-6xl md:text-8xl lg:text-9xl mb-6"
             data-text="EXNIHILO"
           >
             EXNIHILO
-          </h1>
+          </div>
         </div>
 
-        <p
+        <h1
           className="fade-up fade-up-d1 font-mono text-xl md:text-3xl max-w-2xl mb-3"
           style={{ color: "var(--body)" }}
         >
           Nothing here can liquidate you.
-        </p>
+        </h1>
         <p
           className="fade-up fade-up-d2 font-mono text-base md:text-lg max-w-2xl mb-10"
           style={{ color: "var(--muted)" }}
         >
-          Long or short any ERC-20 token on Avalanche. You pay a fee, not
-          collateral &mdash; and that fee is the most you can ever lose.
+          Long or short any ERC-20 token. You pay a fee, not collateral
+          &mdash; and that fee is the most you can ever lose.
         </p>
 
         <div className="fade-up fade-up-d3 flex flex-col sm:flex-row gap-4">

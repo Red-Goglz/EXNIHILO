@@ -20,7 +20,9 @@ features:
     details: Every position is a transferable ERC-721 with on-chain SVG art and live P&L. Sell the position without closing it.
   - title: No oracles, no token, no upgrade path
     details: Price comes from the AMM's own curves. Contracts are immutable and there is no governance to capture. One emergency role can wind a pool down; it cannot move funds.
-description: "Documentation for EXNIHILO — go long or short any ERC-20 token on Avalanche with no collateral and no liquidation risk. Start here."
+title: EXNIHILO Docs — long or short any ERC-20, no liquidation
+titleTemplate: false
+description: "Documentation for EXNIHILO — go long or short any ERC-20 token with no collateral and no liquidation risk. Start here."
 ---
 
 ## In one line

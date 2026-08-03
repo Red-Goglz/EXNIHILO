@@ -112,7 +112,7 @@ function PoolContent() {
     description:
       tokenSymbol === "…"
         ? "Long or short this market on EXNIHILO, with your loss capped at the premium you pay."
-        : `Go long or short ${tokenSymbol} on Avalanche with no liquidation risk. Live entry prices, open interest and LP depth for the ${tokenSymbol} market on EXNIHILO.`,
+        : `Go long or short ${tokenSymbol} with no liquidation risk and no collateral. Live entry prices, open interest and LP depth for the ${tokenSymbol} market.`,
     path: path(`markets/${poolAddress}`),
   });
 

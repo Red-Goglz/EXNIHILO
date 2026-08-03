@@ -7,16 +7,21 @@
 
     <!--
       These tags are the *static* defaults, and for social platforms they are
-      the only ones that exist. Per-route <title>/<meta>/<link rel=canonical>
-      are set from React (see src/lib/seo.tsx), which React 19 hoists into this
-      head — but that only helps clients which execute JavaScript. The link
-      unfurlers on X, Telegram, Discord and Slack do not. Whatever og:* says
-      here is what every shared link renders as, on every route.
+      the only ones that exist. The per-route title, description and canonical
+      are set from React (see src/lib/seo.ts), which only helps clients that
+      execute JavaScript. The link unfurlers on X, Telegram, Discord and Slack
+      do not. Whatever og:* says here is what every shared link renders as, on
+      every route.
+
+      Note the tag names above are spelled out rather than written as literal
+      markup: an HTML comment containing a real title element is invisible to
+      a browser but not to the regex-based scrapers some unfurlers still use,
+      one of which read 402 characters of comment as this page's title.
     -->
     <title>EXNIHILO — Long or short any ERC-20, with no liquidation</title>
     <meta
       name="description"
-      content="Trade any ERC-20 token on Avalanche with capped downside. You pay a fee instead of posting collateral, and that fee is the most you can lose — no margin calls, no liquidation engine, no oracles."
+      content="Long or short any ERC-20 token without posting collateral. You pay a fee instead, and that fee is the most you can lose. No margin calls, no liquidations."
     />
     <link rel="canonical" href="https://exnihilo.markets/" />
 
@@ -26,7 +31,7 @@
     <meta property="og:title" content="EXNIHILO — Nothing here can liquidate you" />
     <meta
       property="og:description"
-      content="Long or short any ERC-20 token on Avalanche. You pay a fee, not collateral — and that fee is the most you can ever lose."
+      content="Long or short any ERC-20 token. You pay a fee, not collateral — and that fee is the most you can ever lose."
     />
     <meta property="og:image" content="https://exnihilo.markets/og-image.png" />
     <meta property="og:image:width" content="1200" />
@@ -43,7 +48,7 @@
     <meta name="twitter:title" content="EXNIHILO — Nothing here can liquidate you" />
     <meta
       name="twitter:description"
-      content="Long or short any ERC-20 token on Avalanche. You pay a fee, not collateral — and that fee is the most you can ever lose."
+      content="Long or short any ERC-20 token. You pay a fee, not collateral — and that fee is the most you can ever lose."
     />
     <meta name="twitter:image" content="https://exnihilo.markets/og-image.png" />
 
@@ -78,7 +83,7 @@
             "name": "EXNIHILO",
             "url": "https://exnihilo.markets/",
             "logo": "https://exnihilo.markets/favicon.svg",
-            "description": "A permissionless protocol for taking long or short exposure to any ERC-20 token on Avalanche, with losses capped at the premium paid.",
+            "description": "A permissionless protocol for taking long or short exposure to any ERC-20 token, with losses capped at the premium paid.",
             "sameAs": [
               "https://github.com/Red-Goglz/EXNIHILO",
               "https://x.com/exnihiloFinance"

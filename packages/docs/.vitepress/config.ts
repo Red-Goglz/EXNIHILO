@@ -56,9 +56,16 @@ export default defineConfig({
     const description =
       (pageData.frontmatter.description as string | undefined) ??
       SITE_DESCRIPTION;
-    const title = pageData.frontmatter.layout === "home"
-      ? "EXNIHILO Documentation"
-      : `${pageData.title} | EXNIHILO`;
+    // Derived exactly the way VitePress builds the <title>, rather than
+    // hardcoded per layout. A hardcoded value drifts the moment a page sets its
+    // own title in frontmatter, and og:title silently disagreeing with the
+    // document title is the kind of mismatch nothing warns you about.
+    const fmTitle = pageData.frontmatter.title as string | undefined;
+    const baseTitle = fmTitle ?? pageData.title;
+    const title =
+      pageData.frontmatter.titleTemplate === false
+        ? baseTitle
+        : `${baseTitle} | EXNIHILO`;
 
     const head: [string, Record<string, string>, string?][] = [
       ["link", { rel: "canonical", href: url }],

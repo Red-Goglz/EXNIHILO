@@ -18,7 +18,7 @@ export default function PortfolioPage() {
   useSeo({
     title: "Your portfolio",
     description:
-      "Your open EXNIHILO positions, LP holdings and balances on Avalanche.",
+      "Your open EXNIHILO positions, LP holdings and balances.",
     noindex: true,
   });
 
