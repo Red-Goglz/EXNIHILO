@@ -121,6 +121,7 @@ ultimately paid by flow that pushes the pool price up.
 
 | If you want to | Read |
 |---|---|
+| Compare this against perps | [vs Perpetual Futures](./vs-perpetuals) |
 | Open your first position | [Opening a Long](/trading/opening-a-long) |
 | Understand the pricing engine | [Key Concepts](./key-concepts) |
 | Know exactly what you pay | [Fees](/trading/fees) |

@@ -19,9 +19,14 @@
       one of which read 402 characters of comment as this page's title.
     -->
     <title>EXNIHILO — Long or short any ERC-20, with no liquidation</title>
+    <!--
+      Kept byte-identical to the description in LandingPage.tsx's useSeo call.
+      This copy is what every non-JS crawler and link unfurler reads; that one
+      is what Googlebot sees after render. If they disagree, nothing warns you.
+    -->
     <meta
       name="description"
-      content="Long or short any ERC-20 token without posting collateral. You pay a fee instead, and that fee is the most you can lose. No margin calls, no liquidations."
+      content="Leveraged long or short exposure to any ERC-20 token, with no collateral and no liquidation. You pay a fee instead — and that fee is the most you can lose."
     />
     <link rel="canonical" href="https://exnihilo.markets/" />
 
@@ -97,6 +102,25 @@
             "description": "Long or short any ERC-20 token. You pay a fee, not collateral — and that fee is the most you can lose.",
             "publisher": { "@id": "https://exnihilo.markets/#organization" },
             "inLanguage": "en-US"
+          },
+          {
+            "@type": "WebApplication",
+            "@id": "https://exnihilo.markets/#app",
+            "name": "EXNIHILO",
+            "url": "https://exnihilo.markets/app",
+            "applicationCategory": "FinanceApplication",
+            "operatingSystem": "Any",
+            "browserRequirements": "Requires JavaScript and an EIP-1193 wallet",
+            "publisher": { "@id": "https://exnihilo.markets/#organization" },
+            "description": "Take long or short exposure to any ERC-20 token on Avalanche with no collateral and no liquidation. Losses are capped at the premium paid.",
+            "featureList": [
+              "Long or short any ERC-20 token",
+              "No liquidation and no margin calls",
+              "Loss capped at the premium paid",
+              "Permissionless market creation",
+              "Positions held as transferable NFTs",
+              "Liquidity provision with on-chain fee accrual"
+            ]
           }
         ]
       }

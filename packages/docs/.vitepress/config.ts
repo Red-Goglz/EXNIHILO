@@ -93,13 +93,48 @@ export default defineConfig({
         { type: "application/ld+json" },
         JSON.stringify({
           "@context": "https://schema.org",
-          "@type": "TechArticle",
-          headline: pageData.title,
-          description,
-          url,
-          inLanguage: "en-US",
-          isPartOf: { "@type": "WebSite", "@id": `${SITE}/#website` },
-          publisher: { "@id": `${SITE}/#organization` },
+          "@graph": [
+            {
+              "@type": "TechArticle",
+              headline: pageData.title,
+              description,
+              url,
+              inLanguage: "en-US",
+              isPartOf: { "@type": "WebSite", "@id": `${SITE}/#website` },
+              publisher: { "@id": `${SITE}/#organization` },
+            },
+            // Home → Docs → this page. The sidebar's section headings ("Trading",
+            // "Positions", …) are deliberately not a fourth level: a ListItem
+            // that is not the last one must carry an `item` URL, and the sections
+            // are grouping labels with no page behind them. Inventing an anchor
+            // to satisfy the shape would be describing a hierarchy the site does
+            // not actually have.
+            {
+              "@type": "BreadcrumbList",
+              itemListElement: [
+                {
+                  "@type": "ListItem",
+                  position: 1,
+                  name: "EXNIHILO",
+                  item: `${SITE}/`,
+                },
+                {
+                  "@type": "ListItem",
+                  position: 2,
+                  name: "Docs",
+                  item: `${SITE}/docs/`,
+                },
+                // Last item: `name` only. Google takes the current page's URL
+                // implicitly, and repeating it here is the most common way these
+                // end up self-referential and rejected.
+                {
+                  "@type": "ListItem",
+                  position: 3,
+                  name: baseTitle,
+                },
+              ],
+            },
+          ],
         }),
       ]);
     }
@@ -122,6 +157,10 @@ export default defineConfig({
           {
             text: "Positions Are Options",
             link: "/introduction/positions-are-options",
+          },
+          {
+            text: "vs Perpetual Futures",
+            link: "/introduction/vs-perpetuals",
           },
           { text: "Key Concepts", link: "/introduction/key-concepts" },
           { text: "Glossary", link: "/introduction/glossary" },
@@ -179,6 +218,7 @@ export default defineConfig({
           { text: "Contract Addresses", link: "/protocol/addresses" },
           { text: "Fee Structure", link: "/protocol/fees" },
           { text: "Security", link: "/protocol/security" },
+          { text: "Audit Report", link: "/protocol/audit-report" },
         ],
       },
       {

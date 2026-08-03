@@ -11,8 +11,13 @@ export default function LandingPage() {
     title: "EXNIHILO",
     // Kept under 160 characters: Google truncates past roughly that, and the
     // clause that gets cut is the one doing the persuading.
+    //
+    // Must stay byte-identical to the static one in index.html. That copy is
+    // what every non-JS crawler and link unfurler reads; this one is what
+    // Googlebot sees after render. Two descriptions that disagree is a change
+    // nothing warns you about.
     description:
-      "Long or short any ERC-20 token without posting collateral. You pay a fee instead, and that fee is the most you can lose. No margin calls, no liquidations.",
+      "Leveraged long or short exposure to any ERC-20 token, with no collateral and no liquidation. You pay a fee instead — and that fee is the most you can lose.",
     path: "/",
   });
 
@@ -76,12 +81,19 @@ export default function LandingPage() {
         >
           Nothing here can liquidate you.
         </h1>
+        {/*
+          "Leveraged" earns its place here: it is the word people actually
+          search with, and the docs back it up (roughly 20× notional per dollar
+          at risk). It is not a claim to be a perp — the comparison section
+          below says so outright, and /docs/introduction/vs-perpetuals spells
+          out where a perp is the better instrument.
+        */}
         <p
           className="fade-up fade-up-d2 font-mono text-base md:text-lg max-w-2xl mb-10"
           style={{ color: "var(--muted)" }}
         >
-          Long or short any ERC-20 token. You pay a fee, not collateral
-          &mdash; and that fee is the most you can ever lose.
+          Leveraged exposure to any ERC-20 token, long or short. You pay a fee,
+          not collateral &mdash; and that fee is the most you can ever lose.
         </p>
 
         <div className="fade-up fade-up-d3 flex flex-col sm:flex-row gap-4">
@@ -228,6 +240,92 @@ export default function LandingPage() {
             title="Positions are options"
             desc="A long is a call, a short is a put, the open fee is the premium. No strike to pick, no implied volatility, no Greeks — just a direction and a deadline."
           />
+        </div>
+      </section>
+
+      {/* ── VS PERPS ─────────────────────────────────────────────────────── */}
+      {/*
+        Most people arriving here are comparing against a perp, and until now
+        the page never used the word — so the one question every visitor was
+        actually holding went unanswered above the fold and unsearchable in the
+        copy. The "cannot close a loser" column is not a hedge bolted on for
+        balance: someone who wants to cut losers should bounce here rather than
+        after paying a premium, and saying so is the same posture as the
+        privileged-role panel below.
+      */}
+      <section className="max-w-4xl mx-auto px-6 py-24">
+        <p className="section-label mb-2 text-center">Coming from perps?</p>
+        <h2 className="font-display text-4xl md:text-5xl text-white text-center mb-4 tracking-wide">
+          No loan. Nothing to recall.
+        </h2>
+        <p
+          className="text-center text-sm max-w-xl mx-auto mb-16"
+          style={{ color: "var(--muted)" }}
+        >
+          A perpetual future lends you exposure against collateral, so it has to
+          be able to recall that loan &mdash; a liquidation is not a design flaw,
+          it is what borrowing costs. EXNIHILO lends you nothing. It mints
+          synthetic units against an AMM curve, so there is nothing to call back.
+        </p>
+
+        <div className="grid sm:grid-cols-2 gap-6">
+          <div className="cyber-panel p-6">
+            <p className="section-label mb-3">Perpetual future</p>
+            <ul className="text-sm space-y-2" style={{ color: "var(--muted)" }}>
+              <li>Post collateral, borrow exposure</li>
+              <li>Liquidated at a maintenance threshold</li>
+              <li>Funding rate &mdash; variable, can pay you</li>
+              <li>Linear payoff, deep books</li>
+              <li>
+                <strong style={{ color: "var(--body)" }}>
+                  You can cut a loser at any price
+                </strong>
+              </li>
+            </ul>
+          </div>
+
+          <div className="cyber-panel p-6">
+            <p className="section-label mb-3">EXNIHILO</p>
+            <ul className="text-sm space-y-2" style={{ color: "var(--muted)" }}>
+              <li>No collateral &mdash; pay a premium instead</li>
+              <li>No liquidation engine, no margin calls</li>
+              <li>Renewal fee each period &mdash; always a cost</li>
+              <li>Payoff bends with size; one LP per pool</li>
+              <li>
+                <strong style={{ color: "var(--body)" }}>
+                  You cannot close underwater &mdash; only hold or expire
+                </strong>
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <p
+          className="text-sm text-center mt-8 max-w-xl mx-auto"
+          style={{ color: "var(--muted)" }}
+        >
+          A wick that liquidates a 20&times; perp does nothing to a position
+          here. In exchange, you start behind: break-even sits near{" "}
+          <strong style={{ color: "var(--body)" }}>+8.3%</strong> and every
+          renewal raises it. If active risk management is your edge, a perp is
+          the better instrument &mdash; and the comparison below says why.
+        </p>
+
+        <div className="flex flex-wrap gap-4 justify-center mt-6">
+          <a
+            href="/docs/introduction/vs-perpetuals"
+            className="section-label"
+            style={{ color: "var(--cyan)" }}
+          >
+            EXNIHILO vs perpetuals &rarr;
+          </a>
+          <a
+            href="/docs/introduction/positions-are-options"
+            className="section-label"
+            style={{ color: "var(--cyan)" }}
+          >
+            Why a long is a call &rarr;
+          </a>
         </div>
       </section>
 

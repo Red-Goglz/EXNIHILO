@@ -141,7 +141,9 @@ Two fixes were applied during the round:
 Both shipped with mutation-tested coverage (`ShortCollateralInvariant.ts`,
 `ZeroOutputSwap.ts`).
 
-Full reports: [`.audit/findings-opus5/`](https://github.com/Red-Goglz/EXNIHILO/tree/main/.audit/findings-opus5).
+**[Read the full report →](./audit-report)** — every open finding, the mutation results
+and the scope limits, on this site. Raw per-pass files:
+[`.audit/findings-opus5/`](https://github.com/Red-Goglz/EXNIHILO/tree/main/.audit/findings-opus5).
 
 ### Claude Fable 5 (2026-07-09) — superseded
 
