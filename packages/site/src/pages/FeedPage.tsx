@@ -24,6 +24,7 @@ import { usePriceHistory } from "../hooks/usePriceHistory.ts";
 import { useOpenFee } from "../hooks/useOpenFee.ts";
 import { useNeedsPerTradeApproval } from "../hooks/useRouterApprovalPrompt.ts";
 import { useSeo } from "../lib/seo.ts";
+import { protocolFeeFor } from "../lib/fees.ts";
 import PriceChart from "../components/pool/PriceChart.tsx";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -443,7 +444,7 @@ function FeedCard({
   useEffect(() => {
     if (!openSuccess) return;
     queryClient.invalidateQueries();
-    const protocolFeeRaw = (usdcRaw * 200n) / 10_000n;
+    const protocolFeeRaw = protocolFeeFor(usdcRaw);
     analytics?.track(direction === "long" ? "Position Opened Long" : "Position Opened Short", {
       pool: poolAddress,
       tokenSymbol: symbol,

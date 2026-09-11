@@ -1,80 +1,47 @@
-import { useEffect, useMemo, useState } from "react";
-import { useReadContract } from "wagmi";
-import { positionNFTAbi } from "@exnihilio/abis";
+import { useEffect, useState } from "react";
 import { formatUsdc } from "../../lib/format.ts";
-import { useAppChain } from "../../hooks/useAppChain.ts";
+import { buildPnlCardSvg, type PnlCardData } from "../../lib/pnlCard.ts";
 import { showToast } from "../shared/Toast.tsx";
 
 /**
  * Shareable PnL card for a position.
  *
- * The image is the position's own on-chain art: PositionNFT.tokenURI returns a
- * base64 JSON blob whose `image` is a base64 SVG rendered from live pool
- * reserves, so the card already shows current PnL with no server involved.
- * Rasterising that SVG is what "copy image" produces.
+ * The card is drawn client-side (lib/pnlCard.ts) rather than taken from
+ * PositionNFT.tokenURI: the on-chain art's 10px labels at #555 are unreadable
+ * once the 800×450 canvas is scaled down, and that renderer lives in a contract
+ * with no owner and no proxy, referenced by every pool as an `immutable` — so
+ * it cannot be restyled without redeploying the protocol. The numbers are the
+ * same live values the row and the card already read from the pool.
  */
 
-// Only what the share text needs — every stat shown to the user comes from the
-// on-chain card image itself.
-interface PnlCardModalProps {
-  tokenId: bigint;
-  positionNFTAddress: `0x${string}`;
-  tokenSymbol: string;
-  isLong: boolean;
-  feesPaidRaw: bigint;
-  hasPnl: boolean;
-  pnlPositive: boolean;
-  pnlNetAbs: bigint;
+interface PnlCardModalProps extends PnlCardData {
   onClose: () => void;
 }
 
-/** `data:application/json;base64,...` → the `image` field inside it. */
-function decodeTokenUriImage(tokenUri: string | undefined): string | undefined {
-  if (!tokenUri) return undefined;
-  const marker = "base64,";
-  const idx = tokenUri.indexOf(marker);
-  if (idx === -1) return undefined;
-  try {
-    const json = JSON.parse(atob(tokenUri.slice(idx + marker.length)));
-    return typeof json.image === "string" ? json.image : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 /**
- * Rasterise a data-URI SVG to a PNG blob. Data URIs don't taint the canvas, so
- * the result is readable back out.
+ * Rasterise an SVG string to a PNG blob. The markup is inlined as a data URI,
+ * which does not taint the canvas, so the result is readable back out.
  *
- * The on-chain art declares only a `viewBox` (`0 0 400 440`) with no width or
- * height. An SVG without intrinsic dimensions can report `naturalWidth === 0`
- * once loaded into an Image, which would rasterise at the wrong aspect — so the
- * size is taken from the viewBox and stamped onto the markup before loading.
+ * The card declares explicit width/height, but the size is still taken from the
+ * viewBox as a fallback: an SVG without intrinsic dimensions can report
+ * `naturalWidth === 0` once loaded into an Image and rasterise at the wrong
+ * aspect ratio.
  */
-async function svgDataUriToPng(dataUri: string, scale = 2): Promise<Blob> {
-  const b64 = dataUri.split("base64,")[1];
-  if (!b64) throw new Error("Unrecognised image encoding");
-
-  const svgText = atob(b64);
+async function svgToPng(svgText: string, scale = 2): Promise<Blob> {
   const viewBox = svgText.match(/viewBox="\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*"/);
   const vbWidth = viewBox ? parseFloat(viewBox[3]) : 0;
   const vbHeight = viewBox ? parseFloat(viewBox[4]) : 0;
-
-  const hasSize = /<svg[^>]*\swidth=/.test(svgText);
-  const sized = hasSize || !viewBox
-    ? svgText
-    : svgText.replace(/<svg\b/, `<svg width="${vbWidth}" height="${vbHeight}"`);
 
   const img = new Image();
   await new Promise<void>((resolve, reject) => {
     img.onload = () => resolve();
     img.onerror = () => reject(new Error("Could not load the card image"));
-    // Re-encode via a Blob URL: base64 of non-Latin1 SVG text can throw.
-    img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(sized)}`;
+    // URI-encode rather than base64: btoa throws on non-Latin1 token symbols.
+    img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgText)}`;
   });
 
-  const width = Math.round((img.naturalWidth || vbWidth || 400) * scale);
-  const height = Math.round((img.naturalHeight || vbHeight || 440) * scale);
+  const width = Math.round((img.naturalWidth || vbWidth || 800) * scale);
+  const height = Math.round((img.naturalHeight || vbHeight || 450) * scale);
 
   const canvas = document.createElement("canvas");
   canvas.width = width;
@@ -91,18 +58,8 @@ async function svgDataUriToPng(dataUri: string, scale = 2): Promise<Blob> {
   });
 }
 
-export default function PnlCardModal({
-  tokenId,
-  positionNFTAddress,
-  tokenSymbol,
-  isLong,
-  feesPaidRaw,
-  hasPnl,
-  pnlPositive,
-  pnlNetAbs,
-  onClose,
-}: PnlCardModalProps) {
-  const { chainId } = useAppChain();
+export default function PnlCardModal({ onClose, ...data }: PnlCardModalProps) {
+  const { tokenId, tokenSymbol, isLong, hasPnl, pnlPositive, pnlNetAbs, returnPct } = data;
   const [busy, setBusy] = useState<"copy" | "download" | null>(null);
 
   // Close on Escape — a modal that only closes by button is a trap on mobile.
@@ -112,35 +69,29 @@ export default function PnlCardModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const { data: tokenUri, isLoading } = useReadContract({
-    address: positionNFTAddress,
-    abi: positionNFTAbi,
-    functionName: "tokenURI",
-    args: [tokenId],
-    chainId,
-  });
+  // Not memoised: `data` is a fresh rest-spread object every render, so a memo
+  // keyed on it would never hit. Building the markup is a template string over
+  // a dozen values — cheaper than the equality check would be.
+  const svg = buildPnlCardSvg(data);
+  const imageSrc = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 
-  const imageDataUri = useMemo(
-    () => decodeTokenUriImage(tokenUri as string | undefined),
-    [tokenUri],
-  );
-
-  const pnlPct = feesPaidRaw > 0n
-    ? ((Number(pnlNetAbs) / Number(feesPaidRaw)) * 100).toFixed(0)
-    : "0";
+  // Return on premium, same figure the card draws. Both it and `pnlNetAbs` are
+  // net of the premium, so the dollar amount and the percent share a basis.
+  const pctText = returnPct === null
+    ? null
+    : `${returnPct >= 0 ? "+" : ""}${returnPct.toFixed(0)}%`;
 
   const shareText =
     `${isLong ? "LONG" : "SHORT"} ${tokenSymbol}/USDC on EXNIHILO` +
     (hasPnl
-      ? `\n${pnlPositive ? "+" : "-"}$${formatUsdc(pnlNetAbs)} (${pnlPositive ? "+" : "-"}${pnlPct}%)`
+      ? `\n${pnlPositive ? "+" : "-"}${formatUsdc(pnlNetAbs)}${pctText ? ` (${pctText} on premium)` : ""}`
       : "") +
     `\n\nOut of thin air - without any collateral.\n\nhttps://exnihilo.markets`;
 
   async function handleCopyImage() {
-    if (!imageDataUri) return;
     setBusy("copy");
     try {
-      const blob = await svgDataUriToPng(imageDataUri);
+      const blob = await svgToPng(svg);
       // Not universally supported — Safari/Firefox have historically limited
       // image writes — so failures fall through to the download path.
       if (!navigator.clipboard || typeof ClipboardItem === "undefined") {
@@ -159,10 +110,9 @@ export default function PnlCardModal({
   }
 
   async function handleDownload() {
-    if (!imageDataUri) return;
     setBusy("download");
     try {
-      const blob = await svgDataUriToPng(imageDataUri);
+      const blob = await svgToPng(svg);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -230,43 +180,29 @@ export default function PnlCardModal({
           </button>
         </div>
 
-        {/* On-chain card art */}
+        {/* Card art */}
         <div
           style={{
             border: "1px solid var(--border)",
             background: "var(--surface-2)",
-            minHeight: 200,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
             overflow: "hidden",
           }}
         >
-          {imageDataUri ? (
-            <img
-              src={imageDataUri}
-              alt={`${tokenSymbol} ${isLong ? "long" : "short"} position card`}
-              style={{ width: "100%", height: "auto", display: "block" }}
-            />
-          ) : (
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-label)", color: "var(--muted)", letterSpacing: "0.1em", padding: 40 }}>
-              {isLoading ? (
-                <><span className="spinner">⟳</span> LOADING CARD<span className="cursor-blink">_</span></>
-              ) : (
-                "ON-CHAIN ART UNAVAILABLE"
-              )}
-            </span>
-          )}
+          <img
+            src={imageSrc}
+            alt={`${tokenSymbol} ${isLong ? "long" : "short"} position card`}
+            style={{ width: "100%", height: "auto", display: "block" }}
+          />
         </div>
 
-        {/* No stats grid here — side, size, fees, PnL, opened and expires are
-            all already rendered inside the on-chain card above. */}
+        {/* No stats grid here — side, size, premium, PnL, opened and expires are
+            all already rendered inside the card above. */}
 
         {/* Actions */}
         <div style={{ display: "flex", gap: 8 }}>
           <button
             onClick={handleCopyImage}
-            disabled={!imageDataUri || busy !== null}
+            disabled={busy !== null}
             className="btn-terminal"
             style={{ flex: 1, justifyContent: "center" }}
           >
@@ -274,7 +210,7 @@ export default function PnlCardModal({
           </button>
           <button
             onClick={handleDownload}
-            disabled={!imageDataUri || busy !== null}
+            disabled={busy !== null}
             className="btn-terminal"
             style={{ flex: 1, justifyContent: "center" }}
           >

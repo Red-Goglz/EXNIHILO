@@ -12,12 +12,11 @@ import { useTx } from "../../hooks/useTx.ts";
 import { useAppChain } from "../../hooks/useAppChain.ts";
 import TokenInput from "../shared/TokenInput.tsx";
 import TxButton from "../shared/TxButton.tsx";
-
-// Display-only fallbacks while quoteOpenFee is in flight. The authoritative
-// fee (base + floor + OI-integral impact) comes from the pool via useOpenFee.
-const POSITION_FEE_BPS = 500n;
-const PROTOCOL_FEE_BPS = 200n;
-const MIN_POSITION_FEE = 50_000n; // 0.05 USDC (6 dec)
+// Display-only fallbacks while quoteOpenFee is in flight. The authoritative fee
+// (base + floor + OI-integral impact) comes from the pool via useOpenFee.
+// Imported rather than restated: these were duplicated here and in FeedPage, and
+// the reweighting of the protocol share reached neither (audit IA-R2-4).
+import { POSITION_FEE_BPS, MIN_POSITION_FEE, protocolFeeFor } from "../../lib/fees.ts";
 
 interface LongShortPanelProps {
   poolAddress: `0x${string}`;
@@ -62,10 +61,10 @@ export default function LongShortPanel({
         args: [address ?? "0x0000000000000000000000000000000000000000", poolAddress],
         chainId,
       },
-      { ...poolContract, functionName: "maxPositionUsd" },
-      { ...poolContract, functionName: "maxPositionBps" },
+      { ...poolContract, functionName: "currentMaxPositionBps" },
+      { ...poolContract, functionName: "createdAt" },
       { ...poolContract, functionName: "closeDate" },
-      { ...poolContract, functionName: "positionDuration" },
+      { ...poolContract, functionName: "currentPositionDuration" },
     ],
   });
 
@@ -76,8 +75,8 @@ export default function LongShortPanel({
   const airTokenTotalSupply = data?.[5]?.result as bigint | undefined;
   const airUsdTotalSupply = data?.[6]?.result as bigint | undefined;
   const allowance = data?.[7]?.result as bigint | undefined;
-  const maxPositionUsd = data?.[8]?.result as bigint | undefined;
-  const maxPositionBps = data?.[9]?.result as bigint | undefined;
+  const currentMaxPositionBps = data?.[8]?.result as bigint | undefined;
+  const createdAt = data?.[9]?.result as bigint | undefined;
   const closeDate = data?.[10]?.result as bigint | undefined;
   const positionDuration = data?.[11]?.result as bigint | undefined;
   const isClosed = closeDate !== undefined && closeDate > 0n;
@@ -87,12 +86,13 @@ export default function LongShortPanel({
     backedAirUsd !== undefined &&
     (backedAirToken === 0n || backedAirUsd === 0n);
   const isMarketClosed = isClosed || isInactive;
-  // closeDate in the contract is (close trigger time + positionDuration) —
-  // the "full wind-down" moment. Show the trigger time (when the LP closed it).
-  const closedAt =
-    isClosed && closeDate !== undefined && positionDuration !== undefined
-      ? closeDate - positionDuration
-      : undefined;
+  // closeDate is (close trigger time + the duration in force WHEN closePool was
+  // called) — the moment the last position must have expired by. The trigger
+  // time is not recoverable from state: currentPositionDuration() steps up with
+  // market age, so subtracting today's value gives a different, earlier answer
+  // than the one that was baked in, and on an aged pool lands before the market
+  // existed. Show the wind-down date instead, which is the on-chain value and
+  // the one a trader needs.
 
   let previewOut: bigint | undefined;
   if (
@@ -155,19 +155,38 @@ export default function LongShortPanel({
   const feePulled = quotedFee ?? (baseFeeRaw < MIN_POSITION_FEE ? MIN_POSITION_FEE : baseFeeRaw);
   const hasImpactFee = quotedFee !== undefined && quotedFee > baseFeeRaw && baseFeeRaw >= MIN_POSITION_FEE;
 
-  const MAX_UINT256 = 2n ** 256n - 1n;
-  const hasLeverageCap = leverageCap !== undefined && leverageCap !== MAX_UINT256;
+  // The cap is automatic and always finite: it ramps from 1 % of pool depth at
+  // market creation to 20 % after 24 hours. There is no "disabled" state and no
+  // way for anyone to change it.
+  const hasLeverageCap = leverageCap !== undefined;
   const overCap = hasLeverageCap && usdcRaw > 0n && usdcRaw > leverageCap!;
 
-  // Build cap description for display
+  const CAP_RAMP_SECONDS = 24n * 3600n;
+  const CAP_MAX_BPS = 2000n;
+
+  const capRampEndsAt =
+    createdAt !== undefined ? createdAt + CAP_RAMP_SECONDS : undefined;
+  const capIsRamping =
+    currentMaxPositionBps !== undefined && currentMaxPositionBps < CAP_MAX_BPS;
+
+  // Reading Date.now() during render is impure; mirror the countdown pattern
+  // used by usePositionState.
+  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const id = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   const capDescription = (() => {
-    if (!hasLeverageCap) return null;
-    const parts: string[] = [];
-    if (maxPositionUsd !== undefined && maxPositionUsd > 0n)
-      parts.push(`$${formatUsdc(maxPositionUsd)} hard`);
-    if (maxPositionBps !== undefined && maxPositionBps > 0n)
-      parts.push(`${Number(maxPositionBps) / 100}% of pool`);
-    return parts.length > 0 ? parts.join(" / ") : null;
+    if (currentMaxPositionBps === undefined) return null;
+    const pct = Number(currentMaxPositionBps) / 100;
+    if (!capIsRamping) return `${pct}% of pool`;
+
+    const hoursLeft =
+      capRampEndsAt === undefined
+        ? 0
+        : Math.max(0, Math.ceil((Number(capRampEndsAt) - nowSec) / 3600));
+    return `${pct}% of pool — widening to 20% in ~${hoursLeft}h`;
   })();
 
   // Router: skip per-trade approval when router has sufficient allowance
@@ -215,7 +234,7 @@ export default function LongShortPanel({
   useEffect(() => {
     if (openSuccess) {
       queryClient.invalidateQueries();
-      const protocolFeeRaw = (usdcRaw * PROTOCOL_FEE_BPS) / 10_000n;
+      const protocolFeeRaw = protocolFeeFor(usdcRaw);
       analytics?.track(isLong ? "Position Opened Long" : "Position Opened Short", {
         pool: poolAddress,
         tokenSymbol,
@@ -277,7 +296,7 @@ export default function LongShortPanel({
         <div style={{ background: "var(--surface-2)", border: `1px solid ${overCap ? "var(--red)" : "var(--border)"}`, padding: "10px 12px", transition: "border-color 0.15s" }}>
           <div className="stat-label">POSITION CAP</div>
           <div style={{ fontSize: "0.82rem", color: overCap ? "var(--red)" : "var(--body)" }}>
-            {leverageCap === undefined ? "—" : !hasLeverageCap ? "NONE" : `$${formatUsdc(leverageCap!)}`}
+            {leverageCap === undefined ? "—" : `$${formatUsdc(leverageCap!)}`}
           </div>
           {capDescription && (
             <div style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-micro)", color: "var(--muted)", marginTop: 2 }}>
@@ -429,8 +448,8 @@ export default function LongShortPanel({
         >
           {isClosed
             ? `MARKET CLOSED — no new positions can be opened.${
-                closedAt !== undefined
-                  ? ` Closed ${new Date(Number(closedAt) * 1000).toLocaleString()}.`
+                closeDate !== undefined
+                  ? ` Open positions wind down by ${new Date(Number(closeDate) * 1000).toLocaleString()}.`
                   : ""
               }`
             : "MARKET INACTIVE — all liquidity has been withdrawn. No new positions can be opened."}

@@ -36,9 +36,8 @@ const POOL_FIELDS = [
   "airTokenSupply",
   "airUsdSupply",
   "swapFeeBps",
-  "maxPositionBps",
-  "maxPositionUsd",
-  "positionDuration",
+  "currentMaxPositionBps",
+  "currentPositionDuration",
   "tokenDecimals",
   // NOT "token" — that name exists only as a parameter of the
   // SafeERC20FailedOperation error, so reading it reverts and every pool falls
@@ -332,12 +331,10 @@ export default function TradeCalculator() {
         const bT = Number(g("backedAirToken") ?? 0n) / tokScale;
         if (bU <= 0 || bT <= 0) return null;
 
-        const bps = Number(g("maxPositionBps") ?? 0n);
-        const usdCap = Number(g("maxPositionUsd") ?? 0n) / 1e6;
-        const caps = [
-          bps > 0 ? (bU * bps) / 10_000 : null,
-          usdCap > 0 ? usdCap : null,
-        ].filter((x): x is number => x !== null);
+        // The cap is automatic: 1 % of USDC depth at market creation, ramping
+        // to 20 % over 24 h. Always finite, never configurable.
+        const bps = Number(g("currentMaxPositionBps") ?? 0n);
+        const caps = bps > 0 ? [(bU * bps) / 10_000] : [];
 
         const tok = g("underlyingToken") as `0x${string}` | undefined;
 
@@ -350,7 +347,7 @@ export default function TradeCalculator() {
           airUsdSupply: Number(g("airUsdSupply") ?? 0n) / 1e6,
           swapFee: Number(g("swapFeeBps") ?? 0n) / 10_000,
           maxPosition: caps.length ? Math.min(...caps) : null,
-          durationDays: Number(g("positionDuration") ?? 0n) / 86_400,
+          durationDays: Number(g("currentPositionDuration") ?? 0n) / 86_400,
         } satisfies PoolState;
       })
       .filter((p): p is PoolState => p !== null);
@@ -436,7 +433,7 @@ export default function TradeCalculator() {
           {/* Pool facts */}
           <div className="grid grid-cols-3 gap-4 mb-8 font-mono text-center">
             {/* USDC depth, not TVL. This is the side that actually backs
-                payouts and that maxPositionBps is a percentage of, so it is
+                payouts and that the position cap is a percentage of, so it is
                 the number that governs what you can open — but it is half the
                 pool, and the markets table reports TVL. Showing both keeps the
                 two pages reconcilable.

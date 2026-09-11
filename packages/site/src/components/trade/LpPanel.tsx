@@ -33,8 +33,6 @@ export default function LpPanel({
 
   const [tokenInput, setTokenInput] = useState("");
   const [usdcInput, setUsdcInput] = useState("");
-  const [capsUsdInput, setCapsUsdInput] = useState("");
-  const [capsBpsInput, setCapsBpsInput] = useState("");
   const [claimAddrInput, setClaimAddrInput] = useState("");
 
   const poolContract = { address: poolAddress, abi: exnihiloPoolAbi, chainId } as const;
@@ -46,10 +44,11 @@ export default function LpPanel({
       { ...poolContract, functionName: "backedAirUsd" },
       { ...poolContract, functionName: "lpFeesAccumulated" },
       { ...poolContract, functionName: "openPositionCount" },
-      { ...poolContract, functionName: "maxPositionUsd" },
-      { ...poolContract, functionName: "maxPositionBps" },
+      { ...poolContract, functionName: "currentMaxPositionBps" },
+      { ...poolContract, functionName: "effectiveLeverageCap" },
+      { ...poolContract, functionName: "createdAt" },
       { ...poolContract, functionName: "closeDate" },
-      { ...poolContract, functionName: "positionDuration" },
+      { ...poolContract, functionName: "currentPositionDuration" },
       { ...poolContract, functionName: "lpFeesPaidTotal" },
     ],
   });
@@ -59,11 +58,26 @@ export default function LpPanel({
   const backedAirUsd = data?.[2]?.result as bigint | undefined;
   const lpFeesClaimable = data?.[3]?.result as bigint | undefined;
   const openPositionCount = data?.[4]?.result as bigint | undefined;
-  const currentMaxUsd = data?.[5]?.result as bigint | undefined;
-  const currentMaxBps = data?.[6]?.result as bigint | undefined;
-  const closeDate = data?.[7]?.result as bigint | undefined;
-  const positionDuration = data?.[8]?.result as bigint | undefined;
-  const lpFeesPaidTotal = data?.[9]?.result as bigint | undefined;
+  const CAP_MAX_BPS = 2000n;
+  const currentCapBps = data?.[5]?.result as bigint | undefined;
+  const capIsRamping = currentCapBps !== undefined && currentCapBps < CAP_MAX_BPS;
+  const effectiveCap = data?.[6]?.result as bigint | undefined;
+  const capCreatedAt = data?.[7]?.result as bigint | undefined;
+  // Same lazy-init + interval pattern as usePositionState's countdown: reading
+  // Date.now() during render is impure and lints as such.
+  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const id = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const capHoursLeft =
+    capCreatedAt === undefined
+      ? 0
+      : Math.max(0, Math.ceil((Number(capCreatedAt) + 24 * 3600 - nowSec) / 3600));
+  const closeDate = data?.[8]?.result as bigint | undefined;
+  const positionDuration = data?.[9]?.result as bigint | undefined;
+  const lpFeesPaidTotal = data?.[10]?.result as bigint | undefined;
 
   const { data: lpOwner } = useReadContracts({
     contracts:
@@ -139,12 +153,6 @@ export default function LpPanel({
   } = useTx("CLAIM FEES");
 
   const {
-    writeContract: writeCaps,
-    status: capsStatus,
-    isSuccess: capsSuccess,
-  } = useTx("CAPS UPDATE");
-
-  const {
     writeContract: writeClose,
     status: closeStatus,
     isSuccess: closeSuccess,
@@ -156,7 +164,6 @@ export default function LpPanel({
       addSuccess ||
       removeSuccess ||
       claimSuccess ||
-      capsSuccess ||
       closeSuccess
     )
       queryClient.invalidateQueries();
@@ -165,7 +172,6 @@ export default function LpPanel({
     addSuccess,
     removeSuccess,
     claimSuccess,
-    capsSuccess,
     closeSuccess,
     queryClient,
   ]);
@@ -187,24 +193,6 @@ export default function LpPanel({
   const positionDurationDays = Math.round(positionDurationHours / 24);
 
   // Parse cap inputs: usd is raw USDC (6 dec), bps is integer
-  const newCapsUsd = (() => {
-    const n = parseFloat(capsUsdInput);
-    if (!capsUsdInput || isNaN(n) || n < 0) return 0n;
-    return BigInt(Math.round(n * 1_000_000));
-  })();
-  const newCapsBps = (() => {
-    const n = parseInt(capsBpsInput, 10);
-    if (!capsBpsInput || isNaN(n) || n < 0) return 0n;
-    return BigInt(n);
-  })();
-
-  const capsChanged =
-    (currentMaxUsd !== undefined && newCapsUsd !== currentMaxUsd) ||
-    (currentMaxBps !== undefined && newCapsBps !== currentMaxBps);
-
-  const capsValid =
-    (newCapsBps === 0n || (newCapsBps >= 10n && newCapsBps <= 9900n));
-
   const handleSuccess = () => {
     queryClient.invalidateQueries();
     setTokenInput("");
@@ -635,7 +623,7 @@ export default function LpPanel({
         </div>
       )}
 
-      {/* Position caps */}
+      {/* Position cap — automatic, not configurable */}
       <div
         style={{
           border: "1px solid var(--border)",
@@ -653,102 +641,41 @@ export default function LpPanel({
             color: "var(--muted)",
           }}
         >
-          POSITION CAPS
+          POSITION CAP
         </div>
 
-        {/* Current values row */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-          <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", padding: "8px 10px" }}>
-            <div className="stat-label">CURRENT USD CAP</div>
-            <div style={{ fontSize: "0.75rem", color: "var(--body)" }}>
-              {currentMaxUsd === undefined
+          <div style={{ background: "var(--surface-2)", padding: "10px 12px" }}>
+            <div className="stat-label">CURRENT</div>
+            <div style={{ fontSize: "0.82rem", color: "var(--body)" }}>
+              {currentCapBps === undefined
                 ? "—"
-                : currentMaxUsd === 0n
-                ? <span style={{ color: "var(--muted)" }}>UNLIMITED</span>
-                : `$${formatUsdc(currentMaxUsd)}`}
+                : `${(Number(currentCapBps) / 100).toFixed(2)}% of pool`}
             </div>
           </div>
-          <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", padding: "8px 10px" }}>
-            <div className="stat-label">CURRENT BPS CAP</div>
-            <div style={{ fontSize: "0.75rem", color: "var(--body)" }}>
-              {currentMaxBps === undefined
-                ? "—"
-                : currentMaxBps === 0n
-                ? <span style={{ color: "var(--muted)" }}>UNLIMITED</span>
-                : `${currentMaxBps.toString()} bps (${(Number(currentMaxBps) / 100).toFixed(2)}%)`}
+          <div style={{ background: "var(--surface-2)", padding: "10px 12px" }}>
+            <div className="stat-label">IN USDC</div>
+            <div style={{ fontSize: "0.82rem", color: "var(--body)" }}>
+              {effectiveCap === undefined ? "—" : `$${formatUsdc(effectiveCap)}`}
             </div>
           </div>
         </div>
 
-        {/* Inputs */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-label)", letterSpacing: "0.1em", color: "var(--muted)", minWidth: 80 }}>
-              USD CAP
-            </span>
-            <input
-              className="input-terminal"
-              type="number"
-              min="0"
-              step="1"
-              placeholder={currentMaxUsd !== undefined && currentMaxUsd > 0n ? formatUsdc(currentMaxUsd) : "0 = unlimited"}
-              value={capsUsdInput}
-              onChange={(e) => setCapsUsdInput(e.target.value)}
-              style={{ flex: 1, padding: "6px 8px", fontSize: "0.75rem" }}
-            />
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-body-s)", color: "var(--muted)" }}>USDC</span>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-label)", letterSpacing: "0.1em", color: "var(--muted)", minWidth: 80 }}>
-              BPS CAP
-            </span>
-            <input
-              className="input-terminal"
-              type="number"
-              min="0"
-              max="9900"
-              step="10"
-              placeholder={currentMaxBps !== undefined && currentMaxBps > 0n ? currentMaxBps.toString() : "0 = unlimited"}
-              value={capsBpsInput}
-              onChange={(e) => setCapsBpsInput(e.target.value)}
-              style={{ flex: 1, padding: "6px 8px", fontSize: "0.75rem" }}
-            />
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-body-s)", color: "var(--muted)" }}>
-              bps {newCapsBps > 0n ? `(${(Number(newCapsBps) / 100).toFixed(2)}%)` : ""}
-            </span>
-          </div>
-          {!capsValid && (
-            <p style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-label)", color: "var(--red)", letterSpacing: "0.05em" }}>
-              BPS must be 10–9900 or 0 to disable
-            </p>
-          )}
+        <div
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "var(--fs-micro)",
+            color: "var(--muted)",
+            lineHeight: 1.5,
+          }}
+        >
+          {capIsRamping
+            ? `Widening automatically to 20% of pool depth, ~${capHoursLeft}h remaining.`
+            : "At its 20% ceiling."}{" "}
+          The cap starts at 1% when a market is created and widens over the first
+          24 hours. It is fixed in the contract — no one, including the LP holder,
+          can change it.
         </div>
-
-        <TxButton
-          idleLabel="Set Position Caps"
-          status={capsStatus}
-          variant="default"
-          onClick={() =>
-            writeCaps(
-              {
-                address: poolAddress,
-                abi: exnihiloPoolAbi,
-                functionName: "setPositionCaps",
-                args: [newCapsUsd, newCapsBps],
-                chainId,
-              },
-              {
-                onSuccess: () => {
-                  queryClient.invalidateQueries();
-                  setCapsUsdInput("");
-                  setCapsBpsInput("");
-                },
-              }
-            )
-          }
-          disabled={!capsChanged || !capsValid}
-          style={{ width: "100%", justifyContent: "center" }}
-        />
       </div>
 
     </div>
