@@ -225,6 +225,7 @@ export default defineConfig({
         text: "Developers",
         collapsed: true,
         items: [
+          { text: "SDK", link: "/developers/sdk" },
           { text: "Contract Reference", link: "/developers/reference" },
           { text: "ABIs", link: "/developers/abis" },
           { text: "Local Development", link: "/developers/local-dev" },

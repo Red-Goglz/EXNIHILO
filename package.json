@@ -21,6 +21,7 @@
     "packages/blockchain",
     "packages/site",
     "packages/abis",
+    "packages/sdk",
     "packages/docs",
     "packages/indexer",
     "packages/arbbot"
