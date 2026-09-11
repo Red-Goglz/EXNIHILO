@@ -48,7 +48,10 @@ export default function PositionRow({
   }, [st.autoRenewSuccess]);
 
   const sideColor = position.isLong ? "var(--green)" : "var(--magenta)";
-  const pnlColor = st.pnlPositive ? "var(--green)" : "var(--red)";
+  // Colour by return, not by payout: a position can pay out a positive number
+  // and still be below the premium that bought it.
+  const inProfit = st.returnPct !== null ? st.returnPct >= 0 : st.pnlPositive;
+  const pnlColor = inProfit ? "var(--green)" : "var(--red)";
   const expiryColor = st.isExpired
     ? "var(--red)"
     : st.isUrgent
@@ -84,11 +87,11 @@ export default function PositionRow({
         <td>
           {st.hasPnl ? (
             <span style={{ color: pnlColor, fontWeight: 600 }}>
-              {st.pnlPositive ? "+" : "−"}${formatUsdc(st.pnlNetAbs)}
-              {position.feesPaid > 0n && (
+              {st.pnlPositive ? "+" : "−"}{formatUsdc(st.pnlNetAbs)}
+              {st.returnPct !== null && (
                 <span style={{ fontWeight: 400, fontSize: "var(--fs-label)", opacity: 0.75 }}>
-                  {" "}({st.pnlPositive ? "+" : "−"}
-                  {((Number(st.pnlNetAbs) / Number(position.feesPaid)) * 100).toFixed(0)}% fees)
+                  {" "}({st.returnPct >= 0 ? "+" : "−"}
+                  {Math.abs(st.returnPct).toFixed(0)}% on premium)
                 </span>
               )}
             </span>
@@ -169,7 +172,7 @@ export default function PositionRow({
             {/* Always reads "Extend …" so its purpose is clear; approving is a
                 step inside that flow, taken only on click. A bare "Approve
                 USDC" gave no hint what it was for. */}
-            {!st.isMarketClosed && (
+            {!st.isMarketClosed && st.renewAllowed !== false && (
               <TxButton
                 idleLabel={`Extend +${formatDuration(st.poolPositionDuration)} ($${formatUsdc(st.renewalFee)})`}
                 status={needsApprovalFirst ? st.approveStatus : st.renewStatus}
@@ -180,6 +183,23 @@ export default function PositionRow({
                   : "Stacks · dynamic fee · repriced live"}
                 style={{ fontSize: "var(--fs-label)", padding: "4px 8px", whiteSpace: "nowrap" }}
               />
+            )}
+            {/* Already extended as far as the pool's 60-day horizon allows.
+                Renewals stack from the existing deadline, so this one has to
+                run down before it can be extended again. */}
+            {!st.isMarketClosed && st.renewAllowed === false && (
+              <span
+                title={`Extended to the pool limit — expires ${st.deadlineDate}. Extend again as it runs down.`}
+                style={{
+                  fontSize: "var(--fs-nano)",
+                  letterSpacing: "0.1em",
+                  color: "var(--muted)",
+                  whiteSpace: "nowrap",
+                  padding: "4px 8px",
+                }}
+              >
+                EXTENDED TO LIMIT
+              </span>
             )}
             {/* Same btn-terminal treatment as Extend/Close so the actions read
                 as one row of buttons rather than a stray icon. */}
@@ -224,13 +244,18 @@ export default function PositionRow({
           {pnlCardOpen && (
             <PnlCardModal
               tokenId={tokenId}
-              positionNFTAddress={positionNFTAddress}
               tokenSymbol={st.tokenSymbol}
               isLong={position.isLong}
-              feesPaidRaw={position.feesPaid}
+              usdcIn={position.usdcIn}
+              lockedAmount={position.lockedAmount}
+              tokenDecimals={st.tokenDecimals}
+              openedAt={position.openedAt}
+              deadline={position.deadline}
+              feesPaid={position.feesPaid}
               hasPnl={st.hasPnl}
               pnlPositive={st.pnlPositive}
               pnlNetAbs={st.pnlNetAbs}
+              returnPct={st.returnPct}
               onClose={() => setPnlCardOpen(false)}
             />
           )}
@@ -362,10 +387,10 @@ export default function PositionRow({
                     </span>
                   ) : (
                     <span style={{ fontSize: "var(--fs-label)", color: "var(--muted)", letterSpacing: "0.04em", lineHeight: 1.6 }}>
-                      At expiry, anyone may renew this position for you. The fee + 0.05 keeper
-                      bounty are paid from the position's own profit — nothing leaves your
-                      wallet. If it can't pay, or the fee exceeds your cap, it settles instead.
-                      Cleared if the NFT is transferred.
+                      At expiry, anyone may renew this position for you. The fee is paid from
+                      the position's own profit — nothing leaves your wallet. If the profit
+                      can't cover it with a small safety margin, or the fee exceeds your cap,
+                      it settles instead. Cleared if the NFT is transferred.
                     </span>
                   )}
                 </div>

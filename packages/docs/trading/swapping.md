@@ -1,3 +1,7 @@
+---
+description: "EXNIHILO pools double as ordinary AMM swap venues using the SWAP-1 curve. How swaps are priced and how the default 1% fee accrues to the LP."
+---
+
 # Swapping Tokens
 
 EXNIHILO pools also function as standard AMM swap venues.
@@ -18,7 +22,7 @@ You can swap in either direction:
 
 ## Swap fee
 
-A configurable swap fee (default 1%) is applied to every swap. The fee stays in the pool as passive yield for the LP.
+A fixed 1% swap fee is applied to every swap. The fee stays in the pool as passive yield for the LP.
 
 The fee is computed on the *spot value* of the input:
 

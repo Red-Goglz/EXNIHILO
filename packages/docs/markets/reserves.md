@@ -1,3 +1,7 @@
+---
+description: "Backed versus synthetic supply, and how airToken and airUsd accounting keeps positions solvent. The key to understanding the rest of the protocol."
+---
+
 # Reserve Accounting
 
 Understanding the relationship between backed reserves and total supply is key to understanding EXNIHILO.

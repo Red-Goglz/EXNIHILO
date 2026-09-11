@@ -1,3 +1,7 @@
+---
+description: "Import EXNIHILO contract ABIs from the @exnihilio/abis workspace package, exported as const objects for full type safety with Viem and Wagmi."
+---
+
 # ABIs
 
 Contract ABIs are exported from the `@exnihilio/abis` workspace package.

@@ -28,7 +28,7 @@ interface IEXNIHILOPool {
  *         atomically in the same transaction — the router holds zero token
  *         state between transactions.
  *
- *         LP operations (addLiquidity, removeLiquidity, claimFees, setPositionCaps)
+ *         LP operations (addLiquidity, removeLiquidity, claimFees)
  *         and holder-only position operations (closeLong, closeShort,
  *         renewPosition, claimPayout) are called directly on the pool — the
  *         router does not wrap them.

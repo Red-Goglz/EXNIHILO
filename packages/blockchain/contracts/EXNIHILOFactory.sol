@@ -11,8 +11,7 @@ interface IPoolDeployer {
         address tokenAddress, address usdc, uint8 tokenDecimals,
         address positionNFT, address lpNftContract,
         uint256 lpNftId, address protocolTreasury,
-        uint256 maxPositionUsd, uint256 maxPositionBps,
-        uint256 defaultSwapFeeBps, uint256 positionDuration, address factory
+        address factory
     ) external returns (address);
 }
 
@@ -64,9 +63,7 @@ interface IERC20Decimals {
  *   - ReentrancyGuard on createMarket.
  *   - SafeERC20 for all token transfers (handles non-standard ERC-20s).
  *   - All constructor addresses validated non-zero.
- *   - maxPositionBps validated to 10–9900 when non-zero (mirrors pool validation).
  *   - Residual token approvals cleared after addLiquidity.
- *   - onERC721Received implemented so the factory can safely receive LP NFTs.
  */
 contract EXNIHILOFactory is ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -82,11 +79,8 @@ contract EXNIHILOFactory is ReentrancyGuard {
     /// @notice USDC token (6 decimals). Used as the quote / collateral asset.
     address public immutable usdc;
 
-    /// @notice Receives the 2 % protocol fee from every pool on position opens.
+    /// @notice Receives the 1 % protocol fee from every pool on position opens.
     address public immutable protocolTreasury;
-
-    /// @notice Default swap fee in bps applied to all newly created pools (e.g. 200 = 2 %).
-    uint256 public immutable defaultSwapFeeBps;
 
     /// @notice Stateless deployer contract that creates EXNIHILOPool instances.
     IPoolDeployer public immutable poolDeployer;
@@ -109,6 +103,11 @@ contract EXNIHILOFactory is ReentrancyGuard {
     // ── Custom errors ─────────────────────────────────────────────────────────
 
     error OnlyDeployer();
+    error ZeroAddress();
+    error ZeroAmount();
+    error TokenIsUsdc();
+    /// @dev LpNFT handed back an id other than the one baked into the pool.
+    error LpNftIdMismatch();
 
     // ── Events ────────────────────────────────────────────────────────────────
 
@@ -125,8 +124,7 @@ contract EXNIHILOFactory is ReentrancyGuard {
      * @param positionNFT_       Global PositionNFT contract (deployed separately).
      * @param lpNftContract_     Global LpNFT contract (deployed separately).
      * @param usdc_              USDC token address (6 decimals).
-     * @param protocolTreasury_  Receives the 2 % protocol fee from all pools.
-     * @param defaultSwapFeeBps_ Default swap fee for pools (e.g. 200 = 2 %).
+     * @param protocolTreasury_  Receives the 1 % protocol fee from all pools.
      * @param poolDeployer_     PoolDeployer contract that creates EXNIHILOPool instances.
      */
     constructor(
@@ -134,14 +132,21 @@ contract EXNIHILOFactory is ReentrancyGuard {
         address lpNftContract_,
         address usdc_,
         address protocolTreasury_,
-        uint256 defaultSwapFeeBps_,
         address poolDeployer_
     ) {
+        // The contract header has always claimed these were checked. They were
+        // not — a factory deployed with any of them zero is permanently broken,
+        // and being immutable there is no way to correct it after the fact.
+        if (positionNFT_      == address(0)) revert ZeroAddress();
+        if (lpNftContract_    == address(0)) revert ZeroAddress();
+        if (usdc_             == address(0)) revert ZeroAddress();
+        if (protocolTreasury_ == address(0)) revert ZeroAddress();
+        if (poolDeployer_     == address(0)) revert ZeroAddress();
+
         positionNFT       = positionNFT_;
         lpNftContract     = LpNFT(lpNftContract_);
         usdc              = usdc_;
         protocolTreasury  = protocolTreasury_;
-        defaultSwapFeeBps = defaultSwapFeeBps_;
         poolDeployer      = IPoolDeployer(poolDeployer_);
         deployer          = msg.sender;
     }
@@ -171,9 +176,6 @@ contract EXNIHILOFactory is ReentrancyGuard {
      * @param tokenAddress    ERC-20 underlying token to create a market for. Must not be zero.
      * @param usdcAmount      Initial USDC liquidity (6 dec). Must be > 0.
      * @param tokenAmount     Initial underlying token liquidity. Must be > 0.
-     * @param maxPositionUsd  Hard per-position USDC cap (0 = disabled).
-     * @param maxPositionBps  Per-position cap as % of backedAirUsd in bps
-     *                        (valid range when non-zero: 10–9900). 0 = disabled.
      *
      * @return pool    Address of the newly deployed EXNIHILOPool.
      * @return lpNftId LP NFT token ID transferred to the caller.
@@ -181,13 +183,19 @@ contract EXNIHILOFactory is ReentrancyGuard {
     function createMarket(
         address tokenAddress,
         uint256 usdcAmount,
-        uint256 tokenAmount,
-        uint256 maxPositionUsd,
-        uint256 maxPositionBps,
-        uint256 positionDuration
+        uint256 tokenAmount
     ) external nonReentrant returns (address pool, uint256 lpNftId) {
         // ── 1. Input validation ───────────────────────────────────────────────
+        //    The pool's own guards reject all three cases downstream — a zero
+        //    address has no code for safeTransferFrom to call, and addLiquidity
+        //    reverts ZeroAmount on either leg. Checking here fails before any
+        //    transfer is attempted and names the actual mistake, rather than
+        //    surfacing it as SafeERC20's "call to non-contract" three frames
+        //    deep or as a revert from a contract the caller never named.
 
+        if (tokenAddress == address(0)) revert ZeroAddress();
+        if (tokenAddress == usdc) revert TokenIsUsdc();
+        if (usdcAmount == 0 || tokenAmount == 0) revert ZeroAmount();
 
         // ── 2. Pull tokens from caller ────────────────────────────────────────
         //    Fee-on-transfer tokens are rejected by the pool's own _transferIn guard.
@@ -208,27 +216,34 @@ contract EXNIHILOFactory is ReentrancyGuard {
 
         // ── 4/5. Deploy EXNIHILOPool via PoolDeployer ─────────────────────────
 
+        // Held in a local: the pool bakes this in as an immutable, and the
+        // check below has to compare against the exact value that went in.
+        uint256 predictedLpNftId = allPools.length;
+
         pool = poolDeployer.deploy(
             tokenAddress,
             usdc,
             tokenDecimals,
             positionNFT,
             address(lpNftContract),
-            allPools.length,    // lpNftId_ — equals LpNFT._nextTokenId
+            predictedLpNftId,   // lpNftId_ — equals LpNFT._nextTokenId
             protocolTreasury,
-            maxPositionUsd,
-            maxPositionBps,
-            defaultSwapFeeBps,
-            positionDuration,
             address(this)       // factory address for emergency deployer lookup
         );
 
         // ── 6. Mint LP NFT to factory (temporary holder for seeding) ──────────
 
         // LpNFT.mint() increments _nextTokenId and returns tokenId = _nextTokenId++.
-        // The returned id must equal our prediction; if not, something is wrong
-        // with the factory's LP NFT accounting invariant.
         lpNftId = lpNftContract.mint(address(this), pool);
+
+        // The prediction above is now checked rather than asserted in prose.
+        // It rests on this factory being LpNFT's sole minter and on one mint per
+        // market; if either ever stopped holding, the pool would already carry
+        // the WRONG id as an immutable — and lpNftId gates addLiquidity,
+        // removeLiquidity, claimFees and closePool through ownerOf. A market
+        // whose controls answer to someone else's NFT must never be created, so
+        // this fails the whole transaction rather than seeding into it.
+        if (lpNftId != predictedLpNftId) revert LpNftIdMismatch();
 
         // ── 7. Seed the pool via addLiquidity (factory is the LP NFT holder) ──
 

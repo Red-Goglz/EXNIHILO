@@ -31,10 +31,6 @@ async function main() {
       lpNftContract,
       lpNftId,
       protocolTreasury,
-      maxPositionUsd,
-      maxPositionBps,
-      swapFeeBps,
-      positionDuration,
       factory,
     ] = await Promise.all([
       pool.underlyingToken(),
@@ -44,16 +40,18 @@ async function main() {
       pool.lpNftContract(),
       pool.lpNftId(),
       pool.protocolTreasury(),
-      pool.maxPositionUsd(),
-      pool.maxPositionBps(),
-      pool.swapFeeBps(),
-      pool.positionDuration(),
       pool.factory(),
     ]);
 
     try {
       await run("verify:verify", {
         address: poolAddr,
+        // The pool's constructor parameter list, in order. The caps, the
+        // duration and swapFeeBps used to be arguments and are not any more —
+        // the automatic ramps and a constant replaced them. This script read
+        // all four off the pool until they stopped existing, at which point it
+        // could not verify anything (audit PU-003, same defect as
+        // verifyMainnetPools.ts).
         constructorArguments: [
           underlyingToken,
           underlyingUsdc,
@@ -62,10 +60,6 @@ async function main() {
           lpNftContract,
           lpNftId,
           protocolTreasury,
-          maxPositionUsd,
-          maxPositionBps,
-          swapFeeBps,
-          positionDuration,
           factory,
         ],
       });

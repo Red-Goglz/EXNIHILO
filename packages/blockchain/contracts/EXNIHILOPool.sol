@@ -136,14 +136,14 @@ interface IEXNIHILOFactory {
  *
  * ── Fee Structure ────────────────────────────────────────────────────────────
  *
- *   All AMM modes:    swapFeeBps (1 % default) applied to SWAP-1, SWAP-2, and
+ *   All AMM modes:    swapFeeBps (a fixed 1 %) applied to SWAP-1, SWAP-2, and
  *                     SWAP-3 via _cpAmountOut. Fee is computed on the SPOT VALUE
  *                     of the input: fee = amountIn * reserveOut/reserveIn * feeBps.
  *                     This gives a true percentage-of-notional fee regardless of
  *                     trade size. Fee stays in pool as passive LP yield.
  *   Position open:    5 % flat on USDC notional + quadratic impact fee.
- *                       3 % → accrues to lpFeesAccumulated
- *                       2 % → accrues to protocolFeesAccumulated
+ *                       4 % → accrues to lpFeesAccumulated
+ *                       1 % → accrues to protocolFeesAccumulated
  *                     All fees are PULL payments: the LP NFT holder claims via
  *                     claimFees(to), the treasury via claimProtocolFees(to).
  *                     No pool operation ever pushes USDC to a third party, so
@@ -166,10 +166,10 @@ contract EXNIHILOPool is ReentrancyGuard {
     // ── Constants ─────────────────────────────────────────────────────────────
 
     uint256 private constant BPS_DENOM        = 10_000;
-    uint256 private constant LP_FEE_BPS       = 300;   // 3 % of notional → LP
-    uint256 private constant PROTOCOL_FEE_BPS = 200;   // 2 % of notional → protocol
+    uint256 private constant LP_FEE_BPS       = 400;   // 4 % of notional → LP
+    uint256 private constant PROTOCOL_FEE_BPS = 100;   // 1 % of notional → protocol
     /// @dev Minimum position open fee in USDC (6 dec). Applies when 5 % of notional
-    ///      would be less than this floor. Split 2/5 protocol, 3/5 LP.
+    ///      would be less than this floor. Split 1/5 protocol, 4/5 LP.
     uint256 private constant MIN_POSITION_FEE = 50_000; // 0.05 USDC
     /// @dev 1 % of profit taken by the protocol on closeLong / closeShort.
     uint256 private constant CLOSE_FEE_BPS    = 100;   // 1 % of surplus → protocol
@@ -180,18 +180,139 @@ contract EXNIHILOPool is ReentrancyGuard {
     ///      as one position or many smaller ones.
     ///      All impact fee revenue goes to the LP to compensate for price distortion.
     uint256 private constant IMPACT_FEE_BPS   = 1500;  // 15 % impact scaling rate
-    /// @dev Minimum swap fee in basis points. A permissionless factory would
-    ///      otherwise allow `swapFeeBps = 0`, which removes the economic
-    ///      friction that makes atomic flash-loan manipulation (open →
-    ///      manipulate price → close) unprofitable. 100 bps (1 %) puts the
-    ///      default and the floor at the same value.
-    uint256 private constant MIN_SWAP_FEE_BPS = 100;   // 1 %
-    /// @dev Flat USDC bounty (6 dec) paid to whoever calls settleExpired().
-    ///      A flat constant rather than gas-derived: the pool is oracle-free,
-    ///      so it cannot convert gas (native units) to USDC on-chain. 0.05 USDC
-    ///      comfortably exceeds the L2 gas cost of the call, keeping expired
-    ///      positions profitable to clean up or auto-renew permissionlessly.
-    uint256 private constant KEEPER_BOUNTY    = 50_000; // 0.05 USDC
+
+    /// @notice Swap fee in bps applied to all AMM modes (SWAP-1, SWAP-2, SWAP-3).
+    ///
+    /// @dev A constant rather than a per-pool parameter. It was configurable, and
+    ///      floored at this same 1 % — because a permissionless factory would
+    ///      otherwise allow `swapFeeBps = 0`, removing the economic friction that
+    ///      makes atomic manipulation (open → move price → close) unprofitable.
+    ///      Every pool ever deployed took the floor, so the parameter only ever
+    ///      offered a way to get it wrong: a market creator could raise the fee
+    ///      on traders after the fact was never possible, but a factory deployed
+    ///      with a high `defaultSwapFeeBps` would have silently taxed every pool
+    ///      it created. Fixing it removes the lever and the migration surface,
+    ///      and lets `_cpAmountOut` read the value without a storage load.
+    uint256 public constant swapFeeBps = 100;   // 1 %
+
+    /// @dev Per-position size cap, as a fraction of backedAirUsd, ramping
+    ///      linearly from CAP_START_BPS at creation to CAP_MAX_BPS after
+    ///      CAP_RAMP_DURATION.
+    ///
+    ///      A brand-new market is the most dangerous moment to allow size: the
+    ///      price has no history, depth is whatever the creator seeded, and a
+    ///      single large position can dominate the book before anyone can react.
+    ///      Starting at 1 % and widening to 20 % over a day lets the market prove
+    ///      itself before it accepts real size, with no parameter for anyone to
+    ///      get wrong and no lever for the LP to pull afterwards.
+    uint256 private constant CAP_START_BPS     = 100;    // 1 % of backedAirUsd
+    uint256 private constant CAP_MAX_BPS       = 2_000;  // 20 % of backedAirUsd
+    uint256 private constant CAP_RAMP_DURATION = 24 hours;
+
+    /// @dev Position lifetime, stepped by market age. Like the size cap, this is
+    ///      automatic rather than a creation parameter: a duration is genuinely
+    ///      hard to pick correctly up front, and the right answer changes as a
+    ///      market ages.
+    ///
+    ///      A market's first hours are its most volatile — a week-long position
+    ///      opened into a token with no price history is a bet on noise, and the
+    ///      LP writes it. Short lifetimes early force frequent repricing through
+    ///      the renewal fee, which is exactly when repricing is worth most. Once
+    ///      the market has a week behind it, long-dated positions are a normal
+    ///      product rather than an asymmetric one.
+    ///
+    ///      MUST be non-decreasing in market age. closePool sets
+    ///      closeDate = now + currentPositionDuration(), and the bound on how
+    ///      long the LP can be kept waiting by it depends on no earlier
+    ///      position having been issued a longer lifetime.
+    uint256 private constant DURATION_AGE_1 = 1 hours;
+    uint256 private constant DURATION_AGE_2 = 8 hours;
+    uint256 private constant DURATION_AGE_3 = 24 hours;
+    uint256 private constant DURATION_AGE_4 = 7 days;
+    uint256 private constant DURATION_MAX   = 30 days;
+
+    /// @dev Absolute ceiling on how far past NOW a renewal may place a deadline.
+    ///
+    ///      renewPosition extends from the position's existing deadline rather
+    ///      than from now, so renewals STACK. closeDate was the only other
+    ///      bound and it is zero until the LP closes the pool, so without this
+    ///      a holder could push a deadline out arbitrarily far — and
+    ///      removeLiquidity reverts while openPositionCount != 0. A dust
+    ///      position renewed at the MIN_POSITION_FEE floor would freeze 100 %
+    ///      of LP principal for as long as it cared to keep paying, at a cost
+    ///      independent of pool size.
+    ///
+    ///      Two times DURATION_MAX. That is the smallest horizon that still
+    ///      lets a position on the 30-day ceiling renew before it expires:
+    ///      renewing a freshly opened one lands exactly on the horizon and is
+    ///      allowed, renewing that result again is not. So a holder always has
+    ///      one renewal in hand and never has to race their own deadline, and
+    ///      a long-dated position has to be allowed to run down before it can
+    ///      be extended again. Below the ceiling — a market's first week, where
+    ///      durations are hours — renewal stays effectively unlimited, which is
+    ///      the intent: short positions renew often, long ones renew once.
+    ///
+    ///      What it guarantees the LP: every deadline a renewal writes is at
+    ///      most RENEW_HORIZON past the moment it was written, so at any time T
+    ///      no outstanding position can expire later than T + RENEW_HORIZON.
+    ///      closePool at T therefore bounds the wait for removeLiquidity at 60
+    ///      days instead of leaving it open-ended.
+    ///
+    ///      It does NOT make closeDate bind retroactively: a deadline already
+    ///      stacked past closeDate stands, and closePositionAfterDeadline
+    ///      cannot reach that position until it passes. The wait is bounded,
+    ///      not eliminated.
+    uint256 private constant RENEW_HORIZON = 2 * DURATION_MAX; // 60 days from now
+
+    /// @dev Expiry-settlement manipulation guard. Both expiry entry points read
+    ///      live AMM reserves — through _priceClose for the payout and through
+    ///      _renewFees for the auto-renew decision — so a third party could
+    ///      otherwise swap, settle, and reverse the swap atomically: flipping a
+    ///      renewable position onto the close path against the holder's recorded
+    ///      opt-in, or suppressing the priced surplus the close pays out. The
+    ///      round trip costs 2 × swapFeeBps, which the pool's sole LP receives
+    ///      back into its own reserves (see _swapTokenToUsdc), so for the LP —
+    ///      the only party that profits from either outcome — it is very nearly
+    ///      free.
+    ///
+    ///      Two constants close it together, and the pairing is what makes it
+    ///      work:
+    ///
+    ///        SETTLE_GUARD_BPS   a swap moving at least this fraction of
+    ///                           backedAirUsd arms the guard, blocking
+    ///                           third-party settlement for SETTLE_GUARD_BLOCKS.
+    ///        RENEW_MARGIN_BPS   the auto-renew decision must clear the equity
+    ///                           test by this fraction of the position's MARK.
+    ///
+    ///      The pairing rests on constant-product output being proportional to
+    ///      the output-side reserve: a swap that moves backedAirUsd by a fraction
+    ///      f of its depth moves a long's priced value (airUsdOut through SWAP-3)
+    ///      by very nearly the same f, and correspondingly moves a short's
+    ///      buyback cost through SWAP-2. So the achievable surplus swing is
+    ///      ≈ f × mark, where mark = N + surplus — the same quantity _renewFees
+    ///      prices the base fee on — and NOT f × N. Basing the margin on the
+    ///      notional would under-size it by mark/N, which on a position several
+    ///      times in profit is several-fold.
+    ///
+    ///      Capping f at SETTLE_GUARD_BPS therefore caps the swing at
+    ///      SETTLE_GUARD_BPS × mark, and a margin of RENEW_MARGIN_BPS × mark
+    ///      above that bound cannot be crossed by any swap small enough to evade
+    ///      the guard. Dust cannot grief settlement, and real manipulation cannot
+    ///      hide under the threshold.
+    ///
+    ///      RENEW_MARGIN_BPS is set to twice SETTLE_GUARD_BPS: the proportionality
+    ///      above is first-order, so the factor absorbs curve convexity and the
+    ///      integer flooring of the margin itself.
+    ///
+    ///      SETTLE_GUARD_BPS = 1 % also lines up with the swap fee: the smallest
+    ///      flip-capable manipulation is about the size at which reversing it
+    ///      becomes profitable for an arbitrageur, so the blocked blocks are real
+    ///      exposure rather than a notional delay.
+    uint256 private constant SETTLE_GUARD_BPS    = 100; // 1 % of backedAirUsd arms
+    uint256 private constant RENEW_MARGIN_BPS    = 200; // 2 % of mark margin
+    /// @dev Blocks of arbitrage exposure a manipulator must survive before it can
+    ///      settle someone else's expired position. ~10 s at Avalanche block times.
+    uint256 private constant SETTLE_GUARD_BLOCKS = 5;
 
     // ── Immutables ────────────────────────────────────────────────────────────
 
@@ -213,20 +334,11 @@ contract EXNIHILOPool is ReentrancyGuard {
     /// @notice Token ID of the LP NFT that governs this pool.
     uint256 public immutable lpNftId;
 
-    /// @notice Receives the 2 % protocol fee on every position open.
+    /// @notice Receives the 1 % protocol fee on every position open.
     address public immutable protocolTreasury;
 
-    /// @notice Hard cap per position in USDC (6 dec). 0 = disabled.
-    ///         LP NFT holder may freely raise, lower, or clear this cap.
-    uint256 public maxPositionUsd;
-
-    /// @notice Soft cap per position as a fraction of backedAirUsd in bps
-    ///         (valid range 10–9900). 0 = disabled.
-    ///         LP NFT holder may freely raise, lower, or clear this cap.
-    uint256 public maxPositionBps;
-
-    /// @notice Swap fee in bps applied to all AMM modes (e.g. 100 = 1 %). Applied in SWAP-1, SWAP-2, and SWAP-3.
-    uint256 public immutable swapFeeBps;
+    /// @notice Market creation timestamp. Anchors the position-cap ramp.
+    uint256 public immutable createdAt;
 
     /// @notice Factory that deployed this pool. Used to look up the emergency deployer.
     IEXNIHILOFactory public immutable factory;
@@ -282,7 +394,6 @@ contract EXNIHILOPool is ReentrancyGuard {
 
     /// @notice Duration (seconds) of each position period before expiry.
     ///         Set at market creation (1 hour – 1 year, default 7 days).
-    uint256 public immutable positionDuration;
 
     /// @notice Timestamp after which no new positions can be opened and
     ///         existing positions cannot be renewed past. 0 = pool is open.
@@ -299,6 +410,78 @@ contract EXNIHILOPool is ReentrancyGuard {
     ///         unchanged.
     uint256 public totalShortCollateral;
 
+    /// @notice Sum of every OPEN long's `lockedAmount` — underlying token moved
+    ///         out of backedAirToken at open and owed back to the position.
+    ///
+    /// @dev    The symmetric completion of totalShortCollateral. Without it the
+    ///         token leg of the reserve invariant was a loose lower bound: a
+    ///         long's collateral leaves the backed reserve but never leaves the
+    ///         contract, so the balance check passed against a figure smaller
+    ///         than the real obligation and could not detect a leak of that
+    ///         collateral. Measured slack over 360 randomised ops was 17 % on
+    ///         the token leg against 0 % on USDC, and exactly 0 once this term
+    ///         is added (audit SI-001).
+    ///
+    ///         Long renewals do not touch it: applyRenewal carries
+    ///         pos.lockedAmount through unchanged and charges the fee to
+    ///         backedAirUsd instead, so the only movements are open and settle.
+    uint256 public totalLongCollateral;
+
+    /// @notice Block of the last swap large enough to move an expiry settlement
+    ///         decision (see SETTLE_GUARD_BPS). Third-party settlement of an
+    ///         expired position is blocked for SETTLE_GUARD_BLOCKS afterwards.
+    ///         0 = never armed.
+    ///
+    /// @dev    Set by _armSettlementGuard from EVERY reserve-mutating path
+    ///         except _settle, whenever a settlement price has moved
+    ///         SETTLE_GUARD_BPS since the block opened.
+    ///
+    ///         `_settle` is the one deliberate exclusion, so a keeper can batch
+    ///         several expiries in one block. It is safe in a way the former
+    ///         openLong/openShort exclusion was not: the holder is exempt from
+    ///         the guard anyway, so settlement is useless as a self-directed
+    ///         lever, and a settle's price impact is fixed by the expiring
+    ///         position's own size and side rather than chosen by the caller.
+    ///         With no keeper bounty, batching is load-bearing for cleanup.
+    uint256 public lastLargeSwapBlock;
+
+    /// @dev The four reserve terms as one block OPENED, plus the block they
+    ///      describe. A long settles against backedAirUsd / airTokenSupply, a
+    ///      short against backedAirToken / airUsdSupply.
+    ///      `timestamp` is carried alongside `blockNumber` so a snapshot can be
+    ///      compared against Position.openedAt, which PositionNFT records as a
+    ///      timestamp. A block's open predates any position opened IN that
+    ///      block, and valuing a position against reserves from before it
+    ///      existed is meaningless — see _priceCloseClamped.
+    struct GuardSnapshot {
+        uint256 blockNumber;
+        uint256 timestamp;
+        uint256 backedUsd;
+        uint256 tokenSupply;
+        uint256 backedToken;
+        uint256 usdSupply;
+    }
+
+    /// @dev Ring of the opens of the last SETTLE_GUARD_BLOCKS blocks in which
+    ///      the reserves were mutated. `guardRingHead` indexes the newest.
+    ///
+    ///      Two consumers, not one. _armSettlementGuard measures this block's
+    ///      displacement against the newest entry; _priceCloseClamped clamps a
+    ///      settlement payout to the worst of every entry still inside the
+    ///      window. The second is what stops a holder pricing their own close
+    ///      against a swap they made recently (H-2). The pairs are exactly the
+    ///      ones _priceCloseAt reads, on both sides — the guard and settlement
+    ///      pricing measure the same two prices, so one snapshot serves both and
+    ///      they cannot disagree about what a block "opened with" means.
+    ///
+    ///      Sized to the window deliberately: entries are one per block and the
+    ///      window admits blocks `asOfBlock - SETTLE_GUARD_BLOCKS + 1 ..
+    ///      asOfBlock`, so SETTLE_GUARD_BLOCKS slots can never drop an entry
+    ///      that is still eligible. Written once per block, so the per-block
+    ///      cost is the same five words the single snapshot it replaced cost.
+    GuardSnapshot[SETTLE_GUARD_BLOCKS] private guardRing;
+    uint256 private guardRingHead;
+
     // ── Custom errors ─────────────────────────────────────────────────────────
 
     error OnlyLpHolder();
@@ -311,28 +494,58 @@ contract EXNIHILOPool is ReentrancyGuard {
     error LeverageCapExceeded();
     error PositionUnderwater();
     error OpenPositionsExist();
-    error InvalidMaxPositionBps();
-    error InvalidSwapFeeBps();
     error ZeroAddress();
     error InsufficientBackedReserves();
     error ReserveInvariantViolated();
     error ZeroLiquidity();
     error RatioMismatch();
     error FeeOnTransferNotSupported();
-    error InvalidPositionDuration();
     error PositionNotExpired();
     error PoolClosing();
     error PoolAlreadyClosed();
     error RenewalExceedsCloseDate();
+    error RenewalExceedsHorizon();
     error OnlyLpHolderOrDeployer();
     error OnlyTreasury();
     error RenewalFeeExceedsMax();
     error AutoRenewActive();
+    error SettlementGuardActive();
 
     // ── Events ────────────────────────────────────────────────────────────────
 
 
 
+
+    /**
+     * @notice Emitted on every spot swap (SWAP-1).
+     *
+     *         Carries the post-swap backed reserves so a consumer can derive the
+     *         spot price and pool depth without a follow-up RPC read.
+     *
+     * @dev    Deliberately NOT shaped like a Uniswap V2 `Swap`. This pool has one
+     *         input and one output per call rather than V2's four amount fields,
+     *         no token0/token1 ordering, and reserves that only describe the
+     *         *backed* side — leveraged opens and closes move `airTokenSupply` /
+     *         `airUsdSupply` without emitting here. Pretending to be a V2 pair
+     *         would misreport all three.
+     *
+     * @param sender         Caller (the router, when routed).
+     * @param recipient      Receives `amountOut`.
+     * @param tokenToUsdc    true = token in / USDC out, false = the reverse.
+     * @param amountIn       Raw input, in the input asset's own decimals.
+     * @param amountOut      Raw output, net of the swap fee.
+     * @param backedAirToken Token-side backed reserve after the swap.
+     * @param backedAirUsd   USDC-side backed reserve after the swap.
+     */
+    event Swap(
+        address indexed sender,
+        address indexed recipient,
+        bool    tokenToUsdc,
+        uint256 amountIn,
+        uint256 amountOut,
+        uint256 backedAirToken,
+        uint256 backedAirUsd
+    );
 
     event PositionOpened(uint256 indexed nftId, address indexed holder, bool isLong);
     event PositionRenewed(
@@ -360,23 +573,41 @@ contract EXNIHILOPool is ReentrancyGuard {
         _;
     }
 
-    // ── Admin functions ───────────────────────────────────────────────────────
-
     /**
-     * @notice Update position size caps. LP NFT holder only.
-     *         Either cap may be freely raised, lowered, or toggled on/off (0 = disabled).
+     * @dev Every path that mutates the backed reserves carries this. It pins the
+     *      block's opening reserves before the body runs, asserts conservation
+     *      after it, and re-arms the settlement guard from the resulting price
+     *      displacement.
      *
-     * @param newUsd  New hard cap in USDC (6 dec). 0 = disabled.
-     * @param newBps  New % cap in bps (10–9900). 0 = disabled.
+     *      Binding the three together is the point. The settlement guard used to
+     *      be armed by hand at the two swap sites, and openLong/openShort — which
+     *      move the opposite side's settlement price by up to twenty times the
+     *      arming threshold — were simply never wired to it. A guard hung off
+     *      the same hook as the reserve invariant cannot be omitted from a new
+     *      path without also dropping the invariant, which no review would miss.
      */
-    function setPositionCaps(uint256 newUsd, uint256 newBps) external onlyLpHolder {
-        if (newBps != 0 && (newBps < 10 || newBps > 9900)) revert InvalidMaxPositionBps();
-        maxPositionUsd = newUsd;
-        maxPositionBps = newBps;
+    modifier reserveMutation() {
+        _guardSnapshot();
+        _;
+        _assertReserveInvariant();
+        _armSettlementGuard();
     }
 
     /**
-     * @notice Initiate pool closure. Sets closeDate = now + positionDuration.
+     * @dev As reserveMutation, but does not arm the guard. `_settle` is the only
+     *      user — see lastLargeSwapBlock for why settlement is excluded. Named
+     *      rather than left as a missing call so the exception is greppable.
+     */
+    modifier reserveMutationUnarmed() {
+        _guardSnapshot();
+        _;
+        _assertReserveInvariant();
+    }
+
+    // ── Admin functions ───────────────────────────────────────────────────────
+
+    /**
+     * @notice Initiate pool closure. Sets closeDate = now + currentPositionDuration().
      *
      *         Once set:
      *           - No new positions can be opened (openLong / openShort revert).
@@ -397,7 +628,7 @@ contract EXNIHILOPool is ReentrancyGuard {
             revert OnlyLpHolderOrDeployer();
         }
 
-        closeDate = block.timestamp + positionDuration;
+        closeDate = block.timestamp + currentPositionDuration();
 
         emit PoolClosed(msg.sender, closeDate);
     }
@@ -411,12 +642,7 @@ contract EXNIHILOPool is ReentrancyGuard {
      * @param positionNFT_      Shared PositionNFT contract.
      * @param lpNftContract_    Shared LpNFT contract.
      * @param lpNftId_          Which LP NFT token governs this pool.
-     * @param protocolTreasury_ Receives 2 % on every position open.
-     * @param maxPositionUsd_   Hard cap per position in USDC. 0 = disabled.
-     * @param maxPositionBps_   % cap on backedAirUsd in bps (10–9900). 0 = disabled.
-     * @param swapFeeBps_       Swap fee in bps for all AMM modes (e.g. 100 = 1 %).
-     * @param positionDuration_ Position lifetime in seconds (1 hour – 1 year).
-     *                          Pass 0 for the default of 7 days.
+     * @param protocolTreasury_ Receives 1 % on every position open.
      * @param factory_          Factory that deployed this pool (for emergency deployer lookup).
      */
     constructor(
@@ -427,10 +653,6 @@ contract EXNIHILOPool is ReentrancyGuard {
         address lpNftContract_,
         uint256 lpNftId_,
         address protocolTreasury_,
-        uint256 maxPositionUsd_,
-        uint256 maxPositionBps_,
-        uint256 swapFeeBps_,
-        uint256 positionDuration_,
         address factory_
     ) {
         if (underlyingToken_   == address(0)) revert ZeroAddress();
@@ -439,10 +661,6 @@ contract EXNIHILOPool is ReentrancyGuard {
         if (lpNftContract_    == address(0)) revert ZeroAddress();
         if (protocolTreasury_ == address(0)) revert ZeroAddress();
         if (factory_          == address(0)) revert ZeroAddress();
-        if (maxPositionBps_ != 0 && (maxPositionBps_ < 10 || maxPositionBps_ > 9900)) {
-            revert InvalidMaxPositionBps();
-        }
-        if (swapFeeBps_ < MIN_SWAP_FEE_BPS || swapFeeBps_ >= BPS_DENOM) revert InvalidSwapFeeBps();
 
         tokenDecimals    = tokenDecimals_;
         underlyingToken   = IERC20(underlyingToken_);
@@ -451,18 +669,8 @@ contract EXNIHILOPool is ReentrancyGuard {
         lpNftContract    = ILpNFT(lpNftContract_);
         lpNftId          = lpNftId_;
         protocolTreasury = protocolTreasury_;
-        maxPositionUsd   = maxPositionUsd_;
-        maxPositionBps   = maxPositionBps_;
-        swapFeeBps       = swapFeeBps_;
+        createdAt        = block.timestamp;
         factory          = IEXNIHILOFactory(factory_);
-
-        if (positionDuration_ == 0) {
-            positionDuration = 7 days;
-        } else {
-            if (positionDuration_ < 1 hours || positionDuration_ > 365 days) revert InvalidPositionDuration();
-            positionDuration = positionDuration_;
-        }
-
     }
 
     // =========================================================================
@@ -493,11 +701,14 @@ contract EXNIHILOPool is ReentrancyGuard {
         if (recipient == address(0)) revert ZeroAddress();
         if (backedAirToken == 0 || backedAirUsd == 0) revert InsufficientBackedReserves();
 
-        if (tokenToUsdc) {
-            _swapTokenToUsdc(amountIn, minAmountOut, recipient);
-        } else {
-            _swapUsdcToToken(amountIn, minAmountOut, recipient);
-        }
+        uint256 amountOut = tokenToUsdc
+            ? _swapTokenToUsdc(amountIn, minAmountOut, recipient)
+            : _swapUsdcToToken(amountIn, minAmountOut, recipient);
+
+        // Reserves read after the swap, so the event is self-contained.
+        emit Swap(
+            msg.sender, recipient, tokenToUsdc, amountIn, amountOut, backedAirToken, backedAirUsd
+        );
     }
 
     // =========================================================================
@@ -529,7 +740,7 @@ contract EXNIHILOPool is ReentrancyGuard {
         uint256 usdcAmount,
         uint256 minAirTokenOut,
         address recipient
-    ) external nonReentrant {
+    ) external nonReentrant reserveMutation {
         if (closeDate != 0) revert PoolClosing();
         if (recipient == address(0)) revert ZeroAddress();
         if (usdcAmount == 0) revert ZeroAmount();
@@ -567,6 +778,7 @@ contract EXNIHILOPool is ReentrancyGuard {
         // Collateral leaves the backed reserves; it stays counted in
         // airTokenSupply and is recorded as pos.lockedAmount on the NFT.
         backedAirToken -= airTokenOut;
+        totalLongCollateral += airTokenOut;
 
         // ── INTERACTIONS ──────────────────────────────────────────────────────
         // The notional is NOT pulled — it is represented synthetically by the
@@ -583,10 +795,9 @@ contract EXNIHILOPool is ReentrancyGuard {
             usdcAmount,   // airUsdMinted — synthetic debt owed
             airTokenOut,   // airTokenLocked
             totalFee,
-            block.timestamp + positionDuration
+            block.timestamp + currentPositionDuration()
         );
 
-        _assertReserveInvariant();
 
         emit PositionOpened(nftId, recipient, true);
     }
@@ -624,7 +835,7 @@ contract EXNIHILOPool is ReentrancyGuard {
         if (pos.pool != address(this)) revert PositionNotFromThisPool();
         if (!pos.isLong) revert PositionNotLong();
 
-        _settle(nftId, pos, holder, minUsdcOut, false, 0);
+        _settle(nftId, pos, holder, minUsdcOut, false);
     }
 
     // =========================================================================
@@ -654,7 +865,7 @@ contract EXNIHILOPool is ReentrancyGuard {
         uint256 usdcNotional,
         uint256 minAirUsdOut,
         address recipient
-    ) external nonReentrant {
+    ) external nonReentrant reserveMutation {
         if (closeDate != 0) revert PoolClosing();
         if (recipient == address(0)) revert ZeroAddress();
         if (usdcNotional == 0) revert ZeroAmount();
@@ -714,10 +925,9 @@ contract EXNIHILOPool is ReentrancyGuard {
             airUsdOut,
             usdcNotional,
             totalFee,
-            block.timestamp + positionDuration
+            block.timestamp + currentPositionDuration()
         );
 
-        _assertReserveInvariant();
 
         emit PositionOpened(nftId, recipient, false);
     }
@@ -749,7 +959,7 @@ contract EXNIHILOPool is ReentrancyGuard {
         if (pos.pool != address(this)) revert PositionNotFromThisPool();
         if (pos.isLong) revert PositionNotShort();
 
-        _settle(nftId, pos, holder, minUsdcOut, false, 0);
+        _settle(nftId, pos, holder, minUsdcOut, false);
     }
 
     // =========================================================================
@@ -769,7 +979,7 @@ contract EXNIHILOPool is ReentrancyGuard {
      * @param tokenAmount  Raw underlying tokens to deposit.
      * @param usdcAmount  USDC to deposit (6 dec).
      */
-    function addLiquidity(uint256 tokenAmount, uint256 usdcAmount) external nonReentrant onlyLpHolder {
+    function addLiquidity(uint256 tokenAmount, uint256 usdcAmount) external nonReentrant onlyLpHolder reserveMutation {
         if (tokenAmount == 0 || usdcAmount == 0) revert ZeroAmount();
 
         // Ratio check for non-empty pools (cross-multiplication avoids precision loss).
@@ -790,7 +1000,6 @@ contract EXNIHILOPool is ReentrancyGuard {
         _transferIn(underlyingToken, msg.sender, tokenAmount);
         _transferIn(underlyingUsdc, msg.sender, usdcAmount);
 
-        _assertReserveInvariant();
 
     }
 
@@ -887,10 +1096,17 @@ contract EXNIHILOPool is ReentrancyGuard {
 
     /**
      * @notice Renew a position by paying the dynamic renewal fee, extending the
-     *         deadline by one positionDuration from the current deadline (or
+     *         deadline by one currentPositionDuration() from the current deadline (or
      *         from now if the position has already expired).
      *         Only the position holder may renew — this prevents third parties
      *         from indefinitely extending positions to grief the LP's exit.
+     *
+     *         Because the extension starts from the existing deadline, renewals
+     *         stack, and RENEW_HORIZON caps how far past now the result may
+     *         land. Short-dated positions can therefore renew repeatedly while
+     *         one already on the 30-day ceiling gets a single renewal and must
+     *         then run down before it can be extended again. Quote the outcome
+     *         with quoteRenewDeadline rather than reproducing the rule.
      *
      *         The fee reprices the position at today's state (see _renewFees):
      *         base fee on current mark value plus the position's slice of the
@@ -909,9 +1125,13 @@ contract EXNIHILOPool is ReentrancyGuard {
         (uint256 totalFee, uint256 protocolFee, uint256 lpFee,) = _renewFees(pos);
         if (totalFee > maxFee) revert RenewalFeeExceedsMax();
 
-        // Extend from current deadline (or from now if already expired).
-        uint256 base = pos.deadline > block.timestamp ? pos.deadline : block.timestamp;
-        uint256 newDeadline = base + positionDuration;
+        uint256 newDeadline = _renewDeadline(pos.deadline);
+
+        // Absolute bound, measured from now rather than from the position's own
+        // history, so no sequence of renewals can walk a deadline outwards. See
+        // RENEW_HORIZON. Checked before closeDate because it always applies —
+        // closeDate is zero on a pool that is not closing.
+        if (newDeadline > block.timestamp + RENEW_HORIZON) revert RenewalExceedsHorizon();
 
         // If pool is closing, the new deadline must not exceed closeDate.
         if (closeDate != 0 && newDeadline > closeDate) revert RenewalExceedsCloseDate();
@@ -926,24 +1146,31 @@ contract EXNIHILOPool is ReentrancyGuard {
     }
 
     /**
-     * @notice Settle an expired position. Callable by anyone; pays the caller
-     *         a flat KEEPER_BOUNTY so cleanup is always economically viable.
+     * @notice Settle an expired position. Callable by anyone.
+     *
+     *         Callers are unpaid: cleanup is funded by the incentives the
+     *         parties already have — the LP earns the renewal fee on an
+     *         auto-renew and gets its capital back on a close, and the holder
+     *         collects their own payout. A bounty carved from the settlement
+     *         flow could exceed the payout it was carved from and hand a
+     *         keeper the holder's entire profit, which is worse than a
+     *         position that simply waits.
      *
      *         If the holder opted into auto-renewal (PositionNFT.setAutoRenew)
-     *         and the position's own equity covers the dynamic renewal fee plus
-     *         the bounty — and the fee is within the holder's cap and the new
-     *         deadline within closeDate — the position is renewed instead of
-     *         closed, with the fee charged against its equity:
+     *         and the position's own equity covers the dynamic renewal fee with
+     *         the RENEW_MARGIN_BPS margin — and the fee is within the holder's
+     *         cap and the new deadline within closeDate — the position is
+     *         renewed instead of closed, with the fee charged against its
+     *         equity:
      *
-     *           Long  — synthetic debt (airUsdMinted) grows by fee + bounty.
-     *                   The USDC leaves backedAirUsd now and is recouped at
-     *                   close through the equally-reduced surplus.
-     *           Short — locked airUsd collateral shrinks by fee + bounty.
+     *           Long  — synthetic debt (airUsdMinted) grows by the fee. The
+     *                   USDC leaves backedAirUsd now and is recouped at close
+     *                   through the equally-reduced surplus.
+     *           Short — locked airUsd collateral shrinks by the fee.
      *
      *         A winning position therefore sustains itself; a position that
      *         cannot pay is settled exactly like closePositionAfterDeadline
-     *         (profit credited as pull payment, or collateral returned to LP),
-     *         with the bounty carved from the settlement flow.
+     *         (profit credited as pull payment, or collateral returned to LP).
      *
      * @param nftId      Position NFT to settle.
      * @param minPayout  Slippage guard on the holder's credited payout when the
@@ -954,16 +1181,38 @@ contract EXNIHILOPool is ReentrancyGuard {
         if (pos.pool != address(this)) revert PositionNotFromThisPool();
         if (block.timestamp < pos.deadline) revert PositionNotExpired();
 
+        address holder = positionNFT.ownerOf(nftId);
+        // Guards both outcomes: the renew/close decision below and, on the close
+        // path, the surplus _settle pays out from the same live reserves.
+        _assertSettlementUnguarded(holder);
+
         if (_tryAutoRenew(nftId, pos)) return;
 
-        address holder = positionNFT.ownerOf(nftId);
-        _settle(nftId, pos, holder, minPayout, true, KEEPER_BOUNTY);
+        _settle(nftId, pos, holder, minPayout, true);
     }
 
     /**
      * @dev Checks whether the keeper-driven auto-renewal can execute for an
      *      expired position: holder opted in, dynamic fee within the holder's
-     *      cap, equity covers fee + bounty, new deadline within closeDate.
+     *      cap, equity covers the fee by RENEW_MARGIN_BPS of notional, new
+     *      deadline within closeDate.
+     *
+     *      The margin is the second half of the settlement guard. Both the
+     *      equity test and the fee are priced from live reserves, so without it
+     *      a position sitting at surplus ≈ totalFee flips outcome on an
+     *      arbitrarily small nudge — cheap enough to stay under
+     *      SETTLE_GUARD_BPS and slip past the block guard. Requiring the test to
+     *      clear by RENEW_MARGIN_BPS of the position's MARK means any flip needs
+     *      a swap large enough to arm that guard; see SETTLE_GUARD_BPS for why
+     *      the mark, and not the notional, is the right base.
+     *
+     *      Deliberately strict rather than tolerant: renewing on a surplus that
+     *      does not actually cover the fee would have _tryAutoRenew charge the
+     *      shortfall to backedAirUsd, i.e. the LP advancing real USDC against
+     *      equity the position does not have. The cost of strictness is that a
+     *      position whose surplus lands inside the margin closes instead of
+     *      renewing — it could only have funded a renewal that left it with
+     *      near-zero equity anyway, and it is paid its surplus on the close.
      */
     function _autoRenewQuote(uint256 nftId, Position memory pos)
         internal
@@ -976,10 +1225,13 @@ contract EXNIHILOPool is ReentrancyGuard {
         uint256 surplus;
         (totalFee, protocolFee, lpFee, surplus) = _renewFees(pos);
         if (totalFee > maxFee) return (false, 0, 0, 0);
-        if (surplus < totalFee + KEEPER_BOUNTY) return (false, 0, 0, 0);
+
+        uint256 n = pos.isLong ? pos.airUsdMinted : pos.usdcIn;
+        uint256 margin = ((n + surplus) * RENEW_MARGIN_BPS) / BPS_DENOM;
+        if (surplus < totalFee + margin) return (false, 0, 0, 0);
 
         // Expired ⇒ the new deadline extends from now.
-        if (closeDate != 0 && block.timestamp + positionDuration > closeDate) {
+        if (closeDate != 0 && block.timestamp + currentPositionDuration() > closeDate) {
             return (false, 0, 0, 0);
         }
         ok = true;
@@ -990,17 +1242,21 @@ contract EXNIHILOPool is ReentrancyGuard {
      *      change) when any condition fails, letting the caller fall through
      *      to the close path.
      */
-    function _tryAutoRenew(uint256 nftId, Position memory pos) internal returns (bool) {
+    function _tryAutoRenew(uint256 nftId, Position memory pos) internal reserveMutation returns (bool) {
         (bool ok, uint256 totalFee, uint256 protocolFee, uint256 lpFee) =
             _autoRenewQuote(nftId, pos);
         if (!ok) return false;
 
-        uint256 cost = totalFee + KEEPER_BOUNTY;
-        uint256 newDeadline = block.timestamp + positionDuration;
+        uint256 cost = totalFee;
+        // Extends from now, not from the old deadline — the auto path only runs
+        // on an already-expired position, and it does not stack. That is why it
+        // needs no RENEW_HORIZON check: currentPositionDuration() is capped at
+        // DURATION_MAX and the horizon is twice that, so this can never reach it.
+        uint256 newDeadline = block.timestamp + currentPositionDuration();
 
         // ── EFFECTS — charge the position's own equity ───────────────────────
         if (pos.isLong) {
-            // Fee + bounty leave the backed reserves now; the position's debt
+            // The fee leaves the backed reserves now; the position's debt
             // grows by the same amount, so the surplus paid from backedAirUsd
             // at close shrinks equally — the LP is made whole over the cycle.
             // airUsdSupply is net unchanged: −cost (USDC leaving reserve
@@ -1011,7 +1267,7 @@ contract EXNIHILOPool is ReentrancyGuard {
                 nftId, pos.lockedAmount, pos.airUsdMinted + cost, totalFee, newDeadline
             );
         } else {
-            // Fee + bounty come out of the locked airUsd collateral, which
+            // The fee comes out of the locked airUsd collateral, which
             // leaves pool accounting (it was counted in airUsdSupply only).
             airUsdSupply         -= cost;
             totalShortCollateral -= cost; // lockedAmount shrinks by the same cost
@@ -1022,10 +1278,6 @@ contract EXNIHILOPool is ReentrancyGuard {
         _accrueProtocolFee(protocolFee);
         _accrueLpFee(lpFee);
 
-        // ── INTERACTIONS ─────────────────────────────────────────────────────
-        underlyingUsdc.safeTransfer(msg.sender, KEEPER_BOUNTY);
-
-        _assertReserveInvariant();
         emit PositionRenewed(nftId, msg.sender, totalFee, newDeadline, true);
         return true;
     }
@@ -1052,21 +1304,54 @@ contract EXNIHILOPool is ReentrancyGuard {
         if (pos.pool != address(this)) revert PositionNotFromThisPool();
         if (block.timestamp < pos.deadline) revert PositionNotExpired();
 
+        address holder = positionNFT.ownerOf(nftId);
+        _assertSettlementUnguarded(holder);
+
         // A position whose holder opted into auto-renewal (and whose equity can
         // fund it) must not be closeable through this path — otherwise anyone
         // could bypass the opt-in and kill the position. settleExpired() will
-        // renew it instead.
+        // renew it instead. Same predicate as the renew branch, so there is no
+        // band where this path refuses and settleExpired closes anyway.
         (bool renewable,,,) = _autoRenewQuote(nftId, pos);
         if (renewable) revert AutoRenewActive();
 
-        address holder = positionNFT.ownerOf(nftId);
-
-        _settle(nftId, pos, holder, minPayout, true, 0);
+        _settle(nftId, pos, holder, minPayout, true);
     }
 
     // =========================================================================
     // VIEWS
     // =========================================================================
+
+    /**
+     * @notice First block at which a third party may settle an expired position.
+     *         0 means unguarded now. Keepers should poll this rather than
+     *         discovering the window through a reverted settleExpired.
+     *         The position holder is never blocked (see
+     *         _assertSettlementUnguarded), so this does not apply to them.
+     */
+    function settlementGuardedUntilBlock() external view returns (uint256) {
+        // Mirrors _assertSettlementUnguarded's wind-down exemption, so a keeper
+        // polling this is never told to wait for a window that will not be
+        // enforced.
+        if (closeDate != 0) return 0;
+        if (lastLargeSwapBlock == 0) return 0;
+        uint256 until = lastLargeSwapBlock + SETTLE_GUARD_BLOCKS;
+        return block.number < until ? until : 0;
+    }
+
+    /**
+     * @notice Relative move, in bps, that either settlement price must make
+     *         within one block to arm the guard.
+     *
+     * @dev    Replaces the former settlementGuardArmingSize(), which reported a
+     *         single swap's USDC size. Arming is no longer a property of one
+     *         call: it is the net displacement of backedAirUsd / airTokenSupply
+     *         or backedAirToken / airUsdSupply since the block opened, from any
+     *         reserve-mutating path. There is no longer a "size that arms".
+     */
+    function settlementGuardBps() external pure returns (uint256) {
+        return SETTLE_GUARD_BPS;
+    }
 
     /**
      * @notice Current AMM spot price: USDC per whole token (divide by 1e6 for USD).
@@ -1138,18 +1423,88 @@ contract EXNIHILOPool is ReentrancyGuard {
     }
 
     /**
-     * @notice Effective per-position leverage cap in USDC (6 dec).
-     *         Returns min(maxPositionUsd, maxPositionBps % of backedAirUsd).
-     *         Returns type(uint256).max if both caps are disabled.
+     * @notice Current per-position cap as a fraction of backedAirUsd, in bps.
+     *         Ramps linearly from 1 % at creation to 20 % after 24 hours, then
+     *         holds. Fixed by construction — there is no setter and no caller
+     *         who can move it.
+     */
+    function currentMaxPositionBps() public view returns (uint256) {
+        uint256 elapsed = block.timestamp - createdAt;
+        if (elapsed >= CAP_RAMP_DURATION) return CAP_MAX_BPS;
+        return CAP_START_BPS
+             + ((CAP_MAX_BPS - CAP_START_BPS) * elapsed) / CAP_RAMP_DURATION;
+    }
+
+    /**
+     * @notice Lifetime a position opened right now would receive, in seconds.
+     *
+     *         Stepped by market age rather than smoothly interpolated: the four
+     *         steps are the product, and a reader can tell at a glance what they
+     *         will get. Non-decreasing, which closePool relies on.
+     *
+     *           age < 1 hour    →  1 hour
+     *           age < 8 hours   →  8 hours
+     *           age < 24 hours  →  24 hours
+     *           age < 7 days    →  7 days
+     *           age >= 7 days   →  30 days  (the ceiling)
+     */
+    function currentPositionDuration() public view returns (uint256) {
+        uint256 age = block.timestamp - createdAt;
+        if (age < DURATION_AGE_1) return DURATION_AGE_1;
+        if (age < DURATION_AGE_2) return DURATION_AGE_2;
+        if (age < DURATION_AGE_3) return DURATION_AGE_3;
+        if (age < DURATION_AGE_4) return DURATION_AGE_4;
+        return DURATION_MAX;
+    }
+
+    /**
+     * @dev Deadline a renewal would write for a position currently expiring at
+     *      `currentDeadline`. Extends from that deadline, or from now once it
+     *      has passed, so an expired position is never punished for the delay.
+     *
+     *      Single source of truth for renewPosition and quoteRenewDeadline, so
+     *      the executed deadline and the quoted one cannot drift.
+     */
+    function _renewDeadline(uint256 currentDeadline) internal view returns (uint256) {
+        uint256 base = currentDeadline > block.timestamp ? currentDeadline : block.timestamp;
+        return base + currentPositionDuration();
+    }
+
+    /**
+     * @notice The deadline renewPosition(nftId, ...) would write right now, and
+     *         whether the call would be accepted.
+     *
+     *         `allowed == false` means renewPosition reverts: the position is
+     *         already extended as far as RENEW_HORIZON permits, or the pool is
+     *         closing and the extension would outlive closeDate. `newDeadline`
+     *         is reported either way, so a frontend can show how far the
+     *         position would have to run down first.
+     *
+     *         Frontends and keepers must quote here rather than replicating the
+     *         rule — this is its single source of truth alongside the executing
+     *         path.
+     */
+    function quoteRenewDeadline(uint256 nftId)
+        external
+        view
+        returns (uint256 newDeadline, bool allowed)
+    {
+        Position memory pos = positionNFT.getPosition(nftId);
+        if (pos.pool != address(this)) revert PositionNotFromThisPool();
+
+        newDeadline = _renewDeadline(pos.deadline);
+        allowed =
+            newDeadline <= block.timestamp + RENEW_HORIZON &&
+            (closeDate == 0 || newDeadline <= closeDate);
+    }
+
+    /**
+     * @notice Effective per-position leverage cap in USDC (6 dec) right now —
+     *         currentMaxPositionBps() applied to the live backed reserve.
+     *         Moves with both the clock and pool depth.
      */
     function effectiveLeverageCap() external view returns (uint256) {
-        uint256 cap = type(uint256).max;
-        if (maxPositionUsd > 0) cap = maxPositionUsd;
-        if (maxPositionBps > 0) {
-            uint256 bpsCap = (backedAirUsd * maxPositionBps) / BPS_DENOM;
-            if (bpsCap < cap) cap = bpsCap;
-        }
-        return cap;
+        return (backedAirUsd * currentMaxPositionBps()) / BPS_DENOM;
     }
 
     /**
@@ -1193,14 +1548,201 @@ contract EXNIHILOPool is ReentrancyGuard {
      *         receive on close (net of the 1 % close fee); negative = current
      *         shortfall below break-even.
      */
+    /**
+     * @notice Quote what closing a position would pay, for display only.
+     *
+     * @return ready Whether the settlement math can price the position. False
+     *               means it is underwater past the point where its debt can be
+     *               bought back at all, so it cannot be closed — unchanged, and
+     *               still what `_settle` gates on.
+     * @return pnl   Payout on close when `ready`, negative when the position is
+     *               below break-even. When `!ready` this is the *estimated*
+     *               shortfall, also negative: a position nobody can close is
+     *               exactly the one whose holder most needs a number, and
+     *               returning 0 there rendered "N/A" on the certificate.
+     */
     function quoteClose(uint256 nftId) external view returns (bool ready, int256 pnl) {
         Position memory pos = positionNFT.getPosition(nftId);
         if (pos.pool != address(this)) revert PositionNotFromThisPool();
 
-        (bool priceable, uint256 surplus, uint256 deficit,) = _priceClose(pos);
-        if (!priceable) return (false, 0);
+        // Priced for the NEXT block, because that is the earliest one a close
+        // submitted now can be mined in, and the clamp window it will face ends
+        // there rather than at the latest mined block. Quoting live instead
+        // would overstate the payout for the whole window after any favourable
+        // move — the caller would set minUsdcOut from a number the pool has
+        // already decided not to pay. The residual gap between quote and
+        // execution is ordinary slippage, which minUsdcOut covers.
+        //
+        // Back when the clamp reached back exactly one block this had to be
+        // live: the reference was the current block's open, which a close mined
+        // later never faces. A window that outlives the current block reverses
+        // that reasoning.
+        (bool priceable, uint256 surplus, uint256 deficit,) =
+            _priceCloseClamped(pos, block.number + 1);
+        if (!priceable) return (false, -int256(_quoteShortfall(pos)));
         if (deficit > 0) return (true, -int256(deficit));
         return (true, int256(surplus - (surplus * CLOSE_FEE_BPS) / BPS_DENOM));
+    }
+
+    /**
+     * @dev Estimated shortfall for a position `_priceClose` refuses to price.
+     *      Display-only: it deliberately extrapolates past the point the
+     *      settlement math stops, so it must never feed settlement — a position
+     *      in this state stays uncloseable and still expires worthless.
+     *
+     *      Short: the debt costs more airUsd than the collateral can buy. The
+     *      proportional cost is extrapolated from the partial fill the curve
+     *      does allow; with no fill at all the loss is the whole collateral.
+     *      Long: no airToken supply outside the position means nothing can be
+     *      realised, so the entire synthetic debt is the shortfall.
+     */
+    function _quoteShortfall(Position memory pos) internal view returns (uint256) {
+        if (pos.isLong) return pos.airUsdMinted;
+        if (airUsdSupply < pos.lockedAmount) return pos.lockedAmount;
+
+        uint256 totalBuyable = _cpAmountOut(
+            pos.lockedAmount,
+            airUsdSupply - pos.lockedAmount,
+            backedAirToken
+        );
+        if (totalBuyable == 0) return pos.lockedAmount;
+
+        uint256 cost =
+            (pos.lockedAmount * pos.airTokenMinted + totalBuyable - 1) / totalBuyable;
+        return cost > pos.lockedAmount ? cost - pos.lockedAmount : 0;
+    }
+
+    // =========================================================================
+    // INTERNAL — expiry settlement guard
+    // =========================================================================
+
+    /**
+     * @dev Record the reserves this block opened with, once per block, before
+     *      any mutation. Paired with _armSettlementGuard by the reserveMutation
+     *      modifiers so the snapshot and the check can never drift apart.
+     */
+    function _guardSnapshot() internal {
+        // At most one entry per block: the first mutation of a block records
+        // what that block opened with, and every later mutation in the same
+        // block is part of what the entry is there to measure.
+        if (guardRing[guardRingHead].blockNumber == block.number) return;
+
+        uint256 next = guardRingHead + 1;
+        if (next == SETTLE_GUARD_BLOCKS) next = 0;
+
+        guardRing[next] = GuardSnapshot({
+            blockNumber: block.number,
+            timestamp:   block.timestamp,
+            backedUsd:   backedAirUsd,
+            tokenSupply: airTokenSupply,
+            backedToken: backedAirToken,
+            usdSupply:   airUsdSupply
+        });
+        guardRingHead = next;
+    }
+
+    /**
+     * @dev Arm the settlement guard when either settlement price has moved by
+     *      SETTLE_GUARD_BPS or more since this block opened.
+     *
+     *      Measures NET DISPLACEMENT OF THE PRICE, not the size of one call.
+     *      The previous version compared a single swap's USDC leg against live
+     *      depth, which failed two ways:
+     *
+     *        1. No aggregation. A sequence of individually sub-threshold swaps
+     *           never armed it, however far they moved the price together, and
+     *           the whole sequence plus a settlement fits in one block.
+     *        2. Only swaps consulted it. openShort writes both terms a LONG's
+     *           _priceClose reads, and openLong both a short's — at up to
+     *           CAP_MAX_BPS (20 %) of depth, twenty times the threshold a swap
+     *           arms at. Neither armed the guard at any size. The exclusion was
+     *           justified on the open fee being a real cost, but LP_FEE_BPS is
+     *           400 of the 500 bps base fee and the impact fee is wholly LP —
+     *           so for an LP attacking its own pool's holders, which is the
+     *           actor with both the access and the motive, ~80 % of that fee
+     *           comes straight back.
+     *
+     *      Both ratios are checked because the two sides settle against
+     *      different pairs: a long against backedAirUsd / airTokenSupply, a
+     *      short against backedAirToken / airUsdSupply. See _priceClose.
+     *
+     *      Arming latches for the block. A move that is reverted later in the
+     *      same block still arms, deliberately: the 5-block window exists so a
+     *      manipulator cannot settle from a price they set in an earlier block,
+     *      and recomputing downward would hand that back.
+     */
+    function _armSettlementGuard() internal {
+        // The newest entry is this block's open: _guardSnapshot runs at the top
+        // of the same modifier, before the mutation this is measuring.
+        GuardSnapshot storage open = guardRing[guardRingHead];
+        if (
+            _priceMoved(open.backedUsd,   open.tokenSupply, backedAirUsd,   airTokenSupply)
+            || _priceMoved(open.backedToken, open.usdSupply, backedAirToken, airUsdSupply)
+        ) {
+            lastLargeSwapBlock = block.number;
+        }
+    }
+
+    /**
+     * @dev True when the ratio num/den has moved at least SETTLE_GUARD_BPS away
+     *      from open/openDen, relative to the opening value.
+     *
+     *      |R₁ − R₀| / R₀ ≥ bps, cross-multiplied so there is no division:
+     *      |curNum·openDen − openNum·curDen| · BPS_DENOM ≥ openNum·curDen·bps.
+     *
+     *      A zero on either opening term means there is no baseline to compare
+     *      against (a pool before its first addLiquidity), which is not a move.
+     */
+    function _priceMoved(
+        uint256 openNum,
+        uint256 openDen,
+        uint256 curNum,
+        uint256 curDen
+    ) private pure returns (bool) {
+        if (openNum == 0 || openDen == 0 || curDen == 0) return false;
+        uint256 a = curNum * openDen;
+        uint256 b = openNum * curDen;
+        uint256 delta = a > b ? a - b : b - a;
+        return delta * BPS_DENOM >= openNum * curDen * SETTLE_GUARD_BPS;
+    }
+
+    /**
+     * @dev Reject third-party settlement of an expired position while the guard
+     *      is armed. The position holder is exempt: they are choosing to settle
+     *      at the current price exactly as closeLong / closeShort lets them, and
+     *      exempting them means an armed guard can never trap a holder in a
+     *      position. `lastLargeSwapBlock == 0` (never armed) is not a live
+     *      window — without that check a chain whose height is still below
+     *      SETTLE_GUARD_BLOCKS would report every pool as guarded.
+     */
+    function _assertSettlementUnguarded(address holder) internal view {
+        if (msg.sender == holder) return;
+
+        // A pool that is winding down is never guarded against third-party
+        // settlement.
+        //
+        // Arming is relative to depth, so in a thin enough market an ORDINARY
+        // trade moves the price by SETTLE_GUARD_BPS and the guard is armed
+        // essentially all the time (audit NM-R2-005). Combined with
+        // removeLiquidity's openPositionCount == 0 requirement that turns one
+        // abandoned expired position into a permanent lock on the LP's
+        // principal: the holder can always close, but nobody can make them, and
+        // no third party is allowed to clean up on their behalf.
+        //
+        // Little is given up. _priceCloseClamped prices every settlement,
+        // third-party ones included, against the worst open in the same window
+        // this guard covers — so the manipulation the lockout exists to prevent
+        // is already answered as a price. The guard is the blunter, second copy
+        // of that protection, and it is the copy whose failure mode is a
+        // permanently stranded LP. closePool is irreversible and blocks new
+        // positions, so this cannot be switched on to open a window: it is a
+        // one-way move into wind-down.
+        if (closeDate != 0) return;
+
+        if (lastLargeSwapBlock == 0) return;
+        if (block.number < lastLargeSwapBlock + SETTLE_GUARD_BLOCKS) {
+            revert SettlementGuardActive();
+        }
     }
 
     // =========================================================================
@@ -1211,15 +1753,22 @@ contract EXNIHILOPool is ReentrancyGuard {
      * @dev Execute a token → USDC SWAP-1.
      *      Extracted to a dedicated function to keep swap()'s stack frame lean.
      */
-    function _swapTokenToUsdc(uint256 amountIn, uint256 minAmountOut, address recipient) internal {
+    function _swapTokenToUsdc(uint256 amountIn, uint256 minAmountOut, address recipient)
+        internal
+        reserveMutation
+        returns (uint256 netOut)
+    {
         // ── CHECK (against pre-swap reserves) ─────────────────────────────────
-        uint256 netOut = _cpAmountOut(amountIn, backedAirToken, backedAirUsd);
+        netOut = _cpAmountOut(amountIn, backedAirToken, backedAirUsd);
         // A trade large enough that the fee exceeds the raw output yields zero;
         // without this, a caller passing minAmountOut == 0 pays amountIn for nothing.
         if (netOut == 0) revert InsufficientOutput();
         if (netOut < minAmountOut) revert InsufficientOutput();
 
         // ── EFFECTS ───────────────────────────────────────────────────────────
+        // netOut is the USDC that actually crossed the pool boundary — the
+        // USDC-denominated size of this trade. Armed against pre-swap depth.
+
         // Wrap the inbound token (supply grows), unwrap the outbound airUsd
         // (supply shrinks by the USDC leaving the pool).
         airTokenSupply += amountIn;
@@ -1231,22 +1780,27 @@ contract EXNIHILOPool is ReentrancyGuard {
         _transferIn(underlyingToken, msg.sender, amountIn);
         underlyingUsdc.safeTransfer(recipient, netOut);
 
-        _assertReserveInvariant();
 
     }
 
     /**
      * @dev Execute a USDC → token SWAP-1.
      */
-    function _swapUsdcToToken(uint256 amountIn, uint256 minAmountOut, address recipient) internal {
+    function _swapUsdcToToken(uint256 amountIn, uint256 minAmountOut, address recipient)
+        internal
+        reserveMutation
+        returns (uint256 netOut)
+    {
         // ── CHECK (against pre-swap reserves) ─────────────────────────────────
-        uint256 netOut = _cpAmountOut(amountIn, backedAirUsd, backedAirToken);
+        netOut = _cpAmountOut(amountIn, backedAirUsd, backedAirToken);
         // A trade large enough that the fee exceeds the raw output yields zero;
         // without this, a caller passing minAmountOut == 0 pays amountIn for nothing.
         if (netOut == 0) revert InsufficientOutput();
         if (netOut < minAmountOut) revert InsufficientOutput();
 
         // ── EFFECTS ───────────────────────────────────────────────────────────
+        // amountIn is the USDC leg of this trade. Armed against pre-swap depth.
+
         // Wrap the inbound USDC (supply grows), unwrap the outbound airToken
         // (supply shrinks by the token leaving the pool).
         airUsdSupply   += amountIn;
@@ -1258,7 +1812,6 @@ contract EXNIHILOPool is ReentrancyGuard {
         _transferIn(underlyingUsdc, msg.sender, amountIn);
         underlyingToken.safeTransfer(recipient, netOut);
 
-        _assertReserveInvariant();
 
     }
 
@@ -1292,12 +1845,31 @@ contract EXNIHILOPool is ReentrancyGuard {
         view
         returns (bool priceable, uint256 surplus, uint256 deficit, uint256 restore)
     {
+        return _priceCloseAt(pos, airTokenSupply, backedAirUsd, airUsdSupply, backedAirToken);
+    }
+
+    /**
+     * @dev _priceClose against an arbitrary reserve state instead of the live
+     *      one. Pure, so the caller decides which state a given path is
+     *      entitled to price against — see _priceCloseSettlement.
+     */
+    function _priceCloseAt(
+        Position memory pos,
+        uint256 tokenSupply,
+        uint256 backedUsd,
+        uint256 usdSupply,
+        uint256 backedToken
+    )
+        internal
+        pure
+        returns (bool priceable, uint256 surplus, uint256 deficit, uint256 restore)
+    {
         if (pos.isLong) {
-            if (airTokenSupply <= pos.lockedAmount) return (false, 0, 0, 0);
+            if (tokenSupply <= pos.lockedAmount) return (false, 0, 0, 0);
             uint256 airUsdOut = _cpAmountOut(
                 pos.lockedAmount,
-                airTokenSupply - pos.lockedAmount,
-                backedAirUsd
+                tokenSupply - pos.lockedAmount,
+                backedUsd
             );
             if (airUsdOut >= pos.airUsdMinted) {
                 return (true, airUsdOut - pos.airUsdMinted, 0, 0);
@@ -1307,11 +1879,11 @@ contract EXNIHILOPool is ReentrancyGuard {
 
         // Short: locked airUsd is out of circulation — subtract it from the
         // SWAP-2 reserve, mirroring the long side's supply subtraction.
-        if (airUsdSupply < pos.lockedAmount) return (false, 0, 0, 0);
+        if (usdSupply < pos.lockedAmount) return (false, 0, 0, 0);
         uint256 totalBuyable = _cpAmountOut(
             pos.lockedAmount,
-            airUsdSupply - pos.lockedAmount,
-            backedAirToken
+            usdSupply - pos.lockedAmount,
+            backedToken
         );
         if (totalBuyable == 0 || totalBuyable < pos.airTokenMinted) return (false, 0, 0, 0);
         uint256 cost =
@@ -1320,6 +1892,124 @@ contract EXNIHILOPool is ReentrancyGuard {
             return (true, pos.lockedAmount - cost, 0, cost);
         }
         return (true, 0, cost - pos.lockedAmount, cost);
+    }
+
+    /**
+     * @dev Close pricing as SETTLEMENT is entitled to see it: the live
+     *      valuation, clamped to the block-opening one wherever that is less
+     *      favourable to the holder.
+     *
+     *      Without the clamp a holder can swap the settlement price in their own
+     *      favour, settle at the mark they just moved, and unwind — one
+     *      transaction, no privileged role. The block guard cannot cover this
+     *      direction by construction: the holder is exempt from it (an armed
+     *      guard must never trap someone in a position) and closeLong /
+     *      closeShort are ungated for the same reason. Audit finding H-2
+     *      measured $4,122 of LP USDC leaving per close — 3.2 % of pool depth,
+     *      token leg byte-identical, so a one-sided drain rather than a
+     *      valuation artefact — and it pays on any position whose mark clears
+     *      ~1 % of backedAirUsd, against a cap that permits 20 %.
+     *
+     *      Fixing it as a PRICE rather than a lockout is the whole point.
+     *      Gating the close on lastLargeSwapBlock would hand the LP a free
+     *      hostage lever: arming costs the LP nothing, because the swap fee is
+     *      retained in the reserves it owns (see _swapTokenToUsdc), so it could
+     *      re-arm every SETTLE_GUARD_BLOCKS and hold every holder in position
+     *      indefinitely. Here the holder can always close. They simply cannot
+     *      close at a price they moved inside the window.
+     *
+     *      Clamping to ONE block's open — the first version of this fix — closed
+     *      the atomic variant and left pump-in-N / settle-in-N+1 paying, because
+     *      block N+1 opens on the pumped reserves. Widening the reference to
+     *      every open still inside SETTLE_GUARD_BLOCKS closes that too: the
+     *      pre-pump open is still in the ring, and rolling it out takes a fresh
+     *      entry per block, so the attacker has to hold the displaced price for
+     *      the whole window with arbitrage open against them the entire time.
+     *      That is the same assumption SETTLE_GUARD_BLOCKS already rests on for
+     *      third parties, now applied to the holder as a price instead of a
+     *      lockout.
+     *
+     *      A symmetric reference — an average, or the old state used outright —
+     *      would be strictly worse than either. The payout is funded from the
+     *      very reserves that define the price (_settle takes surplus straight
+     *      out of backedAirUsd), so a reference ABOVE live pays out more than
+     *      the curve supports and rebuilds the same attack mirrored: displace
+     *      the price down, settle at the stale-high mark, buy back. Hence the
+     *      clamp is one-way, always.
+     *
+     *      Entries age out by block number rather than by ring position, so a
+     *      pool that stops trading is not frozen against a stale reference: once
+     *      every entry is SETTLE_GUARD_BLOCKS old the clamp is a no-op and
+     *      pricing is live again.
+     *
+     *      Only ever moves the outcome against the holder, never for it.
+     *
+     * @param asOfBlock The block the close is priced FOR. Settlement passes
+     *                  block.number. quoteClose passes block.number + 1: a
+     *                  close submitted now is mined no earlier than the next
+     *                  block, and the window it will face is the one that ends
+     *                  there, not the one that ends at the latest mined block.
+     */
+    function _priceCloseClamped(Position memory pos, uint256 asOfBlock)
+        internal
+        view
+        returns (bool priceable, uint256 surplus, uint256 deficit, uint256 restore)
+    {
+        (priceable, surplus, deficit, restore) = _priceClose(pos);
+
+        // Bounded by a compile-time constant, and every iteration is a pure
+        // valuation of the same position — no external calls, no state writes.
+        for (uint256 i = 0; i < SETTLE_GUARD_BLOCKS; i++) {
+            GuardSnapshot storage e = guardRing[i];
+            uint256 at = e.blockNumber;
+
+            // Slot never written (a pool younger than the ring), or an open old
+            // enough that a manipulator would have had to hold it through the
+            // whole window to put it here.
+            if (at == 0 || at + SETTLE_GUARD_BLOCKS <= asOfBlock) continue;
+
+            // Never reach back past the position's own open. A snapshot is
+            // taken before its block's first mutation, so one whose timestamp
+            // equals openedAt describes the moment BEFORE the position was
+            // created; the reserves there do not contain it and _priceCloseAt
+            // would be valuing something that did not exist. This costs no
+            // security: the manipulation being priced out is always a move made
+            // AFTER the position was opened, so every snapshot that matters
+            // survives the test. Two blocks sharing a timestamp can drop one
+            // otherwise-eligible entry, which only ever weakens the clamp
+            // inside the first second of a position's life — when it is
+            // underwater by its own opening fee anyway.
+            if (e.timestamp <= pos.openedAt) continue;
+
+            (bool p, uint256 s, uint256 d, uint256 r) =
+                _priceCloseAt(pos, e.tokenSupply, e.backedUsd, e.usdSupply, e.backedToken);
+
+            // Underwater at any open in the window outranks any surplus the
+            // window produced, and takes that valuation's restore with it.
+            if (!p || d > 0) return (p, 0, d, r);
+
+            // surplus and restore must come from the SAME valuation:
+            // _priceCloseAt keeps restore + surplus == lockedAmount on the short
+            // side, and _settle relies on that identity to leave the reserves
+            // consistent.
+            if (s < surplus) {
+                surplus = s;
+                restore = r;
+            }
+        }
+    }
+
+    /**
+     * @dev Close pricing as SETTLEMENT is entitled to see it. Thin wrapper so
+     *      the settlement path and quoteClose cannot drift apart on anything
+     *      but the block they price for.
+     */
+    function _priceCloseSettlement(Position memory pos)
+        internal
+        view
+        returns (bool priceable, uint256 surplus, uint256 deficit, uint256 restore)
+    {
+        return _priceCloseClamped(pos, block.number);
     }
 
     /**
@@ -1345,10 +2035,13 @@ contract EXNIHILOPool is ReentrancyGuard {
         Position memory pos,
         address holder,
         uint256 minPayout,
-        bool viaExpiry,
-        uint256 bounty
-    ) internal {
-        (bool priceable, uint256 surplus, uint256 deficit, uint256 restore) = _priceClose(pos);
+        bool viaExpiry
+    ) internal reserveMutationUnarmed {
+        // Priced against the block open where that is worse for the holder, so
+        // a settler cannot move their own payout in the same transaction they
+        // collect it. See _priceCloseSettlement (audit finding H-2).
+        (bool priceable, uint256 surplus, uint256 deficit, uint256 restore) =
+            _priceCloseSettlement(pos);
         bool underwater = !priceable || deficit > 0;
 
         if (!viaExpiry && underwater) revert PositionUnderwater();
@@ -1361,40 +2054,29 @@ contract EXNIHILOPool is ReentrancyGuard {
             shortOpenInterest -= pos.usdcIn;
         }
 
-        uint256 bountyPaid;
-
         if (underwater) {
             // Expiry only: return collateral to LP, cancel synthetic debt.
-            // The keeper bounty is carved from the LP side — the LP is the
-            // beneficiary of the cleanup — capped by what is available.
             if (pos.isLong) {
                 backedAirToken += pos.lockedAmount;
+                totalLongCollateral -= pos.lockedAmount;
                 airUsdSupply   -= pos.airUsdMinted;
-                bountyPaid = bounty > backedAirUsd ? backedAirUsd : bounty;
-                backedAirUsd -= bountyPaid;
-                airUsdSupply -= bountyPaid;
             } else {
-                bountyPaid = bounty > pos.lockedAmount ? pos.lockedAmount : bounty;
-                backedAirUsd   += pos.lockedAmount - bountyPaid;
-                airUsdSupply   -= bountyPaid;
+                backedAirUsd   += pos.lockedAmount;
                 airTokenSupply -= pos.airTokenMinted;
-                // Whole collateral leaves short custody: part to the keeper,
-                // the remainder back into backedAirUsd above.
                 totalShortCollateral -= pos.lockedAmount;
             }
 
             // ── INTERACTIONS ──────────────────────────────────────────────────
             positionNFT.release(nftId);
-            if (bountyPaid > 0) underlyingUsdc.safeTransfer(msg.sender, bountyPaid);
             emit PositionClosedAfterDeadline(nftId, msg.sender, 0);
         } else {
             uint256 closeFee = (surplus * CLOSE_FEE_BPS) / BPS_DENOM;
-            bountyPaid = bounty > surplus - closeFee ? surplus - closeFee : bounty;
-            uint256 netSurplus = surplus - closeFee - bountyPaid;
+            uint256 netSurplus = surplus - closeFee;
             if (netSurplus < minPayout) revert InsufficientOutput();
 
             if (pos.isLong) {
                 backedAirToken += pos.lockedAmount;
+                totalLongCollateral -= pos.lockedAmount;
                 backedAirUsd  -= surplus;
                 airUsdSupply  -= pos.airUsdMinted + surplus;
             } else {
@@ -1409,7 +2091,6 @@ contract EXNIHILOPool is ReentrancyGuard {
 
             // ── INTERACTIONS ──────────────────────────────────────────────────
             positionNFT.release(nftId);
-            if (bountyPaid > 0) underlyingUsdc.safeTransfer(msg.sender, bountyPaid);
             if (viaExpiry) {
                 _creditPayout(holder, netSurplus);
                 emit PositionClosedAfterDeadline(nftId, msg.sender, netSurplus);
@@ -1419,7 +2100,6 @@ contract EXNIHILOPool is ReentrancyGuard {
             }
         }
 
-        _assertReserveInvariant();
     }
 
     // =========================================================================
@@ -1434,21 +2114,41 @@ contract EXNIHILOPool is ReentrancyGuard {
      *      size, making large price-impacting swaps pay proportionally more.
      *
      *      rawOut  = amountIn * reserveOut / (reserveIn + amountIn)
-     *      fee     = amountIn * reserveOut * swapFeeBps / (reserveIn * BPS_DENOM)
+     *      fee     = ⌈amountIn * reserveOut * swapFeeBps / (reserveIn * BPS_DENOM)⌉
      *      netOut  = rawOut - fee   (returns 0 if rawOut <= fee)
      *
      *      Maximum amountIn before fee >= rawOut:
      *        reserveIn * (BPS_DENOM - swapFeeBps) / swapFeeBps
      *      e.g. for 1% fee: 99 × reserveIn
+     *
+     *      The fee is rounded UP to the next output atom whenever it is
+     *      mathematically positive. Flooring it let any trade whose spot-value
+     *      fee came to less than one atom of the output token through at the
+     *      full raw CP output — a free swap, contradicting the invariant that
+     *      every swap retains fee value in the pool as LP yield (see
+     *      swapFeeBps, which is fixed at 1 % to guarantee that friction). Dust
+     *      trades whose raw output cannot cover even one atom of fee now return
+     *      0 and are rejected by the netOut == 0 guards in both swap helpers.
+     *
+     *      Rounding up is also the correct direction for the settlement callers:
+     *      _priceClose values a long's collateral through this function and
+     *      prices a short's debt buyback with it, so a larger fee means a
+     *      slightly lower surplus on both sides — never one the pool cannot pay.
      */
     function _cpAmountOut(
         uint256 amountIn,
         uint256 reserveIn,
         uint256 reserveOut
-    ) internal view returns (uint256) {
+    ) internal pure returns (uint256) {
         if (reserveIn == 0 || reserveOut == 0) return 0;
         uint256 rawOut = (amountIn * reserveOut) / (reserveIn + amountIn);
-        uint256 fee    = (amountIn * reserveOut * swapFeeBps) / (reserveIn * BPS_DENOM);
+
+        uint256 feeNum = amountIn * reserveOut * swapFeeBps;
+        uint256 feeDen = reserveIn * BPS_DENOM;
+        // Ceil-divide so a positive fee never truncates to nothing. feeNum == 0
+        // only when amountIn == 0, which the callers reject separately.
+        uint256 fee = feeNum == 0 ? 0 : (feeNum + feeDen - 1) / feeDen;
+
         if (rawOut <= fee) return 0;
         return rawOut - fee;
     }
@@ -1460,8 +2160,8 @@ contract EXNIHILOPool is ReentrancyGuard {
     // =========================================================================
 
     /**
-     * @dev Base position fee: 5 % of notional (3 % LP + 2 % protocol) with a
-     *      MIN_POSITION_FEE floor split in the same 3:2 ratio.
+     * @dev Base position fee: 5 % of notional (4 % LP + 1 % protocol) with a
+     *      MIN_POSITION_FEE floor split in the same 4:1 ratio.
      */
     function _baseFees(uint256 notional)
         internal
@@ -1483,7 +2183,7 @@ contract EXNIHILOPool is ReentrancyGuard {
      *      its open-interest slot at TODAY's prices instead of entry prices.
      *
      *        mark      = N + surplus       (current gross value, floored at N)
-     *        baseFee   = _baseFees(mark)   (5 % of mark, 3/2 LP/protocol split)
+     *        baseFee   = _baseFees(mark)   (5 % of mark, 4/1 LP/protocol split)
      *        impactFee = IMPACT_FEE_BPS × N × (2×(OI−N) + N)
      *                    ────────────────────────────────────  → LP
      *                        2 × backedAirUsd × BPS_DENOM
@@ -1554,15 +2254,8 @@ contract EXNIHILOPool is ReentrancyGuard {
     // =========================================================================
 
     function _checkLeverageCap(uint256 usdcNotional) internal view {
-        uint256 cap = type(uint256).max;
-        if (maxPositionUsd > 0) cap = maxPositionUsd;
-        if (maxPositionBps > 0) {
-            uint256 bpsCap = (backedAirUsd * maxPositionBps) / BPS_DENOM;
-            if (bpsCap < cap) cap = bpsCap;
-        }
-        if (cap != type(uint256).max && usdcNotional > cap) {
-            revert LeverageCapExceeded();
-        }
+        uint256 cap = (backedAirUsd * currentMaxPositionBps()) / BPS_DENOM;
+        if (usdcNotional > cap) revert LeverageCapExceeded();
     }
 
     // =========================================================================
@@ -1638,7 +2331,12 @@ contract EXNIHILOPool is ReentrancyGuard {
     function _assertReserveInvariant() internal view {
         if (backedAirToken > airTokenSupply) revert ReserveInvariantViolated();
         if (backedAirUsd  > airUsdSupply)  revert ReserveInvariantViolated();
-        if (underlyingToken.balanceOf(address(this)) < backedAirToken) {
+        // Long collateral is held here but deliberately absent from
+        // backedAirToken, so the obligation is the sum of the two. Omitting it
+        // left this as a lower bound that could not tell a healthy pool from
+        // one that had leaked that collateral (audit SI-001).
+        if (underlyingToken.balanceOf(address(this))
+            < backedAirToken + totalLongCollateral) {
             revert ReserveInvariantViolated();
         }
         // Every USDC liability this contract carries: LP-backed reserves, short

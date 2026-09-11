@@ -57,10 +57,7 @@ async function main() {
     const tx = await factory.connect(deployer).createMarket(
       tokenAddr,
       usdcSeed,
-      tokenSeed,
-      0n,
-      0n,
-      0n // positionDuration: 0 = default 7 days
+      tokenSeed
     );
     const receipt = await tx.wait();
 

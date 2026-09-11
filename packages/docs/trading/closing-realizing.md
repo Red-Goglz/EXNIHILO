@@ -1,3 +1,7 @@
+---
+description: "Closing settles a position against the pool's curves and pays the surplus in USDC. How longs and shorts unwind, and the 1% fee on profit."
+---
+
 # Closing Positions
 
 A position is settled by **closing** it — the position's value is realized in USDC against the pool's curves.

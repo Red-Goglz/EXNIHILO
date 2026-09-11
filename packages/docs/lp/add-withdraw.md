@@ -1,3 +1,7 @@
+---
+description: "How the LP NFT holder adds and withdraws pool liquidity, how deposits are wrapped into airToken and airUsd, and what blocks a withdrawal."
+---
+
 # Adding & Withdrawing Liquidity
 
 Only the LP NFT holder can add or withdraw liquidity from a pool.

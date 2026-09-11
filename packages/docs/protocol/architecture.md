@@ -1,3 +1,7 @@
+---
+description: "The four contracts that make up EXNIHILO — Factory, Pool, LpNFT and PositionNFT — and how creating a market wires them together."
+---
+
 # Architecture Overview
 
 EXNIHILO consists of four smart contracts working together.

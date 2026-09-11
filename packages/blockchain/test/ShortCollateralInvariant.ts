@@ -1,8 +1,14 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { loadFixture, time } from "@nomicfoundation/hardhat-network-helpers";
+import { loadFixture, time, mine } from "@nomicfoundation/hardhat-network-helpers";
 import { EXNIHILOPool, PositionNFT, MockERC20 } from "../typechain-types";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
+
+// Mine past the expiry settlement guard window (EXNIHILOPool
+// SETTLE_GUARD_BLOCKS): these price moves are far above the 1 %-of-reserves
+// arming threshold, and the tests then jump days of wall time — hundreds of
+// thousands of Avalanche blocks — before a third party settles.
+const SETTLE_GUARD_BLOCKS = 5;
 
 /**
  * Coverage for `totalShortCollateral` and the reserve invariant that now
@@ -87,7 +93,6 @@ describe("Short collateral invariant", function () {
       await lpNft.getAddress(),
       await usdc.getAddress(),
       treasury.address,
-      100n,
       await poolDeployer.getAddress(),
     );
     await factory.waitForDeployment();
@@ -106,9 +111,11 @@ describe("Short collateral invariant", function () {
     await (await baseToken.connect(creator).approve(await factory.getAddress(), LP_TOKEN)).wait();
     const rc = await (
       await factory.connect(creator).createMarket(
-        await baseToken.getAddress(), LP_USDC, LP_TOKEN, 0n, 0n, 0n,
-      )
+        await baseToken.getAddress(), LP_USDC, LP_TOKEN)
     ).wait();
+    // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+    // caps, so start past the ramp where size is not the constraint.
+    await time.increase(24 * 3600);
 
     let poolAddress = "";
     for (const log of rc!.logs) {
@@ -222,11 +229,12 @@ describe("Short collateral invariant", function () {
     await (await positionNFT.connect(trader1).setAutoRenew(nftId, true, 500n * 10n ** 6n)).wait();
 
     // Auto-renew only fires when the position can pay: _autoRenewQuote demands
-    // surplus >= totalFee + KEEPER_BOUNTY. A short profits when the token gets
-    // cheaper to buy back, so push token INTO the pool to raise backedAirToken.
+    // surplus >= totalFee + a 2%-of-mark margin. A short profits when the token
+    // gets cheaper to buy back, so push token INTO the pool to raise backedAirToken.
     const dump = 40_000n * 10n ** 18n;
     await (await baseToken.connect(trader2).approve(poolAddress, dump)).wait();
     await (await pool.connect(trader2).swap(dump, 0n, true, trader2.address)).wait();
+    await mine(SETTLE_GUARD_BLOCKS);
 
     const [renewable] = await pool.quoteClose(nftId).then(
       (r) => [r.ready] as const,
@@ -247,7 +255,7 @@ describe("Short collateral invariant", function () {
     expect(await pool.openPositionCount(), "auto-renew did not fire").to.equal(1n);
 
     const lockedAfter = (await positionNFT.getPosition(nftId)).lockedAmount;
-    expect(lockedAfter, "collateral should shrink by the fee + bounty").to.be.lt(lockedBefore);
+    expect(lockedAfter, "collateral should shrink by the fee").to.be.lt(lockedBefore);
 
     // The accumulator must fall by exactly what the position lost.
     expect(before - (await pool.totalShortCollateral())).to.equal(lockedBefore - lockedAfter);
@@ -263,6 +271,7 @@ describe("Short collateral invariant", function () {
     const dump = 40_000n * 10n ** 18n;
     await (await baseToken.connect(trader2).approve(poolAddress, dump)).wait();
     await (await pool.connect(trader2).swap(dump, 0n, true, trader2.address)).wait();
+    await mine(SETTLE_GUARD_BLOCKS);
     expect(await slack(pool, usdc, poolAddress), "after dump").to.equal(0n);
 
     await time.increase(7 * 24 * 60 * 60 + 1);

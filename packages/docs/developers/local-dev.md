@@ -1,3 +1,7 @@
+---
+description: "Clone, install and run EXNIHILO locally — Hardhat contract tests with gas reporting and coverage, a local node, and deploying the contracts."
+---
+
 # Local Development
 
 ## Prerequisites

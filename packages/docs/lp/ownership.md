@@ -1,3 +1,7 @@
+---
+description: "EXNIHILO uses a single-LP model. The LP NFT minted at market creation carries exclusive rights to add, withdraw and set caps — and is transferable."
+---
+
 # LP NFT & Ownership
 
 EXNIHILO uses a single-LP model. Each pool has exactly one liquidity provider, identified by an LP NFT.
@@ -16,8 +20,7 @@ The LP NFT holder has exclusive authority over all LP operations.
 Whoever holds the LP NFT can:
 - **Add liquidity** — deposit more tokens + USDC
 - **Withdraw liquidity** — remove tokens + USDC when there is no open position (long or short)
-- **Claim fees** — withdraw accumulated LP fees (3% of position opens)
-- **Set position caps** — limit individual position sizes
+- **Claim fees** — withdraw accumulated LP fees (4% of position opens)
 - **Close a market** — no new positions or renewals. But trading remains open. 
 
 ## Transferring LP ownership

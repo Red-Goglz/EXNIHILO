@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
+import { loadFixture, time } from "@nomicfoundation/hardhat-network-helpers";
 import {
   EXNIHILOFactory,
   LpNFT,
@@ -14,8 +14,6 @@ import {
 
 const INITIAL_USDC = ethers.parseUnits("10000", 6); // 10,000 USDC
 const INITIAL_TOKEN = ethers.parseEther("1000000");  // 1,000,000 token
-const MAX_POS_USD  = ethers.parseUnits("5000", 6);  // 5,000 USDC hard cap
-const MAX_POS_BPS  = 500n;                          // 5 % of backedAirUsd
 const SWAP_FEE_BPS = 100n;                          // 1 %
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -84,7 +82,6 @@ async function deploySystem(
       await lpNft.getAddress(),
       usdcAddr,
       treasuryAddr,
-      SWAP_FEE_BPS,
       await poolDeployer.getAddress()
     )) as unknown as EXNIHILOFactory;
 
@@ -150,10 +147,10 @@ async function withOneMarketFixture() {
   const tx = await factory.connect(creator).createMarket(
     await baseToken.getAddress(),
     INITIAL_USDC,
-    INITIAL_TOKEN,
-    MAX_POS_USD,
-    MAX_POS_BPS,
-    0n);
+    INITIAL_TOKEN);
+  // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+  // caps, so start past the ramp where size is not the constraint.
+  await time.increase(24 * 3600);
   const receipt = await tx.wait();
 
   const iface = factory.interface;
@@ -193,9 +190,12 @@ describe("EXNIHILOFactory", function () {
       expect(await factory.protocolTreasury()).to.equal(treasury.address);
     });
 
-    it("stores defaultSwapFeeBps as an immutable", async function () {
+    it("has no defaultSwapFeeBps — the pool fee is a constant, not a factory setting", async function () {
       const { factory } = await loadFixture(deployFactoryFixture);
-      expect(await factory.defaultSwapFeeBps()).to.equal(SWAP_FEE_BPS);
+      const fns = factory.interface.fragments
+        .filter((f) => f.type === "function")
+        .map((f) => (f as { name: string }).name);
+      expect(fns).to.not.include("defaultSwapFeeBps");
     });
 
 
@@ -212,10 +212,7 @@ describe("EXNIHILOFactory", function () {
         factory.connect(creator).createMarket(
           await baseToken.getAddress(),
           INITIAL_USDC,
-          INITIAL_TOKEN,
-          MAX_POS_USD,
-          MAX_POS_BPS,
-          0n)
+          INITIAL_TOKEN)
       )
         .to.emit(factory, "MarketCreated")
         .withArgs(
@@ -233,10 +230,7 @@ describe("EXNIHILOFactory", function () {
       const [pool, lpNftId] = await factory.connect(creator).createMarket.staticCall(
         await baseToken.getAddress(),
         INITIAL_USDC,
-        INITIAL_TOKEN,
-        MAX_POS_USD,
-        MAX_POS_BPS,
-        0n
+        INITIAL_TOKEN
       );
 
       expect(pool).to.not.equal(ethers.ZeroAddress);
@@ -283,22 +277,26 @@ describe("EXNIHILOFactory", function () {
       expect(await pool.airUsdSupply()).to.equal(INITIAL_USDC);
     });
 
-    it("pool's maxPositionUsd is set correctly", async function () {
+    it("pool sets its own position cap — no parameter, no setter", async function () {
       const { poolAddress } = await loadFixture(withOneMarketFixture);
       const pool = await ethers.getContractAt("EXNIHILOPool", poolAddress);
-      expect(await pool.maxPositionUsd()).to.equal(MAX_POS_USD);
+
+      // The fixture advances past the 24 h ramp, so the cap is at its ceiling.
+      // The 1 % start and the ramp itself are covered in EXNIHILOPool.ts.
+      expect(await pool.currentMaxPositionBps()).to.equal(2000n);
+      expect(await pool.createdAt()).to.be.greaterThan(0n);
+
+      const fns = pool.interface.fragments
+        .filter((f) => f.type === "function")
+        .map((f) => (f as { name: string }).name);
+      expect(fns).to.not.include("setPositionCaps");
+      expect(fns).to.not.include("maxPositionUsd");
     });
 
-    it("pool's maxPositionBps is set correctly", async function () {
+    it("pool's swapFeeBps is the fixed 1 %, whatever the factory was given", async function () {
       const { poolAddress } = await loadFixture(withOneMarketFixture);
       const pool = await ethers.getContractAt("EXNIHILOPool", poolAddress);
-      expect(await pool.maxPositionBps()).to.equal(MAX_POS_BPS);
-    });
-
-    it("pool's swapFeeBps matches factory's defaultSwapFeeBps", async function () {
-      const { factory, poolAddress } = await loadFixture(withOneMarketFixture);
-      const pool = await ethers.getContractAt("EXNIHILOPool", poolAddress);
-      expect(await pool.swapFeeBps()).to.equal(await factory.defaultSwapFeeBps());
+      expect(await pool.swapFeeBps()).to.equal(SWAP_FEE_BPS);
     });
 
     it("pool's protocolTreasury matches factory's protocolTreasury", async function () {
@@ -314,35 +312,11 @@ describe("EXNIHILOFactory", function () {
     it("reverts when tokenAddress is the zero address", async function () {
       const { factory, creator } = await loadFixture(deployFactoryFixture);
       await expect(
-        factory.connect(creator).createMarket(ethers.ZeroAddress, INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n)
+        factory.connect(creator).createMarket(ethers.ZeroAddress, INITIAL_USDC, INITIAL_TOKEN)
       ).to.be.reverted;
     });
 
 
-    it("accepts maxPositionBps of 10 (minimum boundary)", async function () {
-      const { factory, creator, baseToken } = await loadFixture(deployFactoryFixture);
-      await expect(
-        factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 10n, 0n)
-      ).to.emit(factory, "MarketCreated");
-    });
-
-    it("accepts maxPositionBps of 9900 (maximum boundary)", async function () {
-      const { factory, creator, usdc } = await loadFixture(deployFactoryFixture);
-      const MockF = await ethers.getContractFactory("MockERC20");
-      const token2 = await MockF.deploy("DOGE", "DOGE", 18);
-      await (token2 as unknown as MockERC20).mint(creator.address, INITIAL_TOKEN);
-      await (token2 as any).connect(creator).approve(await factory.getAddress(), ethers.MaxUint256);
-      await expect(
-        factory.connect(creator).createMarket(await token2.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 9900n, 0n)
-      ).to.emit(factory, "MarketCreated");
-    });
-
-    it("accepts maxPositionBps of 0 (disabled)", async function () {
-      const { factory, creator, baseToken } = await loadFixture(deployFactoryFixture);
-      await expect(
-        factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n)
-      ).to.emit(factory, "MarketCreated");
-    });
   });
 
   // ── 4. createMarket — multiple markets ────────────────────────────────────
@@ -352,7 +326,10 @@ describe("EXNIHILOFactory", function () {
       const { factory, creator, creator2, baseToken, usdc, lpNft } =
         await loadFixture(deployFactoryFixture);
 
-      await factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n);
+      await factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN);
+      // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+      // caps, so start past the ramp where size is not the constraint.
+      await time.increase(24 * 3600);
       expect(await lpNft.ownerOf(0n)).to.equal(creator.address);
 
       const MockF = await ethers.getContractFactory("MockERC20");
@@ -360,7 +337,10 @@ describe("EXNIHILOFactory", function () {
       await token2.mint(creator2.address, INITIAL_TOKEN);
       await token2.connect(creator2).approve(await factory.getAddress(), ethers.MaxUint256);
 
-      await factory.connect(creator2).createMarket(await token2.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n);
+      await factory.connect(creator2).createMarket(await token2.getAddress(), INITIAL_USDC, INITIAL_TOKEN);
+      // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+      // caps, so start past the ramp where size is not the constraint.
+      await time.increase(24 * 3600);
       expect(await lpNft.ownerOf(1n)).to.equal(creator2.address);
     });
 
@@ -368,8 +348,14 @@ describe("EXNIHILOFactory", function () {
       const { factory, creator, creator2, baseToken } =
         await loadFixture(deployFactoryFixture);
 
-      await factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n);
-      await factory.connect(creator2).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n);
+      await factory.connect(creator).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN);
+      // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+      // caps, so start past the ramp where size is not the constraint.
+      await time.increase(24 * 3600);
+      await factory.connect(creator2).createMarket(await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN);
+      // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+      // caps, so start past the ramp where size is not the constraint.
+      await time.increase(24 * 3600);
 
       const pool1 = await factory.allPools(0n);
       const pool2 = await factory.allPools(1n);
@@ -395,10 +381,10 @@ describe("EXNIHILOFactory", function () {
       const tx = await factory.connect(creator).createMarket(
         await noMeta.getAddress(),
         INITIAL_USDC,
-        INITIAL_TOKEN,
-        0n,
-        0n,
-        0n);
+        INITIAL_TOKEN);
+      // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+      // caps, so start past the ramp where size is not the constraint.
+      await time.increase(24 * 3600);
       const receipt = await tx.wait();
       const iface = factory.interface;
       const log = receipt!.logs
@@ -408,5 +394,123 @@ describe("EXNIHILOFactory", function () {
       const pool = await ethers.getContractAt("EXNIHILOPool", log.args.pool as string);
       expect(await pool.tokenDecimals()).to.equal(18n);
     });
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Audit PU-001 — PoolDeployer had no caller check at all.
+//
+// The pool it builds is inert unless the factory registers it, so the risk was
+// never a usable orphan pool. It was that anyone could build one NAMING the
+// real factory — a pool that reads factory.deployer() for its emergency-close
+// authority while that factory has never heard of it.
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("PoolDeployer — caller must name itself", () => {
+  it("rejects a pool built in the name of a factory that is not the caller", async () => {
+    const [deployer, treasury, attacker] = await ethers.getSigners();
+
+    const poolDeployer = await (await ethers.getContractFactory("PoolDeployer"))
+      .connect(deployer).deploy();
+    const token = await (await ethers.getContractFactory("MockERC20"))
+      .connect(deployer).deploy("PEPE", "PEPE", 18);
+    const usdc = await (await ethers.getContractFactory("MockERC20"))
+      .connect(deployer).deploy("USD Coin", "USDC", 6);
+    const positionNFT = await (await ethers.getContractFactory("PositionNFT"))
+      .connect(deployer).deploy();
+    const lpNft = await (await ethers.getContractFactory("LpNFT"))
+      .connect(deployer).deploy(deployer.address);
+
+    // Some real factory the attacker wants the forged pool to point at.
+    const victimFactory = await (await ethers.getContractFactory("EXNIHILOFactory"))
+      .connect(deployer)
+      .deploy(
+        await positionNFT.getAddress(),
+        await lpNft.getAddress(),
+        await usdc.getAddress(),
+        treasury.address,
+        await poolDeployer.getAddress(),
+      );
+
+    await expect(
+      poolDeployer.connect(attacker).deploy(
+        await token.getAddress(),
+        await usdc.getAddress(),
+        18,
+        await positionNFT.getAddress(),
+        await lpNft.getAddress(),
+        0n,
+        treasury.address,
+        await victimFactory.getAddress(), // not the caller
+      )
+    ).to.be.revertedWithCustomError(poolDeployer, "FactoryMismatch");
+  });
+
+  // The ordinary path is satisfied by createMarket passing address(this),
+  // and is exercised by every other fixture in this suite and the wider
+  // test set — a market is created before almost every assertion in them.
+
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Audit PROCESS-002 — "The returned id must equal our prediction" was a comment
+// and nothing else.
+//
+// The pool takes its LP NFT id as a CONSTRUCTOR argument, so the factory has to
+// predict it (allPools.length) before minting. That id gates addLiquidity,
+// removeLiquidity, claimFees and closePool through ownerOf — a pool built with
+// the wrong one answers to somebody else's NFT for its entire life.
+//
+// The prediction is sound while this factory is LpNFT's sole minter, which is
+// exactly why nothing ever tested the failure. It is now enforced, and this
+// drives it from outside using a stand-in the real LpNFT cannot imitate.
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("EXNIHILOFactory — the LP NFT id prediction is checked, not assumed", () => {
+  it("refuses to seed a market when LpNFT returns an unpredicted id", async () => {
+    const [deployer, treasury, creator] = await ethers.getSigners();
+
+    const MockERC20F = await ethers.getContractFactory("MockERC20");
+    const baseToken = (await MockERC20F.connect(deployer)
+      .deploy("PEPE", "PEPE", 18)) as unknown as MockERC20;
+    const usdc = (await MockERC20F.connect(deployer)
+      .deploy("USD Coin", "USDC", 6)) as unknown as MockERC20;
+
+    const positionNFT = await (await ethers.getContractFactory("PositionNFT"))
+      .connect(deployer).deploy();
+    const poolDeployer = await (await ethers.getContractFactory("PoolDeployer"))
+      .connect(deployer).deploy();
+
+    // Hands back 999 where the factory predicts 0.
+    const badLpNft = await (await ethers.getContractFactory("MisnumberingLpNFT"))
+      .connect(deployer).deploy(999n);
+
+    const factory = await (await ethers.getContractFactory("EXNIHILOFactory"))
+      .connect(deployer)
+      .deploy(
+        await positionNFT.getAddress(),
+        await badLpNft.getAddress(),
+        await usdc.getAddress(),
+        treasury.address,
+        await poolDeployer.getAddress(),
+      );
+    const factoryAddr = await factory.getAddress();
+
+    await baseToken.mint(creator.address, INITIAL_TOKEN);
+    await usdc.mint(creator.address, INITIAL_USDC);
+    await baseToken.connect(creator).approve(factoryAddr, ethers.MaxUint256);
+    await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
+
+    await expect(
+      factory.connect(creator).createMarket(
+        await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN)
+    ).to.be.revertedWithCustomError(factory, "LpNftIdMismatch");
+
+    // The whole transaction is refused: no market, and the seed never left the
+    // creator. Seeding into a pool whose controls answer to the wrong NFT is
+    // the outcome being prevented, so a partial one would be no better.
+    expect(await factory.allPoolsLength()).to.equal(0n);
+    expect(await baseToken.balanceOf(creator.address)).to.equal(INITIAL_TOKEN);
+    expect(await usdc.balanceOf(creator.address)).to.equal(INITIAL_USDC);
   });
 });

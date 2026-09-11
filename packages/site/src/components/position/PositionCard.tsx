@@ -136,25 +136,28 @@ export default function PositionCard({
                 fontSize: "1.2rem",
                 fontWeight: 700,
                 letterSpacing: "0.02em",
-                color: st.pnlPositive ? "var(--green)" : "var(--red)",
+                // Return, not payout — see PositionRow for why.
+                color: (st.returnPct !== null ? st.returnPct >= 0 : st.pnlPositive)
+                  ? "var(--green)"
+                  : "var(--red)",
                 lineHeight: 1.2,
               }}
             >
               {st.pnlPositive ? "+" : "−"}{formatUsdc(st.pnlNetAbs)}
             </div>
           </div>
-          {position.feesPaid > 0n && (
+          {st.returnPct !== null && (
             <div style={{ textAlign: "right" }}>
-              <div className="stat-label">RETURN ON FEES</div>
+              <div className="stat-label">RETURN ON PREMIUM</div>
               <div
                 style={{
                   fontSize: "0.82rem",
                   fontWeight: 600,
-                  color: st.pnlPositive ? "var(--green)" : "var(--red)",
+                  color: st.returnPct >= 0 ? "var(--green)" : "var(--red)",
                 }}
               >
-                {st.pnlPositive ? "+" : "−"}
-                {((Number(st.pnlNetAbs) / Number(position.feesPaid)) * 100).toFixed(0)}%
+                {st.returnPct >= 0 ? "+" : "−"}
+                {Math.abs(st.returnPct).toFixed(0)}%
               </div>
             </div>
           )}
@@ -184,13 +187,18 @@ export default function PositionCard({
       {pnlCardOpen && (
         <PnlCardModal
           tokenId={tokenId}
-          positionNFTAddress={positionNFTAddress}
           tokenSymbol={st.tokenSymbol}
-          isLong={position.isLong}
-          feesPaidRaw={position.feesPaid}
+          isLong={position.isLong}
+          usdcIn={position.usdcIn}
+          lockedAmount={position.lockedAmount}
+          tokenDecimals={st.tokenDecimals}
+          openedAt={position.openedAt}
+          deadline={position.deadline}
+          feesPaid={position.feesPaid}
           hasPnl={st.hasPnl}
           pnlPositive={st.pnlPositive}
           pnlNetAbs={st.pnlNetAbs}
+          returnPct={st.returnPct}
           onClose={() => setPnlCardOpen(false)}
         />
       )}
@@ -235,7 +243,9 @@ export default function PositionCard({
           </div>
         </div>
 
-        {/* Renew button — hidden when market is closed (contract rejects renewals past closeDate) */}
+        {/* Renew button — hidden when the contract would reject the renewal:
+            past closeDate on a closing market, or already extended to the
+            pool's 60-day horizon. Both are quoted, never recomputed here. */}
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
           {st.isMarketClosed ? (
             <div style={{ textAlign: "right" }}>
@@ -249,6 +259,18 @@ export default function PositionCard({
               )}
               <div style={{ fontSize: "var(--fs-nano)", color: "var(--dim)", letterSpacing: "0.04em", marginTop: 1 }}>
                 renew unavailable
+              </div>
+            </div>
+          ) : st.renewAllowed === false ? (
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: "var(--fs-nano)", letterSpacing: "0.15em", color: "var(--muted)" }}>
+                EXTENDED TO LIMIT
+              </div>
+              <div style={{ fontSize: "var(--fs-label)", color: "var(--cyan)", letterSpacing: "0.04em", fontWeight: 600 }}>
+                {st.deadlineDate}
+              </div>
+              <div style={{ fontSize: "var(--fs-nano)", color: "var(--dim)", letterSpacing: "0.04em", marginTop: 1 }}>
+                extend again as it runs down
               </div>
             </div>
           ) : (
@@ -385,10 +407,10 @@ export default function PositionCard({
                 </span>
               ) : (
                 <span style={{ fontSize: "var(--fs-label)", color: "var(--muted)", letterSpacing: "0.04em", lineHeight: 1.6 }}>
-                  At expiry, anyone may renew this position for you. The fee + 0.05 keeper
-                  bounty are paid from the position's own profit — nothing leaves your
-                  wallet. If it can't pay, or the fee exceeds your cap, it settles instead.
-                  Cleared if the NFT is transferred.
+                  At expiry, anyone may renew this position for you. The fee is paid from
+                  the position's own profit — nothing leaves your wallet. If the profit
+                  can't cover it with a small safety margin, or the fee exceeds your cap,
+                  it settles instead. Cleared if the NFT is transferred.
                 </span>
               )}
             </div>

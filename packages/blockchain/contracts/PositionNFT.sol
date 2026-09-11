@@ -170,6 +170,51 @@ contract PositionNFT is ERC721Enumerable {
         ));
     }
 
+    /**
+     * @dev The trader's actual result: signed USDC, and the same number as a
+     *      percent of what they staked. One helper for both so the figure and
+     *      the percent can never disagree on the card.
+     *
+     *      The premium IS the cost basis. openLong / openShort pull only the
+     *      fee from the trader and mint the notional synthetically, so what
+     *      they staked is `feesPaid` and what they get back is the payout:
+     *
+     *          pnl = payout − premium        pct = pnl / premium
+     *
+     *      Two floors follow from the settlement rules, and both matter:
+     *
+     *      - `payout` floors at ZERO. A position below break-even cannot be
+     *        closed and pays nothing at expiry; the pool's reported shortfall
+     *        is a notional gap, not a debt the trader owes. Carrying that gap
+     *        into the display printed losses many times the premium — a
+     *        position that risked $5 rendering as −$80.
+     *      - `pnl` therefore floors at −premium, i.e. −100%. Losing everything
+     *        staked is the worst case, which is the whole point of buying an
+     *        option rather than taking on leverage.
+     *
+     *      Reporting the raw payout as "PnL" — as this contract used to — is
+     *      the same error in the other direction: it omits the cost basis, so
+     *      a position that returned $3 on a $5 premium read as a $3 gain when
+     *      the trader is down $2.
+     */
+    function _netReturn(Position memory pos, LiveData memory ld)
+        internal
+        pure
+        returns (bool up, uint256 usdcAbs, uint256 pct)
+    {
+        uint256 payout  = ld.pnlPositive ? ld.pnlAbs : 0;
+        uint256 premium = pos.feesPaid;
+
+        if (payout >= premium) {
+            up      = true;
+            usdcAbs = payout - premium;
+        } else {
+            usdcAbs = premium - payout;
+        }
+
+        pct = premium == 0 ? 0 : (usdcAbs * 100) / premium;
+    }
+
     function _buildAttributes(
         uint256 tokenId,
         Position memory pos,
@@ -202,14 +247,15 @@ contract PositionNFT is ERC721Enumerable {
 
         bytes memory pnlAttr;
         if (ld.pnlReady) {
-            // Net PnL (close fee deducted from profit) / fees paid, as an integer percent.
-            uint256 pct = pos.feesPaid > 0 ? (ld.pnlAbs * 100) / pos.feesPaid : 0;
+            // Both figures are net of the premium, so a marketplace sorting on
+            // either one ranks positions the same way.
+            (bool up, uint256 usdcAbs, uint256 pct) = _netReturn(pos, ld);
             pnlAttr = abi.encodePacked(
                 '{"trait_type":"Est. PnL (USDC)","display_type":"number","value":',
-                ld.pnlPositive ? "" : "-",
-                _fmt6(ld.pnlAbs), '},',
-                '{"trait_type":"Est. PnL % (on fees)","display_type":"number","value":',
-                ld.pnlPositive ? "" : "-",
+                up ? "" : "-",
+                _fmt6(usdcAbs), '},',
+                '{"trait_type":"Return on Premium %","display_type":"number","value":',
+                up ? "" : "-",
                 pct.toString(), '}'
             );
         } else {
@@ -387,18 +433,17 @@ contract PositionNFT is ERC721Enumerable {
             } catch {}
         } catch { ld.tokenSymbol = "TOKEN"; }
 
-        // Live PnL quote (net of close fee on profit)
+        // Live PnL quote (net of close fee on profit).
+        //
+        // `ready == false` means the pool cannot settle the position at all —
+        // underwater past the point its debt can be bought back. That is a
+        // loss, not an unknown, and the pool reports the estimated shortfall in
+        // `pnl` so the certificate can show it. Only a reverting pool or a
+        // genuinely zero quote still renders "N/A".
         try IEXNIHILOPool(pos.pool).quoteClose(tokenId) returns (bool ready, int256 pnl) {
-            if (ready) {
-                ld.pnlReady = true;
-                if (pnl >= 0) {
-                    ld.pnlPositive = true;
-                    ld.pnlAbs      = uint256(pnl);
-                } else {
-                    ld.pnlPositive = false;
-                    ld.pnlAbs      = uint256(-pnl);
-                }
-            }
+            ld.pnlReady    = ready || pnl != 0;
+            ld.pnlPositive = ready && pnl >= 0;
+            ld.pnlAbs      = pnl >= 0 ? uint256(pnl) : uint256(-pnl);
         } catch { /* pnlReady stays false */ }
     }
 
@@ -428,8 +473,11 @@ contract PositionNFT is ERC721Enumerable {
         bytes memory styles = abi.encodePacked(
             "<defs><style>",
             ".f{font-family:'Courier New',Courier,monospace;}",
-            ".lbl{font-size:10;letter-spacing:2;fill:#555;}",
-            ".val{font-size:15;fill:#ccc;}",
+            // Sized for a card that is usually viewed at half its 800x450
+            // canvas: 10px labels at #555 are unreadable there.
+            ".lbl{font-size:13;letter-spacing:2;fill:#8a8a8a;}",
+            ".val{font-size:20;fill:#e8e8e8;}",
+            ".dat{font-size:16;fill:#999;}",
             // Glitch cyan — exact keyframes from the website
             "@keyframes gc{",
             "0%,87%,100%{clip-path:inset(0 0 100% 0);opacity:0;transform:translateX(0)}",
@@ -464,7 +512,7 @@ contract PositionNFT is ERC721Enumerable {
             '<text x="32" y="58" class="f gc" font-size="32" letter-spacing="8" font-weight="bold">EXNIHILO</text>',
             '<text x="32" y="58" class="f gr" font-size="32" letter-spacing="8" font-weight="bold">EXNIHILO</text>',
             '<text x="32" y="58" class="f"    font-size="32" letter-spacing="8" fill="#fff" font-weight="bold">EXNIHILO</text>',
-            '<text x="32" y="78" class="f" font-size="10" letter-spacing="3" fill="#00e5ff">POSITION CERTIFICATE</text>',
+            '<text x="32" y="80" class="f" font-size="12" letter-spacing="3" fill="#00e5ff">POSITION CERTIFICATE</text>',
             '<line x1="32" y1="96" x2="768" y2="96" stroke="#1a1a1a"/>'
         );
 
@@ -486,14 +534,14 @@ contract PositionNFT is ERC721Enumerable {
 
         // Split across two calls to stay within encodePacked's 16-argument limit.
         bytes memory badge = abi.encodePacked(
-            '<rect x="32" y="110" width="68" height="24" fill="', sc, '" fill-opacity="0.08"/>',
-            '<rect x="32" y="110" width="68" height="24" fill="none" stroke="', sc, '" stroke-opacity="0.35"/>',
-            '<text x="66" y="126" class="f" font-size="11" letter-spacing="2" fill="', sc, '" text-anchor="middle">', sl, "</text>"
+            '<rect x="32" y="110" width="74" height="26" fill="', sc, '" fill-opacity="0.08"/>',
+            '<rect x="32" y="110" width="74" height="26" fill="none" stroke="', sc, '" stroke-opacity="0.35"/>',
+            '<text x="69" y="128" class="f" font-size="13" letter-spacing="2" fill="', sc, '" text-anchor="middle">', sl, "</text>"
         );
 
         bytes memory head = abi.encodePacked(
-            '<text x="112" y="128" class="f" font-size="19" letter-spacing="2" fill="#fff" font-weight="bold">', market, "</text>",
-            '<text x="768" y="58" class="f" font-size="12" fill="#3a3a3a" text-anchor="end">#', tokenId.toString(), "</text>"
+            '<text x="120" y="129" class="f" font-size="21" letter-spacing="2" fill="#fff" font-weight="bold">', market, "</text>",
+            '<text x="768" y="58" class="f" font-size="14" fill="#666" text-anchor="end">#', tokenId.toString(), "</text>"
         );
 
         return abi.encodePacked(badge, head);
@@ -503,12 +551,12 @@ contract PositionNFT is ERC721Enumerable {
         // Columns 1-3 of the bottom stats strip; the footer adds 4-5.
         string memory lockedLabel = string(abi.encodePacked("LOCKED ", ld.tokenSymbol));
         return abi.encodePacked(
-            '<text x="32"  y="326" class="f lbl">POSITION SIZE</text>',
-            '<text x="179" y="326" class="f lbl">', lockedLabel, "</text>",
-            '<text x="326" y="326" class="f lbl">FEES PAID</text>',
-            '<text x="32"  y="352" class="f val">', _fmt6(pos.usdcIn),        "</text>",
-            '<text x="179" y="352" class="f val">', _fmtToken(pos.lockedAmount, ld.tokenDecimals), "</text>",
-            '<text x="326" y="352" class="f val">', _fmt6(pos.feesPaid), "</text>"
+            '<text x="32"  y="330" class="f lbl">POSITION SIZE</text>',
+            '<text x="196" y="330" class="f lbl">', lockedLabel, "</text>",
+            '<text x="360" y="330" class="f lbl">PREMIUM PAID</text>',
+            '<text x="32"  y="360" class="f val">', _fmt6(pos.usdcIn),        "</text>",
+            '<text x="196" y="360" class="f val">', _fmtToken(pos.lockedAmount, ld.tokenDecimals), "</text>",
+            '<text x="360" y="360" class="f val">', _fmt6(pos.feesPaid), "</text>"
         );
     }
 
@@ -517,54 +565,68 @@ contract PositionNFT is ERC721Enumerable {
         // read the same. The airToken debt stays in the JSON attributes for
         // marketplace pricing — on the certificate it is noise.
         return abi.encodePacked(
-            '<text x="32"  y="326" class="f lbl">POSITION SIZE</text>',
-            '<text x="179" y="326" class="f lbl">LOCKED USDC</text>',
-            '<text x="326" y="326" class="f lbl">FEES PAID</text>',
-            '<text x="32"  y="352" class="f val">', _fmt6(pos.usdcIn),      "</text>",
-            '<text x="179" y="352" class="f val">', _fmt6(pos.lockedAmount), "</text>",
-            '<text x="326" y="352" class="f val">', _fmt6(pos.feesPaid),     "</text>"
+            '<text x="32"  y="330" class="f lbl">POSITION SIZE</text>',
+            '<text x="196" y="330" class="f lbl">LOCKED USDC</text>',
+            '<text x="360" y="330" class="f lbl">PREMIUM PAID</text>',
+            '<text x="32"  y="360" class="f val">', _fmt6(pos.usdcIn),      "</text>",
+            '<text x="196" y="360" class="f val">', _fmt6(pos.lockedAmount), "</text>",
+            '<text x="360" y="360" class="f val">', _fmt6(pos.feesPaid),     "</text>"
         );
     }
 
     function _svgPnl(Position memory pos, LiveData memory ld) internal pure returns (bytes memory) {
         string memory pnlColor;
         string memory pnlText;
+        string memory caption = "";
+
+        (bool up, uint256 usdcAbs, uint256 pct) = _netReturn(pos, ld);
 
         if (!ld.pnlReady) {
-            pnlColor = "#555555";
+            pnlColor = "#8a8a8a";
             pnlText  = "N/A";
-        } else if (ld.pnlAbs == 0) {
+            caption  = "POOL CANNOT PRICE THIS POSITION";
+        } else if (usdcAbs == 0) {
+            // Exactly break-even: the payout gives the premium back and no more.
             pnlColor = "#aaaaaa";
             pnlText  = "$0.00";
+            caption  = "NET OF PREMIUM PAID";
         } else {
-            pnlColor = ld.pnlPositive ? "#00ff88" : "#ff3b30";
-            string memory sign = ld.pnlPositive ? "+$" : "-$";
+            // Colour tracks the RETURN, not the payout: a position can pay out
+            // a positive number and still sit far below the premium that bought
+            // it, and painting that green would sell a loss as a win.
+            pnlColor = up ? "#00ff88" : "#ff3b30";
             string memory pctPart = "";
             if (pos.feesPaid > 0) {
-                // Percent uses net PnL (close fee already deducted from profit) vs fees paid.
-                uint256 pct = (ld.pnlAbs * 100) / pos.feesPaid;
-                pctPart = string(abi.encodePacked(" (", pct.toString(), "%)"));
+                pctPart = string(abi.encodePacked(
+                    "  (", up ? "+" : "-", pct.toString(), "%)"
+                ));
             }
-            pnlText = string(abi.encodePacked(sign, _fmt6(ld.pnlAbs), pctPart));
+            pnlText = string(abi.encodePacked(
+                up ? "+$" : "-$", _fmt6(usdcAbs), pctPart
+            ));
+            caption = "NET OF PREMIUM PAID";
         }
 
         // Hero of the card — centred in the open space above the stats strip.
+        // Figure and percent are both net of the premium, so the caption names
+        // the one basis rather than reconciling two.
         return abi.encodePacked(
-            '<text x="400" y="200" class="f lbl" text-anchor="middle" letter-spacing="4">EST. PnL</text>',
-            '<text x="400" y="256" class="f" font-size="48" font-weight="bold" fill="', pnlColor, '" text-anchor="middle" letter-spacing="2">', pnlText, "</text>"
+            '<text x="400" y="196" class="f lbl" text-anchor="middle" letter-spacing="4">EST. PnL</text>',
+            '<text x="400" y="252" class="f" font-size="56" font-weight="bold" fill="', pnlColor, '" text-anchor="middle" letter-spacing="2">', pnlText, "</text>",
+            '<text x="400" y="276" class="f" font-size="12" letter-spacing="2" fill="#8a8a8a" text-anchor="middle">', caption, "</text>"
         );
     }
 
     function _svgFooter(Position memory pos) internal pure returns (bytes memory) {
         // Divider above the strip, columns 4-5, and the tagline.
         return abi.encodePacked(
-            '<line x1="32" y1="296" x2="768" y2="296" stroke="#1a1a1a"/>',
-            '<text x="473" y="326" class="f lbl">OPENED</text>',
-            '<text x="473" y="352" class="f" font-size="13" fill="#666">', _fmtDate(pos.openedAt), "</text>",
-            '<text x="620" y="326" class="f lbl">EXPIRES</text>',
-            '<text x="620" y="352" class="f" font-size="13" fill="#666">', _fmtDate(pos.deadline), "</text>",
-            '<text x="768" y="424" class="f" font-size="10" letter-spacing="3" fill="#333" text-anchor="end">OUT OF THIN AIR</text>',
-            '<text x="32" y="424" class="f" font-size="10" letter-spacing="2" fill="#333">exnihilo.markets</text>'
+            '<line x1="32" y1="300" x2="768" y2="300" stroke="#1a1a1a"/>',
+            '<text x="524" y="330" class="f lbl">OPENED</text>',
+            '<text x="524" y="360" class="f dat">', _fmtDate(pos.openedAt), "</text>",
+            '<text x="656" y="330" class="f lbl">EXPIRES</text>',
+            '<text x="656" y="360" class="f dat">', _fmtDate(pos.deadline), "</text>",
+            '<text x="768" y="424" class="f" font-size="12" letter-spacing="3" fill="#555" text-anchor="end">OUT OF THIN AIR</text>',
+            '<text x="32" y="424" class="f" font-size="12" letter-spacing="2" fill="#555">exnihilo.markets</text>'
         );
     }
 

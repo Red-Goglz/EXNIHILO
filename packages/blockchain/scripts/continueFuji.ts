@@ -66,7 +66,7 @@ async function main() {
     await (await token.connect(deployer).approve(DEPLOYED.factory, tokenSeed)).wait();
 
     const tx = await factory.connect(deployer).createMarket(
-      tokenAddr, usdcSeed, tokenSeed, maxPosUsd, maxPosBps, 0n
+      tokenAddr, usdcSeed, tokenSeed
     );
     const receipt = await tx.wait();
 

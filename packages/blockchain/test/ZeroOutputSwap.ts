@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
+import { loadFixture, time } from "@nomicfoundation/hardhat-network-helpers";
 import { EXNIHILOPool, MockERC20 } from "../typechain-types";
 
 /**
@@ -54,7 +54,8 @@ describe("Zero-output swap guard", function () {
       await lpNft.getAddress(),
       await usdc.getAddress(),
       treasury.address,
-      100n, // 1% swap fee → zero-output threshold is 99x the reserve
+      // Pool swap fee is a constant 1 %, so the zero-output threshold is
+      // fixed at 99x the reserve.
       await poolDeployer.getAddress(),
     );
     await factory.waitForDeployment();
@@ -73,9 +74,11 @@ describe("Zero-output swap guard", function () {
     await (await baseToken.connect(creator).approve(await factory.getAddress(), LP_TOKEN)).wait();
     const rc = await (
       await factory.connect(creator).createMarket(
-        await baseToken.getAddress(), LP_USDC, LP_TOKEN, 0n, 0n, 0n,
-      )
+        await baseToken.getAddress(), LP_USDC, LP_TOKEN)
     ).wait();
+    // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+    // caps, so start past the ramp where size is not the constraint.
+    await time.increase(24 * 3600);
 
     let poolAddress = "";
     for (const log of rc!.logs) {

@@ -16,8 +16,8 @@ import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 
 const BPS_DENOM      = 10_000n;
 const SWAP_FEE_BPS   = 100n;
-const LP_FEE_BPS     = 300n;
-const PROTO_FEE_BPS  = 200n;
+const LP_FEE_BPS     = 400n;
+const PROTO_FEE_BPS  = 100n;
 const IMPACT_FEE_BPS = 1500n;
 const MIN_POS_FEE    = 50_000n;  // 0.05 USDC
 const CLOSE_FEE_BPS  = 100n;
@@ -132,7 +132,6 @@ async function deploySystem(
       await lpNft.getAddress(),
       usdcAddr,
       treasuryAddr,
-      SWAP_FEE_BPS,
       await poolDeployer.getAddress()
     )) as unknown as EXNIHILOFactory;
 
@@ -176,10 +175,10 @@ async function deployPoolWithLiquidity(
   const tx = await factory.connect(creator).createMarket(
     await baseToken.getAddress(),
     initialUsdc,
-    initialToken,
-    0n,  // no hard cap
-    0n,  // no bps cap
-    0n);
+    initialToken);
+  // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+  // caps, so start past the ramp where size is not the constraint.
+  await time.increase(24 * 3600);
   const receipt = await tx.wait();
   const iface = factory.interface;
   const log = receipt!.logs
@@ -295,7 +294,7 @@ describe("Impact Fee — LP Drain Protection", function () {
     it("openLong charges base fee + impact fee (verified via event)", async function () {
       const f = await loadFixture(deployMediumPool);
 
-      const notional = ethers.parseUnits("500", 6); // $500
+      const notional = ethers.parseUnits("200", 6); // 20 % of the $1K pool — the cap
       const backedUsd = await f.pool.backedAirUsd();
 
       const expectedFee = positionFee(notional, backedUsd);
@@ -311,7 +310,7 @@ describe("Impact Fee — LP Drain Protection", function () {
     it("openShort charges base fee + impact fee", async function () {
       const f = await loadFixture(deployMediumPool);
 
-      const notional = ethers.parseUnits("500", 6);
+      const notional = ethers.parseUnits("200", 6); // 20 % of the $1K pool — the cap
       const backedUsd = await f.pool.backedAirUsd();
       const expectedFee = positionFee(notional, backedUsd);
 
@@ -338,23 +337,27 @@ describe("Impact Fee — LP Drain Protection", function () {
       expect(totalFee).to.be.gt(baseFee); // but still nonzero
     });
 
-    it("impact fee dominates on thin pool with large position", async function () {
+    it("the position cap keeps the impact fee below the base fee", async function () {
+      // impact > base needs N > 2U/3 (~67 % of depth): 1500·N²/(2·U·1e4) vs
+      // N·500/1e4. The cap tops out at 20 %, so impact can never dominate —
+      // a direct consequence of the automatic cap, worth pinning.
       const f = await loadFixture(deployThinPool);
 
-      const notional = ethers.parseUnits("250", 6); // $250 in $100 pool
+      const atCap = ((await f.pool.backedAirUsd()) * 2000n) / BPS_DENOM;
+      expect(await f.pool.effectiveLeverageCap()).to.equal(atCap);
+
       const backedUsd = await f.pool.backedAirUsd();
+      const baseFee   = (atCap * (LP_FEE_BPS + PROTO_FEE_BPS)) / BPS_DENOM;
+      const impactFee = (IMPACT_FEE_BPS * atCap * atCap) / (2n * backedUsd * BPS_DENOM);
 
-      const baseFee   = (notional * (LP_FEE_BPS + PROTO_FEE_BPS)) / BPS_DENOM;
-      const impactFee = (IMPACT_FEE_BPS * notional * notional) / (2n * backedUsd * BPS_DENOM);
-
-      // Impact fee should exceed base fee when position > pool
-      expect(impactFee).to.be.gt(baseFee);
+      expect(impactFee).to.be.lt(baseFee);
+      expect(impactFee).to.be.gt(0n);
     });
 
     it("impact fee goes entirely to LP (accrued for claim)", async function () {
       const f = await loadFixture(deployMediumPool);
 
-      const notional = ethers.parseUnits("500", 6);
+      const notional = ethers.parseUnits("200", 6); // 20 % of the $1K pool — the cap
       const backedUsd = await f.pool.backedAirUsd();
 
       const lpFeesBefore = await f.pool.lpFeesAccumulated();
@@ -389,30 +392,22 @@ describe("Impact Fee — LP Drain Protection", function () {
       notional: bigint;
     }
 
-    const testCases: TestCase[] = [
-      // Standard pool ($10K)
-      { label: "Standard, $100 long",   pool: STANDARD_POOL, notional: ethers.parseUnits("100", 6) },
-      { label: "Standard, $500 long",   pool: STANDARD_POOL, notional: ethers.parseUnits("500", 6) },
-      { label: "Standard, $1000 long",  pool: STANDARD_POOL, notional: ethers.parseUnits("1000", 6) },
-      { label: "Standard, $5000 long",  pool: STANDARD_POOL, notional: ethers.parseUnits("5000", 6) },
-      { label: "Standard, $10000 long", pool: STANDARD_POOL, notional: ethers.parseUnits("10000", 6) },
-      { label: "Standard, $20000 long", pool: STANDARD_POOL, notional: ethers.parseUnits("20000", 6) },
+    // Sizes are expressed as a fraction of pool depth rather than in dollars:
+    // the per-position cap ramps to 20 % of backedAirUsd, so anything above that
+    // is unreachable by construction and the property is only meaningful across
+    // the band that can actually be opened.
+    const SIZE_FRACTIONS_BPS = [100n, 500n, 1000n, 1500n, 2000n]; // 1 % … 20 %
 
-      // Medium pool ($1K)
-      { label: "Medium, $50 long",   pool: MEDIUM_POOL, notional: ethers.parseUnits("50", 6) },
-      { label: "Medium, $100 long",  pool: MEDIUM_POOL, notional: ethers.parseUnits("100", 6) },
-      { label: "Medium, $250 long",  pool: MEDIUM_POOL, notional: ethers.parseUnits("250", 6) },
-      { label: "Medium, $500 long",  pool: MEDIUM_POOL, notional: ethers.parseUnits("500", 6) },
-      { label: "Medium, $1000 long", pool: MEDIUM_POOL, notional: ethers.parseUnits("1000", 6) },
-      { label: "Medium, $2000 long", pool: MEDIUM_POOL, notional: ethers.parseUnits("2000", 6) },
-
-      // Thin pool ($100)
-      { label: "Thin, $10 long",  pool: THIN_POOL, notional: ethers.parseUnits("10", 6) },
-      { label: "Thin, $50 long",  pool: THIN_POOL, notional: ethers.parseUnits("50", 6) },
-      { label: "Thin, $100 long", pool: THIN_POOL, notional: ethers.parseUnits("100", 6) },
-      { label: "Thin, $250 long", pool: THIN_POOL, notional: ethers.parseUnits("250", 6) },
-      { label: "Thin, $500 long", pool: THIN_POOL, notional: ethers.parseUnits("500", 6) },
-    ];
+    const testCases: TestCase[] = [];
+    for (const pool of [STANDARD_POOL, MEDIUM_POOL, THIN_POOL]) {
+      for (const bps of SIZE_FRACTIONS_BPS) {
+        testCases.push({
+          label: `${pool.label}, ${Number(bps) / 100}% of depth`,
+          pool,
+          notional: (pool.usdc * bps) / 10_000n,
+        });
+      }
+    }
 
     for (const tc of testCases) {
       it(`${tc.label}: fee > net LP loss (positive margin)`, async function () {
@@ -466,27 +461,28 @@ describe("Impact Fee — LP Drain Protection", function () {
         pumpUsdc:     ethers.parseUnits("5000", 6),
       },
       {
-        label: "Medium pool, $500 long, $500 pump",
+        // Longs are capped at 20 % of depth; the pump leg is a swap and is not.
+        label: "Medium pool, $200 long (cap), $500 pump",
         pool: MEDIUM_POOL,
-        longNotional: ethers.parseUnits("500", 6),
+        longNotional: ethers.parseUnits("200", 6),
         pumpUsdc:     ethers.parseUnits("500", 6),
       },
       {
-        label: "Medium pool, $1000 long, $1000 pump",
+        label: "Medium pool, $150 long, $1000 pump",
         pool: MEDIUM_POOL,
-        longNotional: ethers.parseUnits("1000", 6),
+        longNotional: ethers.parseUnits("150", 6),
         pumpUsdc:     ethers.parseUnits("1000", 6),
       },
       {
-        label: "Thin pool, $50 long, $50 pump",
+        label: "Thin pool, $20 long (cap), $50 pump",
         pool: THIN_POOL,
-        longNotional: ethers.parseUnits("50", 6),
+        longNotional: ethers.parseUnits("20", 6),
         pumpUsdc:     ethers.parseUnits("50", 6),
       },
       {
-        label: "Thin pool, $100 long, $100 pump",
+        label: "Thin pool, $15 long, $100 pump",
         pool: THIN_POOL,
-        longNotional: ethers.parseUnits("100", 6),
+        longNotional: ethers.parseUnits("15", 6),
         pumpUsdc:     ethers.parseUnits("100", 6),
       },
     ];
@@ -656,7 +652,7 @@ describe("Impact Fee — LP Drain Protection", function () {
     it("openShort pays impact fee proportional to notional²/liquidity", async function () {
       const f = await loadFixture(deployMediumPool);
 
-      const notional = ethers.parseUnits("500", 6);
+      const notional = ethers.parseUnits("200", 6); // 20 % of the $1K pool — the cap
       const backedUsd = await f.pool.backedAirUsd();
 
       // Compute expected fee
@@ -692,7 +688,8 @@ describe("Impact Fee — LP Drain Protection", function () {
       await openLong(f.pool, f.trader1, notional); // should not revert
     });
 
-    it("position equal to pool liquidity — impact fee is 7.5% of notional", async function () {
+    it("formula: position equal to pool liquidity would owe 7.5 % of notional", async function () {
+      // Pure formula check — see above; not an openable size.
       const f = await loadFixture(deployMediumPool);
 
       const notional = ethers.parseUnits("1000", 6); // $1000 = pool size
@@ -703,10 +700,13 @@ describe("Impact Fee — LP Drain Protection", function () {
       expect(impactFee).to.equal(ethers.parseUnits("75", 6));
     });
 
-    it("position 5× pool liquidity — impact fee is $1875 (75× base fee)", async function () {
+    it("formula: position 5× pool liquidity would owe $187.5 impact", async function () {
+      // Pure formula check — no position is opened. A 5×-depth position is not
+      // openable any more (the cap tops out at 20 %), but the curve's shape
+      // above that range is still worth pinning.
       const f = await loadFixture(deployThinPool);
 
-      const notional = ethers.parseUnits("500", 6); // $500 in $100 pool (5×)
+      const notional = ethers.parseUnits("500", 6); // 5× the $100 pool
       const backedUsd = await f.pool.backedAirUsd();
 
       const baseFee   = (notional * (LP_FEE_BPS + PROTO_FEE_BPS)) / BPS_DENOM;
@@ -725,7 +725,7 @@ describe("Impact Fee — LP Drain Protection", function () {
       const f = await loadFixture(deployMediumPool);
 
       // Open a position — fees accrue at open time.
-      const notional = ethers.parseUnits("500", 6);
+      const notional = ethers.parseUnits("200", 6); // 20 % of the $1K pool — the cap
       await openLong(f.pool, f.trader1, notional);
 
       const accrued = await f.pool.lpFeesAccumulated();
@@ -758,7 +758,9 @@ describe("Impact Fee — LP Drain Protection", function () {
       [ethers.parseUnits("100", 6),   ethers.parseEther("100000"),   deployThinPool],
     ];
 
-    const positionRatios = [0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0];
+    // The per-position cap ramps to 20 % of backedAirUsd, so the sweep covers
+    // the openable band rather than ratios the pool now rejects outright.
+    const positionRatios = [0.01, 0.025, 0.05, 0.10, 0.15, 0.20];
 
     for (const [poolU, , fixtureFn] of poolSizes) {
       for (const ratio of positionRatios) {

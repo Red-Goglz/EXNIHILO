@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { loadFixture, time } from "@nomicfoundation/hardhat-network-helpers";
+import { loadFixture, time, mine } from "@nomicfoundation/hardhat-network-helpers";
 import type {
   EXNIHILOPool,
   EXNIHILOFactory,
@@ -11,6 +11,12 @@ import type {
 } from "../typechain-types";
 import type { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 
+// Mine past the expiry settlement guard window (EXNIHILOPool
+// SETTLE_GUARD_BLOCKS): these price moves are far above the 1 %-of-reserves
+// arming threshold, and the tests then jump days of wall time — hundreds of
+// thousands of Avalanche blocks — before a third party settles.
+const SETTLE_GUARD_BLOCKS = 5;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
@@ -19,8 +25,6 @@ const INITIAL_USDC  = ethers.parseUnits("10000", 6);
 const INITIAL_TOKEN = ethers.parseEther("1000000");
 const TRADER_USDC   = ethers.parseUnits("5000", 6);
 const SWAP_FEE_BPS  = 100n;
-const MAX_POS_USD   = ethers.parseUnits("9000", 6);
-const MAX_POS_BPS   = 9000n;
 const SEVEN_DAYS    = 7n * 24n * 60n * 60n;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -82,7 +86,6 @@ async function deployBlacklistPoolFixture() {
     await lpNft.getAddress(),
     await usdc.getAddress(),
     treasury.address,
-    SWAP_FEE_BPS,
     await poolDeployer.getAddress(),
   ) as unknown as EXNIHILOFactory;
 
@@ -99,11 +102,11 @@ async function deployBlacklistPoolFixture() {
   const tx = await factory.connect(creator).createMarket(
     await baseToken.getAddress(),
     INITIAL_USDC,
-    INITIAL_TOKEN,
-    MAX_POS_USD,
-    MAX_POS_BPS,
-    0n); // 7-day default
+    INITIAL_TOKEN); // 7-day default
   const receipt = await tx.wait();
+  // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+  // caps, so start past the ramp where size is not the constraint.
+  await time.increase(24 * 3600);
 
   const iface = factory.interface;
   const log = receipt!.logs
@@ -177,6 +180,7 @@ describe("Blacklist Resilience (pull payments)", function () {
 
       // Pump price
       await pool.connect(trader2).swap(ethers.parseUnits("2000", 6), 0n, false, trader2.address);
+      await mine(SETTLE_GUARD_BLOCKS);
 
       await time.increase(Number(SEVEN_DAYS) + 1);
 
@@ -199,6 +203,7 @@ describe("Blacklist Resilience (pull payments)", function () {
       // Dump price
       await baseToken.mint(trader2.address, ethers.parseEther("500000"));
       await pool.connect(trader2).swap(ethers.parseEther("500000"), 0n, true, trader2.address);
+      await mine(SETTLE_GUARD_BLOCKS);
 
       await time.increase(Number(SEVEN_DAYS) + 1);
 
@@ -227,6 +232,7 @@ describe("Blacklist Resilience (pull payments)", function () {
 
       // Pump price to make it profitable
       await pool.connect(trader2).swap(ethers.parseUnits("2000", 6), 0n, false, trader2.address);
+      await mine(SETTLE_GUARD_BLOCKS);
 
       // Blacklist the holder
       await usdc.blacklist(trader1.address);
@@ -246,6 +252,7 @@ describe("Blacklist Resilience (pull payments)", function () {
 
       const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
       await pool.connect(trader2).swap(ethers.parseUnits("2000", 6), 0n, false, trader2.address);
+      await mine(SETTLE_GUARD_BLOCKS);
       await usdc.blacklist(trader1.address);
       await time.increase(Number(SEVEN_DAYS) + 1);
 
@@ -267,6 +274,7 @@ describe("Blacklist Resilience (pull payments)", function () {
 
       const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
       await pool.connect(trader2).swap(ethers.parseUnits("2000", 6), 0n, false, trader2.address);
+      await mine(SETTLE_GUARD_BLOCKS);
       await usdc.blacklist(trader1.address);
 
       // Voluntary close pays the holder directly — blocked by the blacklist.
@@ -293,6 +301,7 @@ describe("Blacklist Resilience (pull payments)", function () {
 
       // Pump to make profitable
       await pool.connect(trader2).swap(ethers.parseUnits("2000", 6), 0n, false, trader2.address);
+      await mine(SETTLE_GUARD_BLOCKS);
 
       // Blacklist holder
       await usdc.blacklist(trader1.address);
@@ -319,6 +328,7 @@ describe("Blacklist Resilience (pull payments)", function () {
 
       const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
       await pool.connect(trader2).swap(ethers.parseUnits("2000", 6), 0n, false, trader2.address);
+      await mine(SETTLE_GUARD_BLOCKS);
       await usdc.blacklist(trader1.address);
       await time.increase(Number(SEVEN_DAYS) + 1);
 
@@ -387,6 +397,7 @@ describe("Blacklist Resilience (pull payments)", function () {
 
       const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
       await pool.connect(trader2).swap(ethers.parseUnits("2000", 6), 0n, false, trader2.address);
+      await mine(SETTLE_GUARD_BLOCKS);
       await usdc.blacklist(treasury.address);
 
       const protoBefore = await pool.protocolFeesAccumulated();
@@ -400,6 +411,7 @@ describe("Blacklist Resilience (pull payments)", function () {
 
       const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
       await pool.connect(trader2).swap(ethers.parseUnits("2000", 6), 0n, false, trader2.address);
+      await mine(SETTLE_GUARD_BLOCKS);
       await usdc.blacklist(treasury.address);
       await time.increase(Number(SEVEN_DAYS) + 1);
 
@@ -425,6 +437,7 @@ describe("Blacklist Resilience (pull payments)", function () {
       // Crash price
       await baseToken.mint(trader2.address, ethers.parseEther("5000000"));
       await pool.connect(trader2).swap(ethers.parseEther("5000000"), 0n, true, trader2.address);
+      await mine(SETTLE_GUARD_BLOCKS);
 
       await usdc.blacklist(trader1.address);
       await time.increase(Number(SEVEN_DAYS) + 1);

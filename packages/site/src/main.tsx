@@ -6,16 +6,35 @@ import { WagmiProvider } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { FormoAnalyticsProvider } from "@formo/analytics";
 import { config } from "../wagmi.config.ts";
-import Layout from "./components/layout/Layout.tsx";
 import LandingPage from "./pages/LandingPage.tsx";
-import FeedPage from "./pages/FeedPage.tsx";
-import MarketsPage from "./pages/MarketsPage.tsx";
-import PoolPage from "./pages/PoolPage.tsx";
-import PortfolioPage from "./pages/PortfolioPage.tsx";
-import CreatePage from "./pages/CreatePage.tsx";
-import AnalyticsPage from "./pages/AnalyticsPage.tsx";
 import ChainRoute, { RedirectToFeed } from "./components/routing/ChainRoute.tsx";
+import LazyRoute from "./components/routing/LazyRoute.tsx";
 import { appPath, DEFAULT_CHAIN } from "./lib/chains.ts";
+
+/**
+ * The app pages load on demand; the landing page does not.
+ *
+ * "/" is the only route a first-time visitor and every crawler sees, and it is
+ * the one route that is prerendered to static HTML (scripts/prerender.mjs), so
+ * it should not pay to parse six trading screens it will never mount. Static
+ * imports put all of them in the entry chunk.
+ *
+ * LandingPage stays eager on purpose. It is the SSR entry (src/entry-server.tsx
+ * imports it directly), and lazily loading the one route that is already
+ * rendered into the HTML would add a network round-trip to the fastest page.
+ *
+ * Note this does *not* move wagmi or viem off "/": TradeCalculator on the
+ * landing page does live contract reads, and WagmiProvider below is a static
+ * import either way. Splitting those out needs a nested provider for the app
+ * subtree — a bigger change than this one, and worth measuring first.
+ */
+const Layout = React.lazy(() => import("./components/layout/Layout.tsx"));
+const FeedPage = React.lazy(() => import("./pages/FeedPage.tsx"));
+const MarketsPage = React.lazy(() => import("./pages/MarketsPage.tsx"));
+const PoolPage = React.lazy(() => import("./pages/PoolPage.tsx"));
+const PortfolioPage = React.lazy(() => import("./pages/PortfolioPage.tsx"));
+const CreatePage = React.lazy(() => import("./pages/CreatePage.tsx"));
+const AnalyticsPage = React.lazy(() => import("./pages/AnalyticsPage.tsx"));
 
 const queryClient = new QueryClient();
 
@@ -59,6 +78,11 @@ function Analytics({ children }: { children: React.ReactNode }) {
 // All app routes are chain-scoped: /app/:chainSlug/... — the URL segment
 // (not the wallet) decides which chain's contracts the page reads.
 // Legacy chainless URLs (/app/markets/0xabc) redirect to the default chain.
+//
+// Two levels of boundary, not one: the outer covers the Layout chunk, so the
+// first hit on /app/* blanks only until the chrome arrives, and the inner ones
+// sit under Layout's <Outlet />, so navigating between pages swaps the content
+// while the nav and header stay put.
 const router = createBrowserRouter([
   { path: "/", element: <LandingPage /> },
   {
@@ -70,14 +94,60 @@ const router = createBrowserRouter([
         element: <ChainRoute />,
         children: [
           {
-            element: <Layout />,
+            element: (
+              <LazyRoute>
+                <Layout />
+              </LazyRoute>
+            ),
             children: [
-              { index: true, element: <FeedPage /> },
-              { path: "markets", element: <MarketsPage /> },
-              { path: "markets/:poolAddr", element: <PoolPage /> },
-              { path: "portfolio", element: <PortfolioPage /> },
-              { path: "create", element: <CreatePage /> },
-              { path: "analytics", element: <AnalyticsPage /> },
+              {
+                index: true,
+                element: (
+                  <LazyRoute>
+                    <FeedPage />
+                  </LazyRoute>
+                ),
+              },
+              {
+                path: "markets",
+                element: (
+                  <LazyRoute>
+                    <MarketsPage />
+                  </LazyRoute>
+                ),
+              },
+              {
+                path: "markets/:poolAddr",
+                element: (
+                  <LazyRoute>
+                    <PoolPage />
+                  </LazyRoute>
+                ),
+              },
+              {
+                path: "portfolio",
+                element: (
+                  <LazyRoute>
+                    <PortfolioPage />
+                  </LazyRoute>
+                ),
+              },
+              {
+                path: "create",
+                element: (
+                  <LazyRoute>
+                    <CreatePage />
+                  </LazyRoute>
+                ),
+              },
+              {
+                path: "analytics",
+                element: (
+                  <LazyRoute>
+                    <AnalyticsPage />
+                  </LazyRoute>
+                ),
+              },
               { path: "*", element: <RedirectToFeed /> },
             ],
           },

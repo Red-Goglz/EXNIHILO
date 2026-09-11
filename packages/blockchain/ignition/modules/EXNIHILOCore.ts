@@ -27,14 +27,16 @@ import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
 const EXNIHILOCoreModule = buildModule("EXNIHILOCore", (m) => {
   // ── Parameters (supplied via parameters JSON file) ───────────────────────
 
+  // The swap fee used to be a parameter here. It is now a constant in
+  // EXNIHILOPool (1 %) and is not passed to anything.
   const usdc             = m.getParameter<string>("usdc");
   const protocolTreasury = m.getParameter<string>("protocolTreasury");
-  const defaultSwapFeeBps = m.getParameter<bigint>("defaultSwapFeeBps", 100n);
 
   // ── Deploy shared NFT contracts ──────────────────────────────────────────
 
-  const positionNFT = m.contract("PositionNFT");
-  const lpNFT       = m.contract("LpNFT");
+  const positionNFT  = m.contract("PositionNFT");
+  const lpNFT        = m.contract("LpNFT");
+  const poolDeployer = m.contract("PoolDeployer");
 
   // ── Deploy factory ───────────────────────────────────────────────────────
 
@@ -43,10 +45,10 @@ const EXNIHILOCoreModule = buildModule("EXNIHILOCore", (m) => {
     lpNFT,              // lpNftContract_
     usdc,               // usdc_
     protocolTreasury,   // protocolTreasury_
-    defaultSwapFeeBps,  // defaultSwapFeeBps_
+    poolDeployer,       // poolDeployer_
   ]);
 
-  return { positionNFT, lpNFT, factory };
+  return { positionNFT, lpNFT, poolDeployer, factory };
 });
 
 export default EXNIHILOCoreModule;

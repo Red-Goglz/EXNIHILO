@@ -49,6 +49,15 @@ export interface PositionState {
   // Renewal
   renewalFee: bigint;
   renewalFeeMax: bigint;
+  /** Deadline a renewal would write right now — quoted from the pool. */
+  renewDeadline: bigint | undefined;
+  /**
+   * False when the pool would reject the renewal. Renewals extend from the
+   * existing deadline, and the pool caps the result at 60 days out, so a
+   * position already extended that far has to run down before it can be
+   * extended again. Undefined until the quote loads.
+   */
+  renewAllowed: boolean | undefined;
   needsRenewApproval: boolean;
   approveStatus: TxStatus;
   approveSuccess: boolean;
@@ -78,6 +87,8 @@ export interface PositionState {
   hasPnl: boolean;
   pnlPositive: boolean;
   pnlNetAbs: bigint;
+  returnPct: number | null;
+  tokenDecimals: number;
 }
 
 /**
@@ -106,7 +117,7 @@ export function usePositionState(
       { ...poolContract, functionName: "underlyingToken" },
       { ...poolContract, functionName: "swapFeeBps" },
       { ...poolContract, functionName: "closeDate" },
-      { ...poolContract, functionName: "positionDuration" },
+      { ...poolContract, functionName: "currentPositionDuration" },
     ],
   });
 
@@ -127,12 +138,16 @@ export function usePositionState(
 
   const { data: tokenMeta } = useReadContracts({
     contracts: underlyingToken
-      ? [{ address: underlyingToken, abi: erc20Abi, functionName: "symbol", chainId }]
+      ? [
+          { address: underlyingToken, abi: erc20Abi, functionName: "symbol" as const, chainId },
+          { address: underlyingToken, abi: erc20Abi, functionName: "decimals" as const, chainId },
+        ]
       : [],
     query: { enabled: !!underlyingToken },
   });
 
   const tokenSymbol = (tokenMeta?.[0]?.result as string | undefined) ?? "...";
+  const tokenDecimals = (tokenMeta?.[1]?.result as number | undefined) ?? 18;
 
   // Renewal fee quoted from the pool (single source of truth for fee math).
   // Falls back to the client-side base-fee formula until the quote loads.
@@ -141,6 +156,17 @@ export function usePositionState(
       address: position.pool,
       abi: exnihiloPoolAbi,
       functionName: "quoteRenewFee" as const,
+      args: [tokenId] as const,
+      chainId,
+    }, {
+      // Whether the pool would accept the renewal at all, and the deadline it
+      // would write. Renewals extend from the existing deadline rather than
+      // from now, so they stack, and the pool caps the result at RENEW_HORIZON
+      // (60 days out). Quoted rather than recomputed here — the pool is the
+      // single source of truth for the rule.
+      address: position.pool,
+      abi: exnihiloPoolAbi,
+      functionName: "quoteRenewDeadline" as const,
       args: [tokenId] as const,
       chainId,
     }],
@@ -153,6 +179,12 @@ export function usePositionState(
   // The fee is dynamic (mark value + open interest), so it can move between
   // quote and execution — pass a 2% buffered maxFee and approve the same.
   const renewalFeeMax = (renewalFee * 102n) / 100n;
+
+  const renewDeadlineQuote = renewQuote?.[1]?.result as
+    | readonly [bigint, boolean]
+    | undefined;
+  const renewDeadline = renewDeadlineQuote?.[0];
+  const renewAllowed  = renewDeadlineQuote?.[1];
 
   // ── Auto-renew state (stored on the PositionNFT, cleared on transfer) ────
   const { data: autoRenewData } = useReadContracts({
@@ -414,6 +446,30 @@ export function usePositionState(
     }
   }
 
+  // ── Net result ──────────────────────────────────────────────────────────
+  // Mirrors PositionNFT._netReturn exactly, so the app and the position
+  // certificate can never print different numbers for the same position.
+  //
+  // The fee IS the cost basis: openLong/openShort pull only `totalFee` from the
+  // trader (EXNIHILOPool.sol), the notional is minted synthetically. What they
+  // staked is `feesPaid` and what they get back is the payout, so the result is
+  // payout − premium — NOT the payout on its own, which omits the cost basis
+  // and shows a position that returned $3 on a $5 premium as a $3 gain.
+  //
+  // `payout` floors at zero: a position below break-even cannot be closed and
+  // pays nothing at expiry, and the deficit computed above is a notional gap,
+  // not a debt the trader owes. The loss therefore floors at the premium
+  // (−100%) rather than printing a figure many times what was ever at risk.
+  const premium = position.feesPaid;
+  const payout = pnlPositive ? pnlNetAbs : 0n;
+  const netUp = payout >= premium;
+  const netAbs = netUp ? payout - premium : premium - payout;
+
+  let returnPct: number | null = null;
+  if (hasPnl && premium > 0n) {
+    returnPct = (Number(netAbs) / Number(premium)) * 100 * (netUp ? 1 : -1);
+  }
+
   const openedDate = new Date(Number(position.openedAt) * 1000).toLocaleDateString();
   const deadlineDate = new Date(deadlineNum * 1000).toLocaleDateString();
 
@@ -424,6 +480,8 @@ export function usePositionState(
     poolPositionDuration,
     renewalFee,
     renewalFeeMax,
+    renewDeadline,
+    renewAllowed,
     needsRenewApproval,
     approveStatus,
     approveSuccess,
@@ -447,7 +505,11 @@ export function usePositionState(
     openedDate,
     deadlineDate,
     hasPnl,
-    pnlPositive,
-    pnlNetAbs,
+    // Both net of the premium — see the derivation above. Consumers render
+    // these as the trader's PnL, so they must not be the raw payout.
+    pnlPositive: netUp,
+    pnlNetAbs: netAbs,
+    returnPct,
+    tokenDecimals,
   };
 }

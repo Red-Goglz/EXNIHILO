@@ -23,6 +23,8 @@ import { usePositionAlerts } from "../hooks/usePositionAlerts.ts";
 import { usePriceHistory } from "../hooks/usePriceHistory.ts";
 import { useOpenFee } from "../hooks/useOpenFee.ts";
 import { useNeedsPerTradeApproval } from "../hooks/useRouterApprovalPrompt.ts";
+import { useSeo } from "../lib/seo.ts";
+import { protocolFeeFor } from "../lib/fees.ts";
 import PriceChart from "../components/pool/PriceChart.tsx";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -442,7 +444,7 @@ function FeedCard({
   useEffect(() => {
     if (!openSuccess) return;
     queryClient.invalidateQueries();
-    const protocolFeeRaw = (usdcRaw * 200n) / 10_000n;
+    const protocolFeeRaw = protocolFeeFor(usdcRaw);
     analytics?.track(direction === "long" ? "Position Opened Long" : "Position Opened Short", {
       pool: poolAddress,
       tokenSymbol: symbol,
@@ -947,7 +949,14 @@ function FeedCard({
 // ─── Feed Page ────────────────────────────────────────────────────────────────
 
 export default function FeedPage() {
-  const { chainId, addresses: addrs, path } = useAppChain();
+  const { chainId, addresses: addrs, path, slug } = useAppChain();
+
+  useSeo({
+    title: "Trade",
+    description:
+      "Swipe through live EXNIHILO markets and open a long or short on any ERC-20 token. Your loss is capped at the premium you pay — there is no liquidation engine.",
+    path: `/app/${slug}`,
+  });
 
   const [currentIndex, setCurrentIndex] = useState(0);
 

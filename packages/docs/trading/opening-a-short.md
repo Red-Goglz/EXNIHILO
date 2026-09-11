@@ -1,3 +1,7 @@
+---
+description: "A short is a put with bounded loss. Unlike shorting on margin, a squeeze can never cost you more than the premium you paid when you opened."
+---
+
 # Opening a Short
 
 A short position profits when the token price goes down relative to USDC.
@@ -15,7 +19,7 @@ short cannot. Your worst case was priced and paid at open.
 ## How it works
 
 1. You specify a USDC amount (your position size)
-2. The protocol takes a 5% open fee (3% to LP, 2% to protocol treasury)
+2. The protocol takes a 5% open fee (4% to LP, 1% to protocol treasury)
 3. Synthetic (unbacked) airToken is minted at the current usdc swap rate
 4. The synthetic airToken is swapped through SWAP-3 for airUsd tokens
 5. The airUsd tokens are locked in the PositionNFT contract

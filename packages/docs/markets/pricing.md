@@ -1,3 +1,7 @@
+---
+description: "EXNIHILO derives every price from its own constant-product curves, with no oracles. How spot price, the three curves and slippage are computed."
+---
+
 # How Pricing Works
 
 EXNIHILO derives all prices from its own AMM curves. There are no oracles.

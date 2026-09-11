@@ -1,3 +1,7 @@
+---
+description: "Deployed EXNIHILO contract addresses on Avalanche C-Chain mainnet (chain ID 43114), read back from chain after deployment."
+---
+
 # Contract Addresses
 
 ## Avalanche C-Chain Mainnet (Chain ID: 43114)
@@ -30,9 +34,10 @@ Unlike the testnet deployment, `usdc` here is Circle's native USDC on Avalanche
 :::
 
 ::: warning Immutable by construction
-The factory has no owner and no admin functions: `usdc`, `protocolTreasury` and
-`defaultSwapFeeBps` (100 bps) are constructor immutables and can never be
-changed. Correcting any of them requires deploying a whole new protocol.
+The factory has no owner and no admin functions: `usdc` and `protocolTreasury`
+are constructor immutables and can never be changed. Correcting either requires
+deploying a whole new protocol. The swap fee is not among them — it is a 1%
+constant in `EXNIHILOPool`, identical on every market.
 
 The one exception is the `deployer` role, an emergency admin that can call
 `closePool` on any pool. It is currently the deploying EOA above and can be

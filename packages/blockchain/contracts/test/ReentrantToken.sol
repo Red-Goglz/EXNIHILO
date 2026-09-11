@@ -14,6 +14,12 @@ contract ReentrantToken is ERC20 {
 
     /// @notice When true, transferFrom re-enters `target` with `data`.
     bool    public  reentrantEnabled;
+
+    /// @notice When true, plain `transfer` re-enters too. Opt-in and default
+    ///         off, so contracts that only ever push tokens out (e.g. a refund
+    ///         path) can have their reentrancy guard exercised as well.
+    bool    public  reentrantOnTransferEnabled;
+
     address public  target;
     bytes   public  callData;
 
@@ -44,8 +50,34 @@ contract ReentrantToken is ERC20 {
         reentrantEnabled = true;
     }
 
+    /**
+     * @notice Configure a re-entrancy attack that fires on plain `transfer`.
+     * @param target_   Address to call back into.
+     * @param callData_ ABI-encoded call to make during transfer.
+     */
+    function setReentrantTransferCall(address target_, bytes calldata callData_) external {
+        target                     = target_;
+        callData                   = callData_;
+        reentrantOnTransferEnabled = true;
+    }
+
     function disableReentrant() external {
         reentrantEnabled = false;
+        reentrantOnTransferEnabled = false;
+    }
+
+    /**
+     * @dev Mirror of the transferFrom override for the push direction.
+     */
+    function transfer(address to, uint256 amount) public override returns (bool) {
+        if (reentrantOnTransferEnabled && target != address(0)) {
+            reentrantOnTransferEnabled = false;
+            (bool ok, bytes memory ret) = target.call(callData);
+            if (!ok) {
+                assembly { revert(add(ret, 32), mload(ret)) }
+            }
+        }
+        return super.transfer(to, amount);
     }
 
     /**

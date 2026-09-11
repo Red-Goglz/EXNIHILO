@@ -434,8 +434,8 @@ ponder.on("EXNIHILOPool:PositionRenewed", async ({ event, context }) => {
   const existing = await context.db.find(position, { nftId });
 
   // A manual renew is paid by msg.sender (`_transferIn(..., msg.sender, ...)`),
-  // but an auto-renew is funded from the position's own equity — the keeper
-  // only collects the bounty. Charging the keeper would misattribute the fee.
+  // but an auto-renew is funded from the position's own equity — the caller is
+  // unpaid. Charging the caller would misattribute the fee.
   const payer = (autoRenewed ? existing?.holder : caller) ?? caller;
 
   const state = await readPoolState(context, pool);

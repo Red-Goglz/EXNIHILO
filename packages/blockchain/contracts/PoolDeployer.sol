@@ -11,6 +11,9 @@ import "./EXNIHILOPool.sol";
  *         code-size limit (the Pool's creation bytecode is embedded here instead).
  */
 contract PoolDeployer {
+    /// @dev The caller named a factory other than itself.
+    error FactoryMismatch();
+
     function deploy(
         address tokenAddress,
         address usdc,
@@ -19,12 +22,29 @@ contract PoolDeployer {
         address lpNftContract,
         uint256 lpNftId,
         address protocolTreasury,
-        uint256 maxPositionUsd,
-        uint256 maxPositionBps,
-        uint256 defaultSwapFeeBps,
-        uint256 positionDuration,
         address factory
     ) external returns (address) {
+        // The caller must name ITSELF as the pool's factory.
+        //
+        // This is deliberately not an `onlyFactory` allowlist. A fixed factory
+        // address cannot go in the constructor — the factory takes this
+        // contract's address in ITS constructor, so this one is deployed first
+        // — and the alternative, an initFactory hop, would put a mandatory
+        // extra step in every deployment path for no additional protection:
+        // a pool this contract creates for anyone else is already inert.
+        // PositionNFT gates minting on IEXNIHILOFactory(factory).isPool(pool)
+        // and LpNFT.mint on msg.sender == factory, so an unregistered pool can
+        // mint neither positions nor an LP NFT.
+        //
+        // What was genuinely missing is the tie between the caller and the
+        // factory the pool will name. Without it anyone could deploy a pool
+        // pointing at the REAL factory — one that calls factory.deployer() for
+        // its emergency-close authority (EXNIHILOPool.closePool) while the
+        // factory has never heard of it. Now a forged pool can only ever name
+        // its own creator, which is the address that already controls it
+        // (audit PU-001).
+        if (msg.sender != factory) revert FactoryMismatch();
+
         EXNIHILOPool pool = new EXNIHILOPool(
             tokenAddress,
             usdc,
@@ -33,10 +53,6 @@ contract PoolDeployer {
             lpNftContract,
             lpNftId,
             protocolTreasury,
-            maxPositionUsd,
-            maxPositionBps,
-            defaultSwapFeeBps,
-            positionDuration,
             factory
         );
         return address(pool);

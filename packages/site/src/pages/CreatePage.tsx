@@ -11,8 +11,17 @@ import { parseUnits, formatUsdc } from "../lib/format.ts";
 import { useTx } from "../hooks/useTx.ts";
 import TokenInput from "../components/shared/TokenInput.tsx";
 import TxButton from "../components/shared/TxButton.tsx";
+import { useSeo } from "../lib/seo.ts";
 
 export default function CreatePage() {
+  const { slug } = useAppChain();
+  useSeo({
+    title: "Create a market",
+    description:
+      "Deploy a permissionless EXNIHILO market for any ERC-20 token. No governance vote, no listing process, no gatekeeping — the factory is immutable.",
+    path: `/app/${slug}/create`,
+  });
+
   return <CreateContent />;
 }
 
@@ -26,11 +35,8 @@ function CreateContent() {
   const [tokenAddress, setTokenAddress] = useState("");
   const [seedUsdc, setSeedUsdc] = useState("");
   const [seedToken, setSeedToken] = useState("");
-  const [maxPositionUsd, setMaxPositionUsd] = useState("");
   // Default position cap: 1% of pool reserves — protects a fresh LP from
   // single whale positions. Creator can raise/clear it here or later on-chain.
-  const [maxPositionBps, setMaxPositionBps] = useState("100");
-  const [positionDurationDays, setPositionDurationDays] = useState("");
 
   const tokenAddr = (isAddress(tokenAddress) ? tokenAddress : undefined) as
     | `0x${string}`
@@ -51,9 +57,6 @@ function CreateContent() {
 
   const seedUsdcRaw = parseUnits(seedUsdc, 6);
   const seedTokenRaw = parseUnits(seedToken, tokenDecimals);
-  const maxPosUsdRaw = parseUnits(maxPositionUsd || "0", 6);
-  const maxPosBpsRaw = BigInt(maxPositionBps || "0");
-  const positionDurationRaw = BigInt(Math.floor(parseFloat(positionDurationDays || "0") * 86400));
 
   const factoryAddr = addrs.factory;
 
@@ -418,20 +421,16 @@ function CreateContent() {
                   textTransform: "uppercase",
                 }}
               >
-                Max Position — % of pool
+                Max Position — automatic
               </label>
-              <input
-                type="text"
-                value={maxPositionBps}
-                onChange={(e) => setMaxPositionBps(e.target.value)}
-                placeholder="100"
-                className="input-terminal"
-              />
               <p style={{ fontSize: "var(--fs-nano)", color: "var(--dim)", letterSpacing: "0.04em", lineHeight: 1.6 }}>
-                In basis points of the pool's USDC reserves: 100 = each position
-                capped at 1% of the pool. Allowed range 10–9900 (0.1%–99%);
-                0 disables the cap. Default 100 keeps any single trader from
-                dominating your liquidity.
+                Position size is capped at 1% of the pool's USDC reserves when the
+                market opens, widening automatically to 20% over the first 24
+                hours. A new market has no price history and whatever depth you
+                seeded, so the opening hours are held tight and loosen as the
+                market proves itself. This is fixed in the contract — there is
+                nothing to configure and no one, including you, can change it
+                later.
               </p>
             </div>
             <div className="flex flex-col gap-1">
@@ -443,43 +442,15 @@ function CreateContent() {
                   textTransform: "uppercase",
                 }}
               >
-                Max Position — absolute USDC
+                Position duration — automatic
               </label>
-              <input
-                type="text"
-                value={maxPositionUsd}
-                onChange={(e) => setMaxPositionUsd(e.target.value)}
-                placeholder="0"
-                className="input-terminal"
-              />
               <p style={{ fontSize: "var(--fs-nano)", color: "var(--dim)", letterSpacing: "0.04em", lineHeight: 1.6 }}>
-                Hard dollar ceiling per position, applied on top of the % cap
-                (the stricter one wins). 0 = no absolute cap.
-              </p>
-            </div>
-            <div className="flex flex-col gap-1">
-              <label
-                style={{
-                  fontSize: "var(--fs-label)",
-                  letterSpacing: "0.12em",
-                  color: "var(--muted)",
-                  textTransform: "uppercase",
-                }}
-              >
-                Position duration (days)
-              </label>
-              <input
-                type="text"
-                value={positionDurationDays}
-                onChange={(e) => setPositionDurationDays(e.target.value)}
-                placeholder="7"
-                className="input-terminal"
-              />
-              <p style={{ fontSize: "var(--fs-nano)", color: "var(--dim)", letterSpacing: "0.04em", lineHeight: 1.6 }}>
-                How long each position period lasts before it must be extended
-                (paying the fee again) or it settles. Shorter = more frequent
-                fee income for you as LP; longer = more convenient for traders.
-                Range 1 hour – 365 days; 0 = default 7 days. Permanent.
+                How long a position runs before it must be extended or settles.
+                It steps with the market's age: 1 hour on a brand-new market,
+                then 8 hours, 24 hours and 7 days, reaching 30 days once the
+                market is a week old. A market's first hours are its most volatile, so
+                early positions are short and reprice often. Nothing to choose,
+                and it cannot be changed later.
               </p>
             </div>
           </div>
@@ -561,7 +532,7 @@ function CreateContent() {
                 address: factoryAddr,
                 abi: exnihiloFactoryAbi,
                 functionName: "createMarket",
-                args: [tokenAddr!, seedUsdcRaw, seedTokenRaw, maxPosUsdRaw, maxPosBpsRaw, positionDurationRaw],
+                args: [tokenAddr!, seedUsdcRaw, seedTokenRaw],
                 chainId,
               })
             }

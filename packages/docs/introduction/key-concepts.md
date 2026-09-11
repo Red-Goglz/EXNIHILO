@@ -1,3 +1,7 @@
+---
+description: "The core ideas behind EXNIHILO: positions as options, premium instead of collateral, synthetic supply, the three-curve AMM, and position expiry."
+---
+
 # Key Concepts
 
 ## Positions Are Options
@@ -65,4 +69,4 @@ Every position (long or short) is an ERC-721 token. The NFT records the position
 
 ## Single-LP Model
 
-Each pool has exactly one liquidity provider, identified by an LP NFT. The LP earns swap fees passively, collects a 3% base fee on every position opened, and receives a dynamic impact fee that scales with position size relative to pool liquidity. Transferring the LP NFT transfers all LP rights.
+Each pool has exactly one liquidity provider, identified by an LP NFT. The LP earns swap fees passively, collects a 4% base fee on every position opened, and receives a dynamic impact fee that scales with position size relative to pool liquidity. Transferring the LP NFT transfers all LP rights.

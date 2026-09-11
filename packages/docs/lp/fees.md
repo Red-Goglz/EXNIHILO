@@ -1,3 +1,7 @@
+---
+description: "As the LP you are the option writer: you collect every premium and pay every winning close. How fee income accrues and what it genuinely costs you."
+---
+
 # LP Fee Earnings
 
 ## You are the counterparty
@@ -13,36 +17,36 @@ This is not a hidden risk — it is the business you are entering. Writing optio
 profitable when premiums collected exceed payouts made, and loss-making when a trader
 catches a large move in a pool that let them size into it.
 
-**Three things protect you, and you control two of them:**
+**Three things protect you, and none of them are yours to set:**
 
 | Protection | Who sets it |
 |---|---|
-| **Position caps** — bound the size of any single position | You. `maxPositionBps = 100` (1% of reserves) is the recommended default |
+| **Position cap** — bounds any single position to a share of reserves, 1% at launch rising to 20% over 24h | Protocol, automatic |
 | **Impact fee** — scales quadratically with position size and open interest, sized to compensate above the price-distortion cost of writing the position | Protocol, automatic |
 | **Pool isolation** — one pool's losses never touch another | Protocol, structural |
 
 The impact fee is what makes the math work. A position small relative to your reserves
 pays almost nothing extra — and can only win a correspondingly small amount. A position
 large relative to your reserves pays sharply more, precisely because it is the one that
-could hurt you. Caps exist so you decide where that line sits.
+could hurt you. The cap decides where that line sits, and the protocol sets it — not you.
 
-::: warning
-Do not disable position caps on a pool you cannot afford to see drawn down. Setting both
-caps to 0 maximizes volume and maximizes your exposure to a single trader catching a
-large move.
+::: warning Depth is your only lever
+The cap is a share of your reserves, so the size a single trader can take against you is
+decided by how much you seed. You cannot tighten it if you get nervous, and you cannot
+widen it to attract larger flow. Seed only what you can afford to see drawn down.
 :::
 
 ## Revenue sources
 
 LPs earn fees from three sources.
 
-## 1. Position open fees — 3% of notional
+## 1. Position open fees — 4% of notional
 
-Every time a trader opens a long or short, 3% of the USDC notional is added to `lpFeesAccumulated`. Renewals accrue 3% of the position's current mark value (notional + profit) plus the renewal impact slice. The LP can claim these at any time via `claimFees(to)`.
+Every time a trader opens a long or short, 4% of the USDC notional is added to `lpFeesAccumulated`. Renewals accrue 4% of the position's current mark value (notional + profit) plus the renewal impact slice. The LP can claim these at any time via `claimFees(to)`.
 
 ```
 baseFee = usdcAmount * 5 / 100
-lpShare = baseFee * 3 / 5    // 3% of notional
+lpShare = baseFee * 4 / 5    // 4% of notional
 ```
 
 ## 2. Impact fee — dynamic, scales with position size and OI
@@ -57,7 +61,7 @@ The impact fee is negligible for small positions in deep pools but becomes signi
 
 ## 3. Swap fees — passive yield
 
-The configurable swap fee (default 1%) stays in the pool on every swap. This implicitly increases the LP's backed reserves over time — it's not claimed separately, it's reflected in larger withdrawal amounts.
+The 1% swap fee stays in the pool on every swap. This implicitly increases the LP's backed reserves over time — it's not claimed separately, it's reflected in larger withdrawal amounts.
 
 ## Claiming fees
 

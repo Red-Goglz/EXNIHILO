@@ -1,0 +1,56 @@
+# EXNIHILO robots.txt
+#
+# Until now this file did not exist in the repo and Cloudflare was synthesising
+# one, which is why the live rules below appeared without ever being committed.
+# Taking ownership of it here so the policy is reviewable in git — but see the
+# note at the bottom, because Cloudflare can still override it.
+#
+# ── The policy, and why it is not a mistake ──────────────────────────────────
+# The disallowed agents below are *training* crawlers. The search-time retrieval
+# bots — OAI-SearchBot (ChatGPT), PerplexityBot, Claude-User — are deliberately
+# NOT blocked, so the docs stay quotable by AI search while the corpus stays out
+# of model training runs. Content-Signal states the same thing declaratively.
+#
+# Google-Extended governs Gemini and Vertex grounding only. It has no effect on
+# Google Search or on AI Overviews, both of which use Googlebot, so blocking it
+# costs no search visibility.
+
+User-agent: *
+Content-Signal: search=yes,ai-train=no,use=reference
+Allow: /
+
+User-agent: Amazonbot
+Disallow: /
+
+User-agent: Applebot-Extended
+Disallow: /
+
+User-agent: Bytespider
+Disallow: /
+
+User-agent: CCBot
+Disallow: /
+
+User-agent: ClaudeBot
+Disallow: /
+
+User-agent: CloudflareBrowserRenderingCrawler
+Disallow: /
+
+User-agent: Google-Extended
+Disallow: /
+
+User-agent: GPTBot
+Disallow: /
+
+User-agent: meta-externalagent
+Disallow: /
+
+Sitemap: https://exnihilo.markets/sitemap.xml
+
+# ── If this file does not take effect after deploying ────────────────────────
+# Cloudflare's managed AI-crawler feature can serve or amend robots.txt at the
+# edge, ahead of the origin. Verify with:
+#     curl -s https://exnihilo.markets/robots.txt | tail -3
+# and if the Sitemap line is missing, turn off the managed robots.txt setting in
+# the Cloudflare dashboard (Security → Bots) so the origin's copy is served.

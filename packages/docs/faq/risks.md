@@ -1,3 +1,7 @@
+---
+description: "What can go wrong: smart contract risk, the absence of a human audit, LP counterparty exposure, expiry loss and thin liquidity. Read before trading."
+---
+
 # Risk Disclosure
 
 ::: danger
@@ -38,7 +42,7 @@ Additionally:
 ## Position expiry
 
 Every position has a deadline. If the position is not renewed before the deadline, anyone can settle it:
-- **Profitable positions**: settled like a normal close — the profit minus 1% fee (and a 0.05 USDC keeper bounty) is credited to the holder's claimable balance
+- **Profitable positions**: settled like a normal close — the profit minus the 1% fee is credited to the holder's claimable balance in full
 - **Underwater positions**: collateral returns to LP reserves, no payout to the holder
 
 Renew before the deadline, or opt into **auto-renewal** — a keeper then renews the position at expiry, paying the fee from the position's own profit. Be aware of what that means: each auto-renewal raises your break-even (the fee is written against your position's equity), and a position that cannot cover the fee settles anyway. Auto-renewal keeps winners alive; it never spends your wallet and never props up losers.
