@@ -4,3 +4,6 @@ export { positionNFTAbi } from "./PositionNFT.js";
 export { lpNFTAbi } from "./LpNFT.js";
 export { erc20Abi } from "./Erc20.js";
 export { exnihiloRouterAbi } from "./EXNIHILORouter.js";
+export { preMarketAbi } from "./PreMarket.js";
+export { preMarketFactoryAbi } from "./PreMarketFactory.js";
+export { lockedLpVaultAbi } from "./LockedLpVault.js";
