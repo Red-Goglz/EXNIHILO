@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { loadFixture, time } from "@nomicfoundation/hardhat-network-helpers";
+import { loadFixture, time, mine } from "@nomicfoundation/hardhat-network-helpers";
 import {
   EXNIHILOPool,
   EXNIHILOFactory,
@@ -9,6 +9,12 @@ import {
   MockERC20,
 } from "../typechain-types";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
+
+// Mine past the expiry settlement guard window (EXNIHILOPool
+// SETTLE_GUARD_BLOCKS): these price moves are far above the 1 %-of-reserves
+// arming threshold, and the tests then jump days of wall time — hundreds of
+// thousands of Avalanche blocks — before a third party settles.
+const SETTLE_GUARD_BLOCKS = 5;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -20,12 +26,10 @@ const TRADER_USDC    = ethers.parseUnits("1000", 6);     // 1,000 USDC per trade
 const TRADER_TOKEN   = ethers.parseEther("10000");       // 10,000 token per trader
 const SWAP_FEE_BPS   = 100n;                             // 1 %
 const BPS_DENOM      = 10_000n;
-const LP_FEE_BPS     = 300n;                             // 3 %
-const PROTO_FEE_BPS  = 200n;                             // 2 %
+const LP_FEE_BPS     = 400n;                             // 4 %
+const PROTO_FEE_BPS  = 100n;                             // 1 %
 
 // Hard caps large enough not to interfere with most tests
-const MAX_POS_USD = ethers.parseUnits("9000", 6); // 9,000 USDC hard cap
-const MAX_POS_BPS = 9000n;                        // 90 % of backedAirUsd
 
 const SEVEN_DAYS  = 7n * 24n * 60n * 60n;         // 604800
 const ONE_HOUR    = 3600n;
@@ -77,7 +81,6 @@ async function deploySystem(
       await lpNft.getAddress(),
       usdcAddr,
       treasuryAddr,
-      SWAP_FEE_BPS,
       await poolDeployer.getAddress()
     )) as unknown as EXNIHILOFactory;
 
@@ -96,7 +99,7 @@ async function deploySystem(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Shared fixture  (default 7-day duration via positionDuration = 0)
+// Shared fixture — warps 24 h, so the market is aged into the 7-day duration step
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function deployPoolFixture() {
@@ -123,14 +126,13 @@ async function deployPoolFixture() {
   await baseToken.connect(creator).approve(factoryAddr, ethers.MaxUint256);
   await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
 
-  // positionDuration = 0 → defaults to 7 days
   const tx = await factory.connect(creator).createMarket(
     await baseToken.getAddress(),
     INITIAL_USDC,
-    INITIAL_TOKEN,
-    MAX_POS_USD,
-    MAX_POS_BPS,
-    0n);
+    INITIAL_TOKEN);
+  // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+  // caps, so start past the ramp where size is not the constraint.
+  await time.increase(24 * 3600);
   const receipt = await tx.wait();
 
   const iface = factory.interface;
@@ -161,7 +163,7 @@ async function deployPoolFixture() {
 // Fixture with custom 1-hour duration
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function deployPoolFixture1h() {
+async function deployYoungPoolFixture() {
   const [deployer, treasury, creator, trader1, trader2, trader3, other] =
     await ethers.getSigners();
 
@@ -185,14 +187,13 @@ async function deployPoolFixture1h() {
   await baseToken.connect(creator).approve(factoryAddr, ethers.MaxUint256);
   await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
 
-  // positionDuration = 1 hour
+  // A *young* market: under an hour old, so positions get the 1-hour lifetime.
+  // Deliberately does not warp — both the duration step and the size cap are
+  // functions of market age, and this fixture exists to exercise the youngest one.
   const tx = await factory.connect(creator).createMarket(
     await baseToken.getAddress(),
     INITIAL_USDC,
-    INITIAL_TOKEN,
-    MAX_POS_USD,
-    MAX_POS_BPS,
-    ONE_HOUR);
+    INITIAL_TOKEN);
   const receipt = await tx.wait();
 
   const iface = factory.interface;
@@ -261,14 +262,23 @@ describe("Expiry: cliff-based position expiry", function () {
 
   describe("1. Position Duration Configuration", function () {
 
-    it("positionDuration defaults to 7 days when 0 is passed to createMarket", async function () {
-      const { pool } = await loadFixture(deployPoolFixture);
-      expect(await pool.positionDuration()).to.equal(SEVEN_DAYS);
+    it("a market under an hour old issues 1-hour positions", async function () {
+      const { pool } = await loadFixture(deployYoungPoolFixture);
+      expect(await pool.currentPositionDuration()).to.equal(ONE_HOUR);
     });
 
-    it("custom duration (1 hour) works", async function () {
-      const { pool } = await loadFixture(deployPoolFixture1h);
-      expect(await pool.positionDuration()).to.equal(ONE_HOUR);
+    it("a market a day old issues 7-day positions", async function () {
+      const { pool } = await loadFixture(deployPoolFixture);
+      expect(await pool.currentPositionDuration()).to.equal(SEVEN_DAYS);
+    });
+
+    it("takes no duration parameter and has no setter", async function () {
+      const { pool } = await loadFixture(deployPoolFixture);
+      const fns = pool.interface.fragments
+        .filter((f) => f.type === "function")
+        .map((f) => (f as { name: string }).name);
+      expect(fns).to.not.include("positionDuration");
+      expect(fns).to.include("currentPositionDuration");
     });
 
   });
@@ -279,7 +289,7 @@ describe("Expiry: cliff-based position expiry", function () {
 
   describe("2. Deadline Tracking", function () {
 
-    it("Position NFT stores correct deadline (openedAt + positionDuration)", async function () {
+    it("Position NFT stores correct deadline (openedAt + current duration)", async function () {
       const { pool, positionNFT, trader1 } = await loadFixture(deployPoolFixture);
       const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
       const pos = await positionNFT.getPosition(nftId);
@@ -296,9 +306,11 @@ describe("Expiry: cliff-based position expiry", function () {
       expect(pos.deadline).to.be.lte(latest + SEVEN_DAYS + 10n);
     });
 
-    it("different pools can have different deadlines (1h vs 7d)", async function () {
+    it("market age decides the deadline (young 1h vs aged 7d)", async function () {
+      // Only one loadFixture per test: a second call reverts the chain to that
+      // fixture's snapshot and takes the first fixture's contracts with it.
       const fix7d = await loadFixture(deployPoolFixture);
-      const fix1h = await loadFixture(deployPoolFixture1h);
+      const fix1h = await deployYoungPoolFixture();
 
       const nft7d = await openLong(fix7d.pool, fix7d.trader1, ethers.parseUnits("100", 6));
       const nft1h = await openLong(fix1h.pool, fix1h.trader1, ethers.parseUnits("100", 6));
@@ -363,7 +375,7 @@ describe("Expiry: cliff-based position expiry", function () {
       ).to.be.revertedWithCustomError(pool, "RenewalFeeExceedsMax");
     });
 
-    it("extends deadline by positionDuration from current deadline", async function () {
+    it("extends deadline by the current duration from the current deadline", async function () {
       const { pool, positionNFT, usdc, trader1 } = await loadFixture(deployPoolFixture);
       const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
 
@@ -425,10 +437,12 @@ describe("Expiry: cliff-based position expiry", function () {
       const posAfter = await positionNFT.getPosition(nftId);
       const latest   = BigInt(await time.latest());
 
-      // New deadline should be approximately now + 7 days
-      // (since the position was expired, base = block.timestamp)
-      expect(posAfter.deadline).to.be.gte(latest + SEVEN_DAYS - 10n);
-      expect(posAfter.deadline).to.be.lte(latest + SEVEN_DAYS + 10n);
+      // Extends from now, since the position was expired. The step comes from
+      // market age — by this point the market is past a week old, so it is the
+      // 30-day step rather than the 7-day one the position opened under.
+      const dur = await pool.currentPositionDuration();
+      expect(posAfter.deadline).to.be.gte(latest + dur - 10n);
+      expect(posAfter.deadline).to.be.lte(latest + dur + 10n);
     });
 
     it("renewPosition succeeds and charges the correct fee", async function () {
@@ -453,6 +467,164 @@ describe("Expiry: cliff-based position expiry", function () {
   });
 
   // ═════════════════════════════════════════════════════════════════════════════
+  // 3b. renewPosition — the RENEW_HORIZON bound (audit finding H-3)
+  //
+  // renewPosition extends from the EXISTING deadline, so renewals stack. The
+  // only bound used to be closeDate, which is zero until the LP closes the
+  // pool — and removeLiquidity reverts while openPositionCount != 0. A dust
+  // position renewed at the MIN_POSITION_FEE floor could therefore walk its
+  // deadline out for decades and freeze 100 % of LP principal, at a cost
+  // independent of pool size. Measured in the audit: $60.85 for 100 years.
+  //
+  // RENEW_HORIZON = 2 x DURATION_MAX = 60 days caps how far past NOW a renewal
+  // may land. Short-dated positions still renew many times over; one already on
+  // the 30-day ceiling gets exactly one renewal and must then be allowed to run
+  // down. The tests below pin both ends of that, and the boundary itself.
+  // ═════════════════════════════════════════════════════════════════════════════
+
+  describe("3b. renewPosition — RENEW_HORIZON (H-3)", function () {
+    const THIRTY_DAYS   = 30n * 24n * 60n * 60n;
+    const RENEW_HORIZON = 2n * THIRTY_DAYS;
+
+    /** Age the market past DURATION_AGE_4, so an open gets the 30-day ceiling. */
+    async function agedToCeiling() {
+      const fix = await loadFixture(deployPoolFixture);
+      await time.increase(8 * 24 * 3600);
+      expect(await fix.pool.currentPositionDuration()).to.equal(THIRTY_DAYS);
+      return fix;
+    }
+
+    it("a 7-day position renews many times over, until the horizon stops it", async function () {
+      const { pool, positionNFT, trader1 } = await loadFixture(deployPoolFixture);
+      expect(await pool.currentPositionDuration()).to.equal(SEVEN_DAYS);
+
+      const nftId  = await openLong(pool, trader1, ethers.parseUnits("100", 6));
+      const opened = (await positionNFT.getPosition(nftId)).deadline;
+
+      // Back-to-back, so the market never ages out of the 7-day step and each
+      // renewal adds exactly 7 days. 8 x 7 = 56 fits under the 60-day horizon.
+      for (let i = 1n; i <= 7n; i++) {
+        await pool.connect(trader1).renewPosition(nftId, ethers.MaxUint256);
+        expect((await positionNFT.getPosition(nftId)).deadline)
+          .to.equal(opened + i * SEVEN_DAYS);
+      }
+
+      // The eighth would be 63 days out with 60 available.
+      await expect(pool.connect(trader1).renewPosition(nftId, ethers.MaxUint256))
+        .to.be.revertedWithCustomError(pool, "RenewalExceedsHorizon");
+    });
+
+    it("a position on the 30-day ceiling renews exactly once", async function () {
+      const { pool, positionNFT, trader1 } = await agedToCeiling();
+
+      const nftId  = await openLong(pool, trader1, ethers.parseUnits("100", 6));
+      const opened = (await positionNFT.getPosition(nftId)).deadline;
+
+      // The one renewal a holder always has in hand: 30 + 30 lands on the
+      // horizon, so nobody has to race their own deadline to use it.
+      await pool.connect(trader1).renewPosition(nftId, ethers.MaxUint256);
+      expect((await positionNFT.getPosition(nftId)).deadline).to.equal(opened + THIRTY_DAYS);
+
+      await expect(pool.connect(trader1).renewPosition(nftId, ethers.MaxUint256))
+        .to.be.revertedWithCustomError(pool, "RenewalExceedsHorizon");
+    });
+
+    it("the bound is exact: rejected a second early, accepted on the horizon", async function () {
+      const { pool, positionNFT, trader1 } = await agedToCeiling();
+
+      const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
+      await pool.connect(trader1).renewPosition(nftId, ethers.MaxUint256);
+
+      // Renewing writes deadline + 30d, which must be <= now + 60d. The first
+      // moment that holds is exactly deadline - 30d — i.e. the position has to
+      // run down to a 30-day remaining life before it can be extended again.
+      const deadline = (await positionNFT.getPosition(nftId)).deadline;
+      const earliest = deadline - THIRTY_DAYS;
+
+      await time.setNextBlockTimestamp(Number(earliest) - 1);
+      await expect(pool.connect(trader1).renewPosition(nftId, ethers.MaxUint256))
+        .to.be.revertedWithCustomError(pool, "RenewalExceedsHorizon");
+
+      await time.setNextBlockTimestamp(Number(earliest));
+      await pool.connect(trader1).renewPosition(nftId, ethers.MaxUint256);
+
+      const renewed = (await positionNFT.getPosition(nftId)).deadline;
+      expect(renewed).to.equal(deadline + THIRTY_DAYS);
+      // Exactly the horizon, not a second more.
+      expect(renewed).to.equal(BigInt(await time.latest()) + RENEW_HORIZON);
+    });
+
+    it("quoteRenewDeadline reports what renewPosition writes, and when it would revert", async function () {
+      const { pool, positionNFT, trader1 } = await agedToCeiling();
+
+      const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
+
+      const [quoted, allowed] = await pool.quoteRenewDeadline(nftId);
+      expect(allowed).to.equal(true);
+      await pool.connect(trader1).renewPosition(nftId, ethers.MaxUint256);
+      expect((await positionNFT.getPosition(nftId)).deadline).to.equal(quoted);
+
+      // Past the horizon the quote still reports the deadline that WOULD be
+      // written, so a frontend can show how far the position must run down
+      // rather than only that the button is disabled.
+      const [nextQuoted, nextAllowed] = await pool.quoteRenewDeadline(nftId);
+      expect(nextAllowed).to.equal(false);
+      expect(nextQuoted).to.equal(quoted + THIRTY_DAYS);
+      await expect(pool.connect(trader1).renewPosition(nftId, ethers.MaxUint256))
+        .to.be.revertedWithCustomError(pool, "RenewalExceedsHorizon");
+    });
+
+    it("H-3: no sequence of renewals puts a deadline further out than the horizon", async function () {
+      const { pool, positionNFT, trader1 } = await loadFixture(deployPoolFixture);
+
+      // The shape of the original finding: the cheapest position the pool will
+      // issue, renewed at the MIN_POSITION_FEE floor for as long as it is let.
+      const nftId = await openLong(pool, trader1, ethers.parseUnits("1", 6));
+
+      let renewals = 0;
+      while (renewals <= 100) {
+        const [, allowed] = await pool.quoteRenewDeadline(nftId);
+        if (!allowed) break;
+        await pool.connect(trader1).renewPosition(nftId, ethers.MaxUint256);
+        renewals++;
+      }
+
+      // Bounded at all, and bounded by the horizon rather than by anything
+      // incidental like the holder running out of USDC.
+      expect(renewals, "renewals are bounded").to.be.lte(100);
+      expect(renewals, "renewal still works").to.be.gt(0);
+      await expect(pool.connect(trader1).renewPosition(nftId, ethers.MaxUint256))
+        .to.be.revertedWithCustomError(pool, "RenewalExceedsHorizon");
+
+      // The property the LP actually needs: however the holder spends, the
+      // pool's last outstanding deadline is at most RENEW_HORIZON away.
+      const deadline = (await positionNFT.getPosition(nftId)).deadline;
+      expect(deadline - BigInt(await time.latest())).to.be.lte(RENEW_HORIZON);
+    });
+
+    it("closeDate still binds renewals made after the pool starts closing", async function () {
+      const { pool, positionNFT, lpNft, creator, trader1 } = await loadFixture(deployPoolFixture);
+
+      const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
+
+      // closePool sets closeDate = now + currentPositionDuration() = now + 7d,
+      // while the position already expires at open + 7d. Extending it by
+      // another 7 lands past closeDate and must be refused — inside the
+      // horizon, so this is the closeDate branch and not the new one.
+      expect(await lpNft.ownerOf(await pool.lpNftId())).to.equal(creator.address);
+      await pool.connect(creator).closePool();
+
+      const [quoted, allowed] = await pool.quoteRenewDeadline(nftId);
+      expect(quoted).to.be.gt(await pool.closeDate());
+      expect(quoted - BigInt(await time.latest())).to.be.lt(RENEW_HORIZON);
+      expect(allowed).to.equal(false);
+
+      await expect(pool.connect(trader1).renewPosition(nftId, ethers.MaxUint256))
+        .to.be.revertedWithCustomError(pool, "RenewalExceedsCloseDate");
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════════
   // 4. closePositionAfterDeadline — profitable
   // ═════════════════════════════════════════════════════════════════════════════
 
@@ -467,6 +639,7 @@ describe("Expiry: cliff-based position expiry", function () {
       const pumpUsdc = ethers.parseUnits("2000", 6);
       await base.usdc.mint(base.trader2.address, pumpUsdc);
       await base.pool.connect(base.trader2).swap(pumpUsdc, 0n, false, base.trader2.address);
+      await mine(SETTLE_GUARD_BLOCKS);
 
       // Advance past expiry
       await time.increase(Number(SEVEN_DAYS) + 1);
@@ -483,6 +656,7 @@ describe("Expiry: cliff-based position expiry", function () {
       const dumpToken = ethers.parseEther("500000");
       await base.baseToken.mint(base.trader2.address, dumpToken);
       await base.pool.connect(base.trader2).swap(dumpToken, 0n, true, base.trader2.address);
+      await mine(SETTLE_GUARD_BLOCKS);
 
       // Advance past expiry
       await time.increase(Number(SEVEN_DAYS) + 1);
@@ -579,6 +753,7 @@ describe("Expiry: cliff-based position expiry", function () {
       const dump = ethers.parseEther("5000000");
       await base.baseToken.mint(base.trader2.address, dump);
       await base.pool.connect(base.trader2).swap(dump, 0n, true, base.trader2.address);
+      await mine(SETTLE_GUARD_BLOCKS);
 
       await time.increase(Number(SEVEN_DAYS) + 1);
       return { ...base, nftId };
@@ -593,6 +768,7 @@ describe("Expiry: cliff-based position expiry", function () {
       const pump = ethers.parseUnits("5000", 6);
       await base.usdc.mint(base.trader2.address, pump);
       await base.pool.connect(base.trader2).swap(pump, 0n, false, base.trader2.address);
+      await mine(SETTLE_GUARD_BLOCKS);
 
       await time.increase(Number(SEVEN_DAYS) + 1);
       return { ...base, nftId };
@@ -659,6 +835,7 @@ describe("Expiry: cliff-based position expiry", function () {
       const pump = ethers.parseUnits("2000", 6);
       await usdc.mint(trader2.address, pump);
       await pool.connect(trader2).swap(pump, 0n, false, trader2.address);
+      await mine(SETTLE_GUARD_BLOCKS);
 
       const holderBefore = await usdc.balanceOf(trader1.address);
 
@@ -676,6 +853,7 @@ describe("Expiry: cliff-based position expiry", function () {
       const dump = ethers.parseEther("500000");
       await baseToken.mint(trader2.address, dump);
       await pool.connect(trader2).swap(dump, 0n, true, trader2.address);
+      await mine(SETTLE_GUARD_BLOCKS);
 
       const holderBefore = await usdc.balanceOf(trader1.address);
 
@@ -684,5 +862,79 @@ describe("Expiry: cliff-based position expiry", function () {
 
       expect(await usdc.balanceOf(trader1.address)).to.be.gt(holderBefore);
     });
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Audit NM-R2-005 — the guard must not outlive the pool.
+//
+// Arming is relative to depth, so in a thin market an ordinary trade clears
+// SETTLE_GUARD_BPS and the guard is armed essentially always. Combined with
+// removeLiquidity's openPositionCount == 0 requirement, one abandoned expired
+// position would then lock the LP's principal permanently: the holder can
+// always close, but nobody can make them, and no third party was allowed to
+// clean up on their behalf.
+//
+// _priceCloseClamped still prices these settlements against the worst open in
+// the same window, so the exemption gives up the blunt lockout and keeps the
+// protection that actually sets the price.
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe("Expiry — the settlement guard yields to a closing pool", function () {
+  /** An expired long, with the guard freshly armed and NOT mined past. */
+  async function expiredLongUnderArmedGuard() {
+    const base = await deployPoolFixture();
+    const nftId = await openLong(base.pool, base.trader1, ethers.parseUnits("100", 6));
+
+    await time.increase(Number(SEVEN_DAYS) + 1);
+
+    // Arm it: 2,000 USDC into a 10,000 USDC pool is far past the 1 % threshold.
+    const pump = ethers.parseUnits("2000", 6);
+    await base.usdc.mint(base.trader2.address, pump);
+    await base.pool.connect(base.trader2).swap(pump, 0n, false, base.trader2.address);
+
+    expect(await base.pool.lastLargeSwapBlock()).to.be.gt(0n);
+    return { ...base, nftId };
+  }
+
+  it("blocks a third party while the pool is live", async function () {
+    const { pool, other, nftId } = await loadFixture(expiredLongUnderArmedGuard);
+
+    expect(await pool.settlementGuardedUntilBlock()).to.be.gt(0n);
+    await expect(pool.connect(other).closePositionAfterDeadline(nftId, 0n))
+      .to.be.revertedWithCustomError(pool, "SettlementGuardActive");
+  });
+
+  it("lets a third party clean up once closePool has been called", async function () {
+    const { pool, creator, other, nftId } = await loadFixture(expiredLongUnderArmedGuard);
+
+    await pool.connect(creator).closePool();
+
+    // The guard is still armed — this is the exemption, not the window expiring.
+    expect(await pool.lastLargeSwapBlock()).to.be.gt(0n);
+    expect(await pool.settlementGuardedUntilBlock()).to.equal(0n);
+
+    await expect(pool.connect(other).closePositionAfterDeadline(nftId, 0n)).to.not.be.reverted;
+    expect(await pool.openPositionCount()).to.equal(0n);
+  });
+
+  it("frees the LP's principal, which is the point", async function () {
+    const { pool, creator, other, nftId } = await loadFixture(expiredLongUnderArmedGuard);
+
+    await pool.connect(creator).closePool();
+    await pool.connect(other).closePositionAfterDeadline(nftId, 0n);
+
+    // closeDate has to pass before the LP can withdraw; the guard must not be
+    // what stands in the way once it has.
+    await time.increase(Number(SEVEN_DAYS) + 1);
+    await expect(pool.connect(creator).removeLiquidity()).to.not.be.reverted;
+  });
+
+  it("the holder was never blocked either way", async function () {
+    const { pool, trader1, nftId } = await loadFixture(expiredLongUnderArmedGuard);
+
+    // Unchanged behaviour, asserted next to the exemption so the two rules stay
+    // legible together: an armed guard never traps the holder.
+    await expect(pool.connect(trader1).closePositionAfterDeadline(nftId, 0n)).to.not.be.reverted;
   });
 });

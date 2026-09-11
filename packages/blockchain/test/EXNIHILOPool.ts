@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
+import { loadFixture, time, mine } from "@nomicfoundation/hardhat-network-helpers";
+import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 import {
   EXNIHILOPool,
   EXNIHILOFactory,
@@ -24,7 +25,7 @@ import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 /**
  * Mirrors _cpAmountOut in EXNIHILOPool (spot-price fee model):
  *   rawOut = amountIn * reserveOut / (reserveIn + amountIn)
- *   fee    = amountIn * reserveOut * feeBps / (reserveIn * BPS_DENOM)
+ *   fee    = ceil(amountIn * reserveOut * feeBps / (reserveIn * BPS_DENOM))
  *   netOut = rawOut - fee  (0 if rawOut <= fee)
  */
 function cpOut(
@@ -35,7 +36,10 @@ function cpOut(
 ): bigint {
   if (reserveIn === 0n || reserveOut === 0n) return 0n;
   const rawOut = (amountIn * reserveOut) / (reserveIn + amountIn);
-  const fee    = (amountIn * reserveOut * feeBps) / (reserveIn * BPS_DENOM);
+  const feeNum = amountIn * reserveOut * feeBps;
+  const feeDen = reserveIn * BPS_DENOM;
+  // Ceil, matching the contract: a positive fee never truncates to zero.
+  const fee    = feeNum === 0n ? 0n : (feeNum + feeDen - 1n) / feeDen;
   return rawOut > fee ? rawOut - fee : 0n;
 }
 
@@ -49,14 +53,13 @@ const INITIAL_USDC  = ethers.parseUnits("10000", 6); // 10,000 USDC (6 dec)
 const INITIAL_TOKEN  = ethers.parseEther("1000000");  // 1,000,000 token (18 dec)
 const TRADER_USDC   = ethers.parseUnits("1000", 6);  // 1,000 USDC per trader
 const TRADER_TOKEN   = ethers.parseEther("10000");    // 10,000 token per trader
+const SETTLE_GUARD_BLOCKS = 5;
 const SWAP_FEE_BPS  = 100n;                          // 1 %
 const BPS_DENOM     = 10_000n;
-const LP_FEE_BPS    = 300n;                          // 3 %
-const PROTO_FEE_BPS = 200n;                          // 2 %
+const LP_FEE_BPS    = 400n;                          // 4 %
+const PROTO_FEE_BPS = 100n;                          // 1 %
 
 // Hard caps large enough not to interfere with most tests
-const MAX_POS_USD = ethers.parseUnits("9000", 6); // 9,000 USDC hard cap
-const MAX_POS_BPS = 9000n;                        // 90 % of backedAirUsd
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Core deployment helper
@@ -123,7 +126,6 @@ async function deploySystem(
       await lpNft.getAddress(),
       usdcAddr,
       treasuryAddr,
-      SWAP_FEE_BPS,
       await poolDeployer.getAddress()
     )) as unknown as EXNIHILOFactory;
 
@@ -183,10 +185,10 @@ async function deployPoolFixture() {
   const tx = await factory.connect(creator).createMarket(
     await baseToken.getAddress(),
     INITIAL_USDC,
-    INITIAL_TOKEN,
-    MAX_POS_USD,
-    MAX_POS_BPS,
-    0n);
+    INITIAL_TOKEN);
+  // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+  // caps, so start past the ramp where size is not the constraint.
+  await time.increase(24 * 3600);
   const receipt = await tx.wait();
 
   const iface = factory.interface;
@@ -320,6 +322,105 @@ describe("EXNIHILOPool", function () {
       await expect(pool.connect(trader1).swap(swapIn, 0n, true, trader1.address))
         .to.not.be.reverted;
     });
+
+    // ── Swap event ──────────────────────────────────────────────────────────
+    //
+    // The only on-chain record of spot flow. Without it a swap is visible solely
+    // as two raw ERC-20 Transfers, which is why neither the indexer nor any
+    // external aggregator could previously see spot volume.
+
+    describe("Swap event", function () {
+
+      it("emits on token→USDC with post-swap reserves", async function () {
+        const { pool, trader1 } = await loadFixture(deployPoolFixture);
+
+        const swapIn      = ethers.parseEther("10000");
+        const backedToken = await pool.backedAirToken();
+        const backedUsd   = await pool.backedAirUsd();
+        const netOut      = cpOut(swapIn, backedToken, backedUsd);
+
+        await expect(pool.connect(trader1).swap(swapIn, 0n, true, trader1.address))
+          .to.emit(pool, "Swap")
+          .withArgs(
+            trader1.address,
+            trader1.address,
+            true,
+            swapIn,
+            netOut,
+            backedToken + swapIn,
+            backedUsd - netOut
+          );
+      });
+
+      it("emits on USDC→token with post-swap reserves", async function () {
+        const { pool, trader1 } = await loadFixture(deployPoolFixture);
+
+        const swapIn      = ethers.parseUnits("100", 6);
+        const backedToken = await pool.backedAirToken();
+        const backedUsd   = await pool.backedAirUsd();
+        const netOut      = cpOut(swapIn, backedUsd, backedToken);
+
+        await expect(pool.connect(trader1).swap(swapIn, 0n, false, trader1.address))
+          .to.emit(pool, "Swap")
+          .withArgs(
+            trader1.address,
+            trader1.address,
+            false,
+            swapIn,
+            netOut,
+            backedToken - netOut,
+            backedUsd + swapIn
+          );
+      });
+
+      it("reports reserves that match the pool's own state afterwards", async function () {
+        const { pool, trader1 } = await loadFixture(deployPoolFixture);
+
+        const tx = await pool
+          .connect(trader1)
+          .swap(ethers.parseEther("5000"), 0n, true, trader1.address);
+        const receipt = await tx.wait();
+
+        const parsed = receipt!.logs
+          .map((l) => { try { return pool.interface.parseLog(l); } catch { return null; } })
+          .find((l) => l?.name === "Swap")!;
+
+        expect(parsed.args.backedAirToken).to.equal(await pool.backedAirToken());
+        expect(parsed.args.backedAirUsd).to.equal(await pool.backedAirUsd());
+      });
+
+      it("distinguishes sender from recipient", async function () {
+        const { pool, trader1, trader2 } = await loadFixture(deployPoolFixture);
+        const swapIn = ethers.parseEther("1000");
+
+        await expect(pool.connect(trader1).swap(swapIn, 0n, true, trader2.address))
+          .to.emit(pool, "Swap")
+          .withArgs(trader1.address, trader2.address, true, swapIn, anyValue, anyValue, anyValue);
+      });
+
+      it("emits nothing when the swap reverts", async function () {
+        const { pool, trader1 } = await loadFixture(deployPoolFixture);
+        await expect(
+          pool
+            .connect(trader1)
+            .swap(ethers.parseEther("1000"), ethers.MaxUint256, true, trader1.address)
+        ).to.be.revertedWithCustomError(pool, "InsufficientOutput");
+      });
+
+      it("is not emitted by leveraged opens, which move supply not backed reserves", async function () {
+        // Documents the boundary the event's natspec claims: a consumer tracking
+        // only Swap sees spot flow, never position flow.
+        const { pool, usdc, trader1 } = await loadFixture(deployPoolFixture);
+
+        const notional = ethers.parseUnits("100", 6);
+        const fee = await pool.quoteOpenFee(notional, true);
+        await usdc.mint(trader1.address, notional + fee);
+        await usdc.connect(trader1).approve(await pool.getAddress(), ethers.MaxUint256);
+
+        await expect(pool.connect(trader1).openLong(notional, 0n, trader1.address))
+          .to.not.emit(pool, "Swap");
+      });
+    });
   });
 
   // ── 2. Open Long ──────────────────────────────────────────────────────────
@@ -377,10 +478,10 @@ describe("EXNIHILOPool", function () {
       expect(await pool.openPositionCount()).to.equal(1n);
     });
 
-    it("reverts when usdcAmount exceeds maxPositionUsd", async function () {
+    it("reverts when usdcAmount exceeds the current cap", async function () {
       const { pool, usdc, trader1 } = await loadFixture(deployPoolFixture);
-      const overCap = MAX_POS_USD + 1n;
-      await usdc.mint(trader1.address, overCap);
+      const overCap = (await pool.effectiveLeverageCap()) + 1n;
+      await usdc.mint(trader1.address, overCap * 2n);
       await expect(pool.connect(trader1).openLong(overCap, 0n, trader1.address)).to.be.revertedWithCustomError(
         pool, "LeverageCapExceeded"
       );
@@ -419,6 +520,12 @@ describe("EXNIHILOPool", function () {
       await base.usdc.mint(base.trader2.address, pumpUsdc);
       await base.usdc.connect(base.trader2).approve(await base.pool.getAddress(), ethers.MaxUint256);
       await base.pool.connect(base.trader2).swap(pumpUsdc, 0n, false, base.trader2.address);
+
+      // Settlement prices against the worst open in the last
+      // SETTLE_GUARD_BLOCKS blocks, so a close in the block straight after the
+      // pump is priced at the pre-pump mark by design (audit finding H-2).
+      // A real position outlives the window many times over.
+      await mine(SETTLE_GUARD_BLOCKS);
 
       return { ...base, nftId };
     }
@@ -527,10 +634,10 @@ describe("EXNIHILOPool", function () {
       expect(await pool.openPositionCount()).to.equal(1n);
     });
 
-    it("reverts when usdcNotional exceeds maxPositionUsd", async function () {
+    it("reverts when usdcNotional exceeds the current cap", async function () {
       const { pool, usdc, trader1 } = await loadFixture(deployPoolFixture);
-      const overCap = MAX_POS_USD + 1n;
-      await usdc.mint(trader1.address, overCap);
+      const overCap = (await pool.effectiveLeverageCap()) + 1n;
+      await usdc.mint(trader1.address, overCap * 2n);
       await expect(
         pool.connect(trader1).openShort(overCap, 0n, trader1.address)
       ).to.be.revertedWithCustomError(pool, "LeverageCapExceeded");
@@ -592,6 +699,10 @@ describe("EXNIHILOPool", function () {
       await baseToken.mint(trader2.address, dump);
       await baseToken.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
       await pool.connect(trader2).swap(dump, 0n, true, trader2.address);
+      // Age the dump out of the settlement clamp window (H-2): quoteClose
+      // and the close itself both price against the last SETTLE_GUARD_BLOCKS
+      // blocks, and this test is about the 18-dec short maths, not the guard.
+      await mine(SETTLE_GUARD_BLOCKS);
 
       // quoteClose agrees the position is now in profit.
       const [ready, pnl] = await pool.quoteClose(nftId);
@@ -888,29 +999,12 @@ describe("EXNIHILOPool", function () {
       ).to.be.revertedWithCustomError(pool, "ZeroLiquidity");
     });
 
-    it("setPositionCaps succeeds for LP holder", async function () {
-      const { pool, creator } = await loadFixture(deployPoolFixture);
-      await expect(pool.connect(creator).setPositionCaps(ethers.parseUnits("500", 6), 250n))
-        .to.not.be.reverted;
-      expect(await pool.maxPositionUsd()).to.equal(ethers.parseUnits("500", 6));
-      expect(await pool.maxPositionBps()).to.equal(250n);
-    });
-
-    it("openLong reverts with bps cap when only maxPositionBps is set", async function () {
-      // Pool with maxPositionBps=10 (0.1 %), maxPositionUsd=0.
-      const { factory, usdc, baseToken, creator, trader1 } = await loadFixture(deployFactoryFixtureForPool);
-      await factory.connect(creator).createMarket(
-        await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 10n, 0n);
-      const poolAddr = await factory.allPools(0n);
-      const pool = await ethers.getContractAt("EXNIHILOPool", poolAddr);
-
-      const bpsCap = (INITIAL_USDC * 10n) / 10_000n; // 0.1% of 10,000 USDC = 10 USDC
-      const overCap = bpsCap + 1n;
-      await usdc.mint(trader1.address, overCap);
-      await usdc.connect(trader1).approve(poolAddr, ethers.MaxUint256);
-      await expect(
-        pool.connect(trader1).openLong(overCap, 0n, trader1.address)
-      ).to.be.revertedWithCustomError(pool, "LeverageCapExceeded");
+    it("exposes no way for the LP holder to change the cap", async function () {
+      const { pool } = await loadFixture(deployPoolFixture);
+      const fns = pool.interface.fragments
+        .filter((f) => f.type === "function")
+        .map((f) => (f as { name: string }).name);
+      expect(fns).to.not.include("setPositionCaps");
     });
   });
 
@@ -956,6 +1050,13 @@ describe("EXNIHILOPool", function () {
 
       // Step 2: pump — $9,999 USDC → PEPE
       await pool.connect(trader1).swap(SWAP_IN_USDC, 0n, false, trader1.address);
+      // Hold the pump through the settlement clamp window. Settlement prices
+      // against the worst open in the last SETTLE_GUARD_BLOCKS blocks, so the
+      // close is refused outright inside it (audit finding H-2) — holding the
+      // displaced price for the whole window, exposed to arbitrage, is the
+      // only shape in which this sequence can still be attempted at all.
+      // Mining moves no reserves, so every figure below is unchanged.
+      await mine(SETTLE_GUARD_BLOCKS);
       const tokenReceived = (await baseToken.balanceOf(trader1.address)) - tokenBefore;
 
       // Step 3: close long (collects profit from the price increase)
@@ -1008,6 +1109,13 @@ describe("EXNIHILOPool", function () {
 
       // Pump the price so the long is in-the-money
       await pool.connect(trader1).swap(SWAP_IN_USDC, 0n, false, trader1.address);
+      // Hold the pump through the settlement clamp window. Settlement prices
+      // against the worst open in the last SETTLE_GUARD_BLOCKS blocks, so the
+      // close is refused outright inside it (audit finding H-2) — holding the
+      // displaced price for the whole window, exposed to arbitrage, is the
+      // only shape in which this sequence can still be attempted at all.
+      // Mining moves no reserves, so every figure below is unchanged.
+      await mine(SETTLE_GUARD_BLOCKS);
 
       // ── SWAP-3 fee verification ──────────────────────────────────────────
       // After one open position + one USDC→PEPE swap:
@@ -1063,6 +1171,13 @@ describe("EXNIHILOPool", function () {
 
       const nftId = await openLong(pool, trader1, LONG_NOTIONAL);
       await pool.connect(trader1).swap(SWAP_IN_USDC, 0n, false, trader1.address);
+      // Hold the pump through the settlement clamp window. Settlement prices
+      // against the worst open in the last SETTLE_GUARD_BLOCKS blocks, so the
+      // close is refused outright inside it (audit finding H-2) — holding the
+      // displaced price for the whole window, exposed to arbitrage, is the
+      // only shape in which this sequence can still be attempted at all.
+      // Mining moves no reserves, so every figure below is unchanged.
+      await mine(SETTLE_GUARD_BLOCKS);
 
       const usdcBeforeClose = await usdc.balanceOf(trader1.address);
       await pool.connect(trader1).closeLong(nftId, 0n);
@@ -1081,6 +1196,13 @@ describe("EXNIHILOPool", function () {
       const tokenBefore = await baseToken.balanceOf(trader1.address);
       const nftId      = await openLong(pool, trader1, LONG_NOTIONAL);
       await pool.connect(trader1).swap(SWAP_IN_USDC, 0n, false, trader1.address);
+      // Hold the pump through the settlement clamp window. Settlement prices
+      // against the worst open in the last SETTLE_GUARD_BLOCKS blocks, so the
+      // close is refused outright inside it (audit finding H-2) — holding the
+      // displaced price for the whole window, exposed to arbitrage, is the
+      // only shape in which this sequence can still be attempted at all.
+      // Mining moves no reserves, so every figure below is unchanged.
+      await mine(SETTLE_GUARD_BLOCKS);
       const tokenReceived = (await baseToken.balanceOf(trader1.address)) - tokenBefore;
 
       await pool.connect(trader1).closeLong(nftId, 0n);

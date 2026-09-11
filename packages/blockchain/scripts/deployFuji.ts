@@ -39,8 +39,7 @@ async function main() {
   const treasuryAddr = process.env.PROTOCOL_TREASURY?.trim() || deployer.address;
   console.log("Treasury:    ", treasuryAddr);
 
-  const defaultSwapFeeBps = BigInt(process.env.DEFAULT_SWAP_FEE_BPS?.trim() || "100");
-  console.log("Default fee: ", defaultSwapFeeBps.toString(), "bps");
+  console.log("Swap fee:    ", "100 bps (contract constant)");
 
   // ── 1. MockUSDC ──────────────────────────────────────────────────────────────
   const MockERC20F = await ethers.getContractFactory("MockERC20");
@@ -85,7 +84,6 @@ async function main() {
     lpNFTAddress,
     usdcAddress,
     treasuryAddr,
-    defaultSwapFeeBps,
     poolDeployerAddress
   );
   await factory.waitForDeployment();
@@ -166,41 +164,38 @@ async function main() {
 
   // ── 6. Create markets ────────────────────────────────────────────────────────
   //    Seed sizes chosen to give varied TVLs and prices similar to localhost.
-  //   format: [symbol, usdcSeed, tokenSeed, maxPositionUsd, maxPositionBps]
-  const marketSpecs: [string, bigint, bigint, bigint, bigint][] = [
-    // ARENA — small pool, ~$0.001/token, capped at $10
-    ["ARENA",   500n   * 1_000_000n,  500_000n * 10n ** 18n,
-      10n * 1_000_000n, 0n],
-    // NOCHILL — medium pool, ~$1/token, no caps
-    ["NOCHILL", 20_000n * 1_000_000n,  20_000n * 10n ** 18n,
-      0n, 0n],
-    // RGOGLZ — larger pool, ~$5/token, capped at 1% of pool
-    ["RGOGLZ",  50_000n * 1_000_000n,  10_000n * 10n ** 18n,
-      0n, 100n],
-    // BANDS — small pool, very cheap (~$0.0001/token), capped at $10 + 5%
-    ["BANDS",   1_000n  * 1_000_000n, 10_000_000n * 10n ** 18n,
-      10n * 1_000_000n, 500n],
-    // WAVAX — large pool, ~$25/token, no caps
-    ["WAVAX",  100_000n * 1_000_000n,   4_000n * 10n ** 18n,
-      0n, 0n],
+  //   format: [symbol, usdcSeed, tokenSeed]
+  //
+  //   Caps and lifetime now ramp from the pool's own age, so seed size is the
+  //   only per-market knob left.
+  const marketSpecs: [string, bigint, bigint][] = [
+    // ARENA — small pool, ~$0.001/token
+    ["ARENA",   500n   * 1_000_000n,  500_000n * 10n ** 18n],
+    // NOCHILL — medium pool, ~$1/token
+    ["NOCHILL", 20_000n * 1_000_000n,  20_000n * 10n ** 18n],
+    // RGOGLZ — larger pool, ~$5/token
+    ["RGOGLZ",  50_000n * 1_000_000n,  10_000n * 10n ** 18n],
+    // BANDS — small pool, very cheap (~$0.0001/token)
+    ["BANDS",   1_000n  * 1_000_000n, 10_000_000n * 10n ** 18n],
+    // WAVAX — large pool, ~$25/token
+    ["WAVAX",  100_000n * 1_000_000n,   4_000n * 10n ** 18n],
   ];
 
   console.log("\n─── Creating markets ───────────────────────────────────");
   const poolAddresses: Record<string, string> = {};
 
-  for (const [symbol, usdcSeed, tokenSeed, maxPosUsd, maxPosBps] of marketSpecs) {
+  for (const [symbol, usdcSeed, tokenSeed] of marketSpecs) {
     const baseToken = baseTokens.find(t => t.symbol === symbol)!;
 
     await (await usdc.connect(deployer).approve(factoryAddress, usdcSeed)).wait();
     await (await baseToken.contract.connect(deployer).approve(factoryAddress, tokenSeed)).wait();
 
+    // Position caps and lifetime are no longer parameters — the pool ramps both
+    // from its own age (currentMaxPositionBps / currentPositionDuration).
     const tx = await factory.connect(deployer).createMarket(
       baseToken.address,
       usdcSeed,
-      tokenSeed,
-      maxPosUsd,
-      maxPosBps,
-      0n // positionDuration: 0 = default 7 days
+      tokenSeed
     );
     const receipt = await tx.wait();
 
@@ -249,7 +244,7 @@ async function main() {
   console.log(`    npx hardhat verify --network avalancheFujiTestnet ${positionNFTAddress}`);
   console.log(`    npx hardhat verify --network avalancheFujiTestnet ${poolDeployerAddress}`);
   console.log(`    npx hardhat verify --network avalancheFujiTestnet ${lpNFTAddress} "${factoryAddress}"`);
-  console.log(`    npx hardhat verify --network avalancheFujiTestnet ${factoryAddress} "${positionNFTAddress}" "${lpNFTAddress}" "${usdcAddress}" "${treasuryAddr}" ${defaultSwapFeeBps} "${poolDeployerAddress}"`);
+  console.log(`    npx hardhat verify --network avalancheFujiTestnet ${factoryAddress} "${positionNFTAddress}" "${lpNFTAddress}" "${usdcAddress}" "${treasuryAddr}" "${poolDeployerAddress}"`);
   console.log(`    npx hardhat verify --network avalancheFujiTestnet ${routerAddress} "${factoryAddress}" "${usdcAddress}"`);
   console.log(`    npx hardhat verify --network avalancheFujiTestnet ${faucetAddress} "${usdcAddress}"`);
   for (const t of baseTokens) {

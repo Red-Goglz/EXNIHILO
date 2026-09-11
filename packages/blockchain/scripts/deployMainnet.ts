@@ -9,9 +9,10 @@
  *   - any markets   — `createMarket` is left to users
  *
  * Everything in the factory constructor is **immutable**: the factory has no
- * owner and no admin functions, so `usdc`, `protocolTreasury` and
- * `defaultSwapFeeBps` can never be changed. A mistake here means redeploying
- * the entire protocol, which is why this script refuses to guess any of them.
+ * owner and no admin functions, so `usdc` and `protocolTreasury` can never be
+ * changed. A mistake here means redeploying the entire protocol, which is why
+ * this script refuses to guess either of them. The swap fee is no longer among
+ * them — it is a constant in EXNIHILOPool, fixed at 1 %.
  *
  * LpNFT ↔ Factory is a constructor cycle, resolved by CREATE address
  * prediction: LpNFT is deployed at nonce N and the factory at N+1, so the
@@ -71,7 +72,6 @@ async function main() {
   }
 
   const usdc = (process.env.MAINNET_USDC?.trim() || NATIVE_USDC) as string;
-  const defaultSwapFeeBps = BigInt(process.env.DEFAULT_SWAP_FEE_BPS?.trim() || "100");
 
   // A wrong USDC address bricks every market that will ever be created, and the
   // pool maths assumes 6 decimals throughout. Verify against the live chain.
@@ -99,7 +99,7 @@ async function main() {
   console.log("  balance:   ", ethers.formatEther(balance), "AVAX");
   console.log("  treasury:  ", treasury);
   console.log("  USDC:      ", usdc, `(${usdcSymbol}, ${usdcDecimals} dec)`);
-  console.log("  swap fee:  ", defaultSwapFeeBps.toString(), "bps");
+  console.log("  swap fee:  ", "100 bps (contract constant)");
   console.log("─".repeat(70));
 
   if (balance < ethers.parseEther("0.05")) {
@@ -143,7 +143,6 @@ async function main() {
       lpNFTAddress,
       usdc,
       treasury,
-      defaultSwapFeeBps,
       poolDeployerAddress,
     );
   const factoryReceipt = await factory.deploymentTransaction()!.wait();
@@ -178,7 +177,6 @@ async function main() {
   const onchain = {
     usdc: await factory.usdc(),
     treasury: await factory.protocolTreasury(),
-    fee: await factory.defaultSwapFeeBps(),
     positionNFT: await factory.positionNFT(),
     admin: await factory.deployer(),
   };
@@ -186,8 +184,6 @@ async function main() {
     throw new Error(`factory.usdc mismatch: ${onchain.usdc}`);
   if (onchain.treasury.toLowerCase() !== treasury.toLowerCase())
     throw new Error(`factory.protocolTreasury mismatch: ${onchain.treasury}`);
-  if (onchain.fee !== defaultSwapFeeBps)
-    throw new Error(`factory.defaultSwapFeeBps mismatch: ${onchain.fee}`);
   console.log("On-chain immutables verified ✓");
   console.log("Emergency admin (factory.deployer):", onchain.admin);
 
@@ -216,13 +212,26 @@ async function main() {
     console.log("\n✓ Addresses written to", outPath);
   }
 
-  console.log("\nIndexer: set PONDER_CHAIN_ID=43114 and PONDER_START_BLOCK=" + factoryBlock);
+  // The indexer reads mainnetAddresses.json itself (see indexer/src/chain.ts),
+  // so an in-monorepo deploy needs no address edits — that coupling is what
+  // stops the site and the indexer silently following different factories.
+  // Printed in full anyway, because an indexer running from its own checkout or
+  // container has no address book to read and every one of these is required.
+  console.log("\nIndexer — picked up automatically from mainnetAddresses.json.");
+  console.log("Running it outside this repo? Set all of:");
+  console.log("  PONDER_CHAIN_ID=43114");
+  console.log("  PONDER_START_BLOCK=" + factoryBlock);
+  console.log("  PONDER_FACTORY_ADDRESS=" + factoryAddress);
+  console.log("  PONDER_POSITION_NFT_ADDRESS=" + positionNFTAddress);
+  console.log("  PONDER_LP_NFT_ADDRESS=" + lpNFTAddress);
+  console.log("  (and PONDER_RPC_URL_43114, plus DATABASE_URL in production)");
+  console.log("Restart the indexer after a redeploy — a running one keeps the old addresses.");
   console.log("\nVerify on Snowtrace:");
   console.log(`  npx hardhat verify --network avalanche ${positionNFTAddress}`);
   console.log(`  npx hardhat verify --network avalanche ${poolDeployerAddress}`);
   console.log(`  npx hardhat verify --network avalanche ${lpNFTAddress} "${factoryAddress}"`);
   console.log(
-    `  npx hardhat verify --network avalanche ${factoryAddress} "${positionNFTAddress}" "${lpNFTAddress}" "${usdc}" "${treasury}" ${defaultSwapFeeBps} "${poolDeployerAddress}"`,
+    `  npx hardhat verify --network avalanche ${factoryAddress} "${positionNFTAddress}" "${lpNFTAddress}" "${usdc}" "${treasury}" "${poolDeployerAddress}"`,
   );
   console.log(`  npx hardhat verify --network avalanche ${routerAddress} "${factoryAddress}" "${usdc}"`);
 }

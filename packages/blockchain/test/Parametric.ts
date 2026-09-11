@@ -15,7 +15,7 @@
 
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { time } from "@nomicfoundation/hardhat-network-helpers";
+import { time, mine } from "@nomicfoundation/hardhat-network-helpers";
 import {
   EXNIHILOPool,
   EXNIHILOFactory,
@@ -28,9 +28,10 @@ import {
 // Constants (mirror contract values)
 // ─────────────────────────────────────────────────────────────────────────────
 
+const SETTLE_GUARD_BLOCKS = 5;
 const SWAP_FEE_BPS  = 100n;
-const LP_FEE_BPS    = 300n;
-const PROTO_FEE_BPS = 200n;
+const LP_FEE_BPS    = 400n;
+const PROTO_FEE_BPS = 100n;
 const OPEN_FEE_BPS  = LP_FEE_BPS + PROTO_FEE_BPS; // 5 % total (base only)
 const IMPACT_FEE_BPS = 1500n;                      // impact fee scaling rate
 const BPS_DENOM     = 10_000n;
@@ -162,65 +163,66 @@ const FIXED_CASES: Params[] = [
     swapUsdc: 5n * E6,
   },
 
-  // ── High-leverage stress cases ──────────────────────────────────────────────
-  // longUsdc must stay below 99× lpUsdc (1% fee zero-output boundary).
-  // swapUsdc has no hard limit — an enormous pump just gives near-zero token
-  // output but does not revert (minAmountOut = 0).
+  // ── Max-size stress cases ───────────────────────────────────────────────────
+  // The per-position cap ramps to 20 % of backedAirUsd, so `longUsdc` is pinned
+  // at that ceiling: these exercise the largest position the pool will ever
+  // accept, against pumps many multiples of its depth. swapUsdc has no cap — an
+  // enormous pump just gives near-zero token output rather than reverting.
 
   {
-    label:    "small LP, 30× leverage, massive pump (100× lpUsdc)",
+    label:    "small LP at cap, massive pump (100× lpUsdc)",
     lpToken:   100_000n * E18,
     lpUsdc:   1_000n * E6,
-    longUsdc: 30_000n * E6,   // 30× — fee eats ~31% of SWAP-2 output at 1%
+    longUsdc: 200n * E6,   // 20 % of lpUsdc — the position cap
     swapUsdc: 100_000n * E6,  // 100× — dumps USDC, barely gets token back
   },
   {
-    label:    "small LP, 40× leverage, no pump → expired",
+    label:    "small LP at cap, no pump → expired",
     lpToken:   50_000n * E18,
     lpUsdc:   500n * E6,
-    longUsdc: 20_000n * E6,   // 40×
+    longUsdc: 100n * E6,   // 20 % of lpUsdc — the position cap
     swapUsdc: 0n,
   },
   {
-    label:    "small LP, 10× leverage, extreme pump (100× lpUsdc)",
+    label:    "small LP at cap, extreme pump (100× lpUsdc)",
     lpToken:   50_000n * E18,
     lpUsdc:   2_000n * E6,
-    longUsdc: 20_000n * E6,   // 10×
+    longUsdc: 400n * E6,   // 20 % of lpUsdc — the position cap
     swapUsdc: 200_000n * E6,  // 100×
   },
   {
-    label:    "medium LP, 20× leverage, massive pump (50× lpUsdc)",
+    label:    "medium LP at cap, massive pump (50× lpUsdc)",
     lpToken:   500_000n * E18,
     lpUsdc:   10_000n * E6,
-    longUsdc: 200_000n * E6,  // 20×
+    longUsdc: 2_000n * E6,   // 20 % of lpUsdc — the position cap
     swapUsdc: 500_000n * E6,  // 50×
   },
   {
-    label:    "medium LP, 40× leverage, large pump (20× lpUsdc)",
+    label:    "medium LP at cap, large pump (20× lpUsdc)",
     lpToken:   1_000_000n * E18,
     lpUsdc:   5_000n * E6,
-    longUsdc: 200_000n * E6,  // 40× — fee eats ~80% of SWAP-2 output at 1%
+    longUsdc: 1_000n * E6,   // 20 % of lpUsdc — the position cap
     swapUsdc: 100_000n * E6,  // 20×
   },
   {
-    label:    "medium LP, 40× leverage, extreme pump (200× lpUsdc)",
+    label:    "medium LP at cap, extreme pump (200× lpUsdc)",
     lpToken:   1_000_000n * E18,
     lpUsdc:   5_000n * E6,
-    longUsdc: 200_000n * E6,  // 40× — same
+    longUsdc: 1_000n * E6,   // 20 % of lpUsdc — the position cap
     swapUsdc: 1_000_000n * E6, // 200×
   },
   {
-    label:    "tiny LP, 30× leverage, huge pump (500× lpUsdc)",
+    label:    "tiny LP at cap, huge pump (500× lpUsdc)",
     lpToken:   10_000n * E18,
     lpUsdc:   100n * E6,
-    longUsdc: 3_000n * E6,    // 30×
+    longUsdc: 20n * E6,   // 20 % of lpUsdc — the position cap
     swapUsdc: 50_000n * E6,   // 500×
   },
   {
-    label:    "medium LP, 45× leverage (near-max), minimal pump",
+    label:    "medium LP at cap, minimal pump",
     lpToken:   200_000n * E18,
     lpUsdc:   2_000n * E6,
-    longUsdc: 90_000n * E6,   // 45× — well below the 99× boundary at 1% fee
+    longUsdc: 400n * E6,   // 20 % of lpUsdc — the position cap
     swapUsdc: 5_000n * E6,
   },
 ];
@@ -296,7 +298,6 @@ async function runSequence(params: Params): Promise<void> {
       await lpNft.getAddress(),
       await usdc.getAddress(),
       treasury.address,
-      SWAP_FEE_BPS,
       await poolDeployer.getAddress()
     )) as unknown as EXNIHILOFactory;
 
@@ -314,10 +315,10 @@ async function runSequence(params: Params): Promise<void> {
   const txCreate  = await factory.connect(lp).createMarket(
     await baseToken.getAddress(),
     params.lpUsdc,
-    params.lpToken,
-    0n, // no position caps
-    0n,
-    0n);
+    params.lpToken);
+  // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+  // caps, so start past the ramp where size is not the constraint.
+  await time.increase(24 * 3600);
   const receiptCreate = await txCreate.wait();
 
   const iface  = factory.interface;
@@ -375,6 +376,14 @@ async function runSequence(params: Params): Promise<void> {
       pumpReverted = true;
     }
   }
+
+  // Let the pump age out of the settlement clamp window. Settlement prices
+  // against the worst open in the last SETTLE_GUARD_BLOCKS blocks, so closing
+  // in the block straight after a pump is priced at the pre-pump mark by
+  // design (audit finding H-2). This sequence is measuring conservation across
+  // a lifecycle, not the guard — and a real position lives for days, so the
+  // window is always long expired by the time it closes.
+  await mine(SETTLE_GUARD_BLOCKS);
 
   // ── Step 3: Decide close path from live chain state ───────────────────────
   // Read state now (post-pump) to decide whether closeLong succeeds or the

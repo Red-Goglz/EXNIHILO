@@ -14,7 +14,7 @@
 
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { loadFixture, time } from "@nomicfoundation/hardhat-network-helpers";
+import { loadFixture, time, mine } from "@nomicfoundation/hardhat-network-helpers";
 import {
   EXNIHILOPool,
   EXNIHILOFactory,
@@ -33,6 +33,7 @@ import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 
 const INITIAL_USDC = ethers.parseUnits("10000", 6);
 const INITIAL_TOKEN = ethers.parseEther("1000000");
+const SETTLE_GUARD_BLOCKS = 5;
 const SWAP_FEE_BPS = 100n;
 const BPS_DENOM    = 10_000n;
 
@@ -43,7 +44,7 @@ const BPS_DENOM    = 10_000n;
 /**
  * Mirrors _cpAmountOut in EXNIHILOPool (spot-price fee model):
  *   rawOut = amountIn * reserveOut / (reserveIn + amountIn)
- *   fee    = amountIn * reserveOut * feeBps / (reserveIn * BPS_DENOM)
+ *   fee    = ceil(amountIn * reserveOut * feeBps / (reserveIn * BPS_DENOM))
  *   netOut = rawOut - fee  (0 if rawOut <= fee)
  */
 function cpOut(
@@ -54,7 +55,10 @@ function cpOut(
 ): bigint {
   if (reserveIn === 0n || reserveOut === 0n) return 0n;
   const rawOut = (amountIn * reserveOut) / (reserveIn + amountIn);
-  const fee    = (amountIn * reserveOut * feeBps) / (reserveIn * BPS_DENOM);
+  const feeNum = amountIn * reserveOut * feeBps;
+  const feeDen = reserveIn * BPS_DENOM;
+  // Ceil, matching the contract: a positive fee never truncates to zero.
+  const fee    = feeNum === 0n ? 0n : (feeNum + feeDen - 1n) / feeDen;
   return rawOut > fee ? rawOut - fee : 0n;
 }
 
@@ -100,7 +104,6 @@ async function deploySystem(
       await lpNft.getAddress(),
       usdcAddr,
       treasuryAddr,
-      SWAP_FEE_BPS,
       await poolDeployer.getAddress()
     )) as unknown as EXNIHILOFactory;
 
@@ -143,10 +146,10 @@ async function deployPoolFixture() {
   const tx = await factory.connect(creator).createMarket(
     await baseToken.getAddress(),
     INITIAL_USDC,
-    INITIAL_TOKEN,
-    ethers.parseUnits("9000", 6),  // maxPositionUsd
-    9000n,                          // maxPositionBps
-    0n);
+    INITIAL_TOKEN);
+  // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+  // caps, so start past the ramp where size is not the constraint.
+  await time.increase(24 * 3600);
   const receipt = await tx.wait();
   const iface = factory.interface;
   const log = receipt!.logs
@@ -211,8 +214,7 @@ describe("Coverage — EXNIHILOPool constructor guards", function () {
    * Deploys the support contracts once and returns a deploy helper whose
    * arguments can be overridden per test. Constructor order:
    *   (underlyingToken, underlyingUsdc, tokenDecimals, positionNFT,
-   *    lpNftContract, lpNftId, protocolTreasury, maxPositionUsd,
-   *    maxPositionBps, swapFeeBps, positionDuration, factory)
+   *    lpNftContract, lpNftId, protocolTreasury, factory)
    */
   async function rawPoolFixture() {
     const [deployer] = await ethers.getSigners();
@@ -230,8 +232,6 @@ describe("Coverage — EXNIHILOPool constructor guards", function () {
       positionNFT: await pn.getAddress(),
       lpNftContract: await ln.getAddress(),
       protocolTreasury: deployer.address,
-      maxPositionBps: 0n,
-      swapFeeBps: 100n,
       factory: deployer.address,
     };
     const deployPool = (o: Partial<typeof defaults> = {}) => {
@@ -239,7 +239,7 @@ describe("Coverage — EXNIHILOPool constructor guards", function () {
       return PoolF.deploy(
         p.underlyingToken, p.underlyingUsdc, p.tokenDecimals,
         p.positionNFT, p.lpNftContract, 0, p.protocolTreasury,
-        0, p.maxPositionBps, p.swapFeeBps, 0n, p.factory
+        p.factory
       );
     };
     return { PoolF, deployPool };
@@ -275,27 +275,23 @@ describe("Coverage — EXNIHILOPool constructor guards", function () {
       .to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "ZeroAddress");
   });
 
-  it("reverts with InvalidMaxPositionBps when maxPositionBps is out of range", async function () {
-    const { PoolF, deployPool } = await loadFixture(rawPoolFixture);
-    await expect(deployPool({ maxPositionBps: 9901n })) // above maximum (9900)
-      .to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "InvalidMaxPositionBps");
-  });
+  /**
+   * swapFeeBps used to be a constructor parameter validated into [100, 10000).
+   * It is now a constant fixed at the old lower bound, so there is no longer an
+   * out-of-range case to reject — the guarantee to test is that no deployment
+   * can produce a pool with any other fee, and in particular not the 0 % that
+   * would remove the friction blocking flash-loan arbitrage (OFL-3).
+   */
+  it("fixes swapFeeBps at 1 % with no way to construct another value", async function () {
+    const { deployPool } = await loadFixture(rawPoolFixture);
 
-  it("reverts with InvalidSwapFeeBps when swapFeeBps is out of range", async function () {
-    const { PoolF, deployPool } = await loadFixture(rawPoolFixture);
+    const pool = await deployPool();
+    expect(await pool.swapFeeBps()).to.equal(100n);
 
-    // Upper bound: swapFeeBps_ >= BPS_DENOM (10000) should revert
-    await expect(deployPool({ swapFeeBps: 10000n }))
-      .to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "InvalidSwapFeeBps");
-
-    // Lower bound: swapFeeBps_ < MIN_SWAP_FEE_BPS (100) — blocks flash-loan arbitrage (OFL-3)
-    await expect(deployPool({ swapFeeBps: 0n }))
-      .to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "InvalidSwapFeeBps");
-    await expect(deployPool({ swapFeeBps: 99n }))
-      .to.be.revertedWithCustomError({ interface: PoolF.interface } as any, "InvalidSwapFeeBps");
-
-    // Boundary (100 bps = 1 %) must be accepted
-    await expect(deployPool({ swapFeeBps: 100n })).to.not.be.reverted;
+    // No setter, and nothing in the constructor signature that could move it.
+    expect((pool as any).setSwapFeeBps).to.equal(undefined);
+    const ctorInputs = pool.interface.deploy.inputs.map((i) => i.name);
+    expect(ctorInputs).to.not.include("swapFeeBps_");
   });
 });
 
@@ -399,8 +395,10 @@ describe("Coverage — closeLong edge branches", function () {
 
     const tx2 = await factory.connect(creator).createMarket(
       await baseToken2.getAddress(),
-      INITIAL_USDC, INITIAL_TOKEN,
-      ethers.parseUnits("9000", 6), 9000n, 0n);
+      INITIAL_USDC, INITIAL_TOKEN);
+    // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+    // caps, so start past the ramp where size is not the constraint.
+    await time.increase(24 * 3600);
     const receipt2 = await tx2.wait();
     const log2 = receipt2!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -444,8 +442,10 @@ describe("Coverage — closeLong edge branches", function () {
 
     const tx2 = await factory.connect(creator).createMarket(
       await baseToken2.getAddress(),
-      INITIAL_USDC, INITIAL_TOKEN,
-      ethers.parseUnits("9000", 6), 9000n, 0n);
+      INITIAL_USDC, INITIAL_TOKEN);
+    // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+    // caps, so start past the ramp where size is not the constraint.
+    await time.increase(24 * 3600);
     const receipt2 = await tx2.wait();
     const log2 = receipt2!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -488,8 +488,10 @@ describe("Coverage — closeShort edge branches", function () {
 
     const tx2 = await factory.connect(creator).createMarket(
       await baseToken2.getAddress(),
-      INITIAL_USDC, INITIAL_TOKEN,
-      ethers.parseUnits("9000", 6), 9000n, 0n);
+      INITIAL_USDC, INITIAL_TOKEN);
+    // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+    // caps, so start past the ramp where size is not the constraint.
+    await time.increase(24 * 3600);
     const receipt2 = await tx2.wait();
     const log2 = receipt2!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -540,8 +542,10 @@ describe("Coverage — closeShort edge branches", function () {
     await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
 
     const tx = await factory.connect(creator).createMarket(
-      await token6.getAddress(), initUsdc, initToken6,
-      ethers.parseUnits("9000", 6), 9000n, 0n);
+      await token6.getAddress(), initUsdc, initToken6);
+    // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+    // caps, so start past the ramp where size is not the constraint.
+    await time.increase(24 * 3600);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -569,6 +573,9 @@ describe("Coverage — closeShort edge branches", function () {
     // This makes airToken very cheap to buy back, creating a profitable short.
     const dumpAmt = initToken6 * 50n; // 50x initial token supply — massive dump
     await pool.connect(trader2).swap(dumpAmt, 0n, true, trader2.address);
+    // Age the move out of the settlement clamp window: settlement prices
+    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
+    await mine(SETTLE_GUARD_BLOCKS);
 
     // Verify the short is now profitable before calling closeShort.
     const backedToken   = await pool.backedAirToken();
@@ -619,8 +626,10 @@ describe("Coverage — closeShort edge branches", function () {
     await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
 
     const tx = await factory.connect(creator).createMarket(
-      await token6.getAddress(), initUsdc, initToken6,
-      ethers.parseUnits("9000", 6), 9000n, 0n);
+      await token6.getAddress(), initUsdc, initToken6);
+    // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+    // caps, so start past the ramp where size is not the constraint.
+    await time.increase(24 * 3600);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -643,6 +652,9 @@ describe("Coverage — closeShort edge branches", function () {
 
     // Dump hard to collapse price.
     await pool.connect(trader2).swap(initToken6 * 50n, 0n, true, trader2.address);
+    // Age the move out of the settlement clamp window: settlement prices
+    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
+    await mine(SETTLE_GUARD_BLOCKS);
 
     const backedToken   = await pool.backedAirToken();
     const airUsdSupply = await pool.airUsdSupply();
@@ -688,8 +700,10 @@ describe("Coverage — closeShort edge branches", function () {
     await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
 
     const tx = await factory.connect(creator).createMarket(
-      await token6.getAddress(), initUsdc, initToken6,
-      ethers.parseUnits("9000", 6), 9000n, 0n);
+      await token6.getAddress(), initUsdc, initToken6);
+    // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+    // caps, so start past the ramp where size is not the constraint.
+    await time.increase(24 * 3600);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -711,6 +725,9 @@ describe("Coverage — closeShort edge branches", function () {
     const pos = await posNFT.getPosition(shortNftId);
 
     await pool.connect(trader2).swap(initToken6 * 50n, 0n, true, trader2.address);
+    // Age the move out of the settlement clamp window: settlement prices
+    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
+    await mine(SETTLE_GUARD_BLOCKS);
 
     const backedToken   = await pool.backedAirToken();
     const airUsdSupply = await pool.airUsdSupply();
@@ -868,8 +885,10 @@ describe("Coverage — EXNIHILOFactory _safeDecimals fallback", function () {
     // createMarket should succeed; the decimals fallback returns 18 for NoMetaERC20.
     const tx = await factory.connect(creator).createMarket(
       await noMeta.getAddress(),
-      USDC_AMOUNT, TOKEN_AMOUNT,
-      0n, 0n, 0n);
+      USDC_AMOUNT, TOKEN_AMOUNT);
+    // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+    // caps, so start past the ramp where size is not the constraint.
+    await time.increase(24 * 3600);
     await tx.wait();
 
     // The pool's tokenDecimals should be 18 (the fallback).
@@ -950,8 +969,10 @@ describe("Coverage — openShort ZeroAmount when airTokenMinted rounds to zero",
 
     const tx = await factory.connect(creator).createMarket(
       await token6.getAddress(),
-      LARGE_USDC, TINY_TOKEN6,
-      0n, 0n, 0n);
+      LARGE_USDC, TINY_TOKEN6);
+    // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+    // caps, so start past the ramp where size is not the constraint.
+    await time.increase(24 * 3600);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -1023,10 +1044,11 @@ describe("Coverage — closeShort PositionUnderwater when debt exceeds totalBuya
     await token.connect(creator).approve(factoryAddr, ethers.MaxUint256);
     await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
 
-    // No caps — allows opening a short equal to full backedAirUsd.
     const tx = await factory.connect(creator).createMarket(
-      await token.getAddress(), INITIAL_USDC, INITIAL_TOKEN,
-      0n, 0n, 0n);
+      await token.getAddress(), INITIAL_USDC, INITIAL_TOKEN);
+    // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+    // caps, so start past the ramp where size is not the constraint.
+    await time.increase(24 * 3600);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -1034,8 +1056,10 @@ describe("Coverage — closeShort PositionUnderwater when debt exceeds totalBuya
     const pool = await ethers.getContractAt("EXNIHILOPool", log.args.pool as string) as EXNIHILOPool;
     const poolAddr = await pool.getAddress();
 
-    // notional = backedAirUsd so airTokenMinted = backedAirToken.
-    const notional = await pool.backedAirUsd();
+    // The largest short the cap permits. The underwater condition here comes
+    // from the 6-dec locked collateral vs 18-dec synthetic debt mismatch, not
+    // from position size, so the capped maximum still reaches it.
+    const notional = await pool.effectiveLeverageCap();
     await usdc.mint(trader1.address, notional);
     await usdc.connect(trader1).approve(poolAddr, ethers.MaxUint256);
 
@@ -1063,29 +1087,30 @@ describe("Coverage — removeLiquidity partial backed reserves (storage-forced)"
    *   OpenZeppelin 5.6's ReentrancyGuard uses a namespaced (ERC-7201) slot,
    *   NOT a sequential one, so it occupies no slot here. Every pool variable
    *   sits one lower than a naive count suggests. Verified against live
-   *   storage: slot 0 reads maxPositionUsd.
-   *   slot 0: maxPositionUsd
-   *   slot 1: maxPositionBps
-   *   slot 2: airTokenSupply
-   *   slot 3: airUsdSupply
-   *   slot 4: backedAirToken
-   *   slot 5: backedAirUsd
-   *   slot 6: lpFeesAccumulated
-   *   slot 7: protocolFeesAccumulated
-   *   slot 8: lpFeesPaidTotal
-   *   slot 9: protocolFeesPaidTotal
-   *   slot 10: claimable (mapping)
-   *   slot 11: totalClaimable
-   *   slot 12: openPositionCount
-   *   slot 13: longOpenInterest
-   *   slot 14: shortOpenInterest
-   *   slot 15: closeDate
-   *   slot 16: totalShortCollateral
+   *   storage: slot 0 reads airTokenSupply. maxPositionUsd/maxPositionBps used
+   *   to occupy slots 0 and 1; the automatic cap ramp replaced them with an
+   *   immutable, which lives in bytecode rather than storage, so every slot
+   *   below shifted down by two.
+   *   slot 0: airTokenSupply
+   *   slot 1: airUsdSupply
+   *   slot 2: backedAirToken
+   *   slot 3: backedAirUsd
+   *   slot 4: lpFeesAccumulated
+   *   slot 5: protocolFeesAccumulated
+   *   slot 6: lpFeesPaidTotal
+   *   slot 7: protocolFeesPaidTotal
+   *   slot 8: claimable (mapping)
+   *   slot 9: totalClaimable
+   *   slot 10: openPositionCount
+   *   slot 11: longOpenInterest
+   *   slot 12: shortOpenInterest
+   *   slot 13: closeDate
+   *   slot 14: totalShortCollateral
    */
   async function zeroBackedAirToken(poolAddress: string): Promise<void> {
     await ethers.provider.send("hardhat_setStorageAt", [
       poolAddress,
-      "0x4", // slot 4 = backedAirToken
+      "0x2", // slot 2 = backedAirToken
       "0x0000000000000000000000000000000000000000000000000000000000000000",
     ]);
   }
@@ -1093,7 +1118,7 @@ describe("Coverage — removeLiquidity partial backed reserves (storage-forced)"
   async function zeroBackedAirUsd(poolAddress: string): Promise<void> {
     await ethers.provider.send("hardhat_setStorageAt", [
       poolAddress,
-      "0x5", // slot 5 = backedAirUsd
+      "0x3", // slot 3 = backedAirUsd
       "0x0000000000000000000000000000000000000000000000000000000000000000",
     ]);
   }
@@ -1156,29 +1181,30 @@ describe("Coverage — swap/openLong/openShort with only backedAirUsd = 0", func
    *   OpenZeppelin 5.6's ReentrancyGuard uses a namespaced (ERC-7201) slot,
    *   NOT a sequential one, so it occupies no slot here. Every pool variable
    *   sits one lower than a naive count suggests. Verified against live
-   *   storage: slot 0 reads maxPositionUsd.
-   *   slot 0: maxPositionUsd
-   *   slot 1: maxPositionBps
-   *   slot 2: airTokenSupply
-   *   slot 3: airUsdSupply
-   *   slot 4: backedAirToken
-   *   slot 5: backedAirUsd
-   *   slot 6: lpFeesAccumulated
-   *   slot 7: protocolFeesAccumulated
-   *   slot 8: lpFeesPaidTotal
-   *   slot 9: protocolFeesPaidTotal
-   *   slot 10: claimable (mapping)
-   *   slot 11: totalClaimable
-   *   slot 12: openPositionCount
-   *   slot 13: longOpenInterest
-   *   slot 14: shortOpenInterest
-   *   slot 15: closeDate
-   *   slot 16: totalShortCollateral
+   *   storage: slot 0 reads airTokenSupply. maxPositionUsd/maxPositionBps used
+   *   to occupy slots 0 and 1; the automatic cap ramp replaced them with an
+   *   immutable, which lives in bytecode rather than storage, so every slot
+   *   below shifted down by two.
+   *   slot 0: airTokenSupply
+   *   slot 1: airUsdSupply
+   *   slot 2: backedAirToken
+   *   slot 3: backedAirUsd
+   *   slot 4: lpFeesAccumulated
+   *   slot 5: protocolFeesAccumulated
+   *   slot 6: lpFeesPaidTotal
+   *   slot 7: protocolFeesPaidTotal
+   *   slot 8: claimable (mapping)
+   *   slot 9: totalClaimable
+   *   slot 10: openPositionCount
+   *   slot 11: longOpenInterest
+   *   slot 12: shortOpenInterest
+   *   slot 13: closeDate
+   *   slot 14: totalShortCollateral
    */
   async function zeroBackedAirUsd(poolAddress: string): Promise<void> {
     await ethers.provider.send("hardhat_setStorageAt", [
       poolAddress,
-      "0x5", // slot 5 = backedAirUsd
+      "0x3", // slot 3 = backedAirUsd
       "0x0000000000000000000000000000000000000000000000000000000000000000",
     ]);
   }
@@ -1222,7 +1248,7 @@ describe("Coverage — swap with zero backedAirUsd (storage-forced)", function (
   async function zeroBackedAirUsd(poolAddress: string): Promise<void> {
     await ethers.provider.send("hardhat_setStorageAt", [
       poolAddress,
-      "0x5", // slot 5 = backedAirUsd
+      "0x3", // slot 3 = backedAirUsd
       "0x0000000000000000000000000000000000000000000000000000000000000000",
     ]);
   }
@@ -1255,6 +1281,9 @@ describe("Coverage — closeLong slippage guard", function () {
     await usdc.mint(trader2.address, pumpUsdc);
     await usdc.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
     await pool.connect(trader2).swap(pumpUsdc, 0n, false, trader2.address);
+    // Age the move out of the settlement clamp window: settlement prices
+    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
+    await mine(SETTLE_GUARD_BLOCKS);
 
     // Verify position is profitable first.
     const pos = await (await ethers.getContractAt("PositionNFT", await pool.positionNFT())).getPosition(nftId);
@@ -1285,57 +1314,6 @@ describe("Coverage — _swapUsdcToToken slippage guard", function () {
     await expect(
       pool.connect(trader1).swap(ethers.parseUnits("100", 6), ethers.MaxUint256, false, trader1.address)
     ).to.be.revertedWithCustomError(pool, "InsufficientOutput");
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Coverage — _computeLeverageCap: usdCap path
-// When maxPositionUsd is enabled but maxPositionBps is disabled,
-// bpsCap = type(uint256).max, so usdCap < bpsCap and usdCap is returned.
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe("Coverage — leverage cap enforcement when only maxPositionUsd is set", function () {
-
-  it("openLong reverts with LeverageCapExceeded when maxPositionUsd only and position too large", async function () {
-    const [deployer, treasury, creator, trader1] = await ethers.getSigners();
-
-    const MockF = await ethers.getContractFactory("MockERC20");
-    const token  = (await MockF.connect(deployer).deploy("PEPE", "PEPE", 18)) as unknown as MockERC20;
-    const usdc  = (await MockF.connect(deployer).deploy("USDC", "USDC", 6)) as unknown as MockERC20;
-    const posNFT = (await (await ethers.getContractFactory("PositionNFT"))
-      .connect(deployer).deploy()) as unknown as PositionNFT;
-
-    const { factory } = await deploySystem(
-      treasury.address,
-      await posNFT.getAddress(),
-      await usdc.getAddress()
-    );
-    const factoryAddr = await factory.getAddress();
-    await posNFT.connect(deployer).initFactory(factoryAddr);
-
-    await token.mint(creator.address, INITIAL_TOKEN);
-    await usdc.mint(creator.address, INITIAL_USDC);
-    await token.connect(creator).approve(factoryAddr, ethers.MaxUint256);
-    await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
-
-    const maxUsd = ethers.parseUnits("10", 6); // 10 USDC cap
-    const tx = await factory.connect(creator).createMarket(
-      await token.getAddress(), INITIAL_USDC, INITIAL_TOKEN,
-      maxUsd, 0n, 0n);
-    const receipt = await tx.wait();
-    const log = receipt!.logs
-      .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
-      .find((l) => l?.name === "MarketCreated")!;
-    const pool = await ethers.getContractAt("EXNIHILOPool", log.args.pool as string) as EXNIHILOPool;
-    const poolAddr = await pool.getAddress();
-
-    await usdc.mint(trader1.address, ethers.parseUnits("100", 6));
-    await usdc.connect(trader1).approve(poolAddr, ethers.MaxUint256);
-
-    // 100 USDC exceeds the 10 USDC cap → LeverageCapExceeded.
-    await expect(
-      pool.connect(trader1).openLong(ethers.parseUnits("100", 6), 0n, trader1.address)
-    ).to.be.revertedWithCustomError(pool, "LeverageCapExceeded");
   });
 });
 
@@ -1386,7 +1364,10 @@ describe("Coverage — _cpAmountOut reserveIn = 0 when all airToken is locked", 
     await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
 
     const tx = await factory.connect(creator).createMarket(
-      await token.getAddress(), tinyUsdc, tinyToken, 0n, 0n, 0n);
+      await token.getAddress(), tinyUsdc, tinyToken);
+    // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+    // caps, so start past the ramp where size is not the constraint.
+    await time.increase(24 * 3600);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -1402,15 +1383,16 @@ describe("Coverage — _cpAmountOut reserveIn = 0 when all airToken is locked", 
     // airTokenSupply - lockedAmount > 0 can never occur organically. Force
     // storage instead: open a long, then use hardhat_setStorageAt on the
     // pool's airTokenSupply slot to make it equal lockedAmount.
-    const nftId = await openLong(pool, trader1, ethers.parseUnits("0.5", 6));
+    // Largest long this 1-USDC-deep pool will accept (20 % of depth).
+    const nftId = await openLong(pool, trader1, await pool.effectiveLeverageCap());
     const posNFTContract = await ethers.getContractAt("PositionNFT", await pool.positionNFT());
     const pos = await posNFTContract.getPosition(nftId);
 
-    // Force pool.airTokenSupply() = pos.lockedAmount (slot 3 = airTokenSupply).
+    // Force pool.airTokenSupply() = pos.lockedAmount (slot 0 = airTokenSupply).
     const lockedHex = "0x" + pos.lockedAmount.toString(16).padStart(64, "0");
     await ethers.provider.send("hardhat_setStorageAt", [
       poolAddr,
-      "0x2", // slot 2 = airTokenSupply
+      "0x0", // slot 0 = airTokenSupply
       lockedHex,
     ]);
 
@@ -1433,10 +1415,10 @@ describe("Coverage — openShort with airTokenSupply = 0 (storage-forced)", func
   it("openShort reverts InsufficientBackedReserves when airTokenSupply is forced to 0", async function () {
     const { pool, poolAddress, trader1 } = await loadFixture(deployPoolFixture);
 
-    // Pool airTokenSupply is at storage slot 2.
+    // Pool airTokenSupply is at storage slot 0.
     await ethers.provider.send("hardhat_setStorageAt", [
       poolAddress,
-      "0x2",
+      "0x0",
       "0x0000000000000000000000000000000000000000000000000000000000000000",
     ]);
 
@@ -1492,7 +1474,10 @@ describe("Coverage — ReentrancyGuard nonReentrant revert paths", function () {
     await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
 
     const tx = await factory.connect(creator).createMarket(
-      await reenToken.getAddress(), USDC_AMT, TOKEN_AMT, 0n, 0n, 0n);
+      await reenToken.getAddress(), USDC_AMT, TOKEN_AMT);
+    // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+    // caps, so start past the ramp where size is not the constraint.
+    await time.increase(24 * 3600);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -1586,7 +1571,6 @@ describe("Coverage — ReentrancyGuard nonReentrant revert paths", function () {
         await lpNft.getAddress(),
         await reenUsdc.getAddress(),  // <-- reentrant "USDC"
         treasury.address,
-        SWAP_FEE_BPS,
         await poolDeployer.getAddress()
       )) as unknown as EXNIHILOFactory;
     await patchImmutableAddress(
@@ -1603,7 +1587,10 @@ describe("Coverage — ReentrancyGuard nonReentrant revert paths", function () {
     await reenUsdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
 
     const tx = await factory.connect(creator).createMarket(
-      await token.getAddress(), USDC_AMT, TOKEN_AMT, 0n, 0n, 0n);
+      await token.getAddress(), USDC_AMT, TOKEN_AMT);
+    // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+    // caps, so start past the ramp where size is not the constraint.
+    await time.increase(24 * 3600);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -1736,7 +1723,10 @@ describe("Coverage — FeeOnTransferNotSupported guard in _transferIn", function
 
     // Deploy pool (fee disabled so initial addLiquidity inside createMarket succeeds).
     const tx = await factory.connect(creator).createMarket(
-      await fotToken.getAddress(), USDC_AMT, TOKEN_AMT, 0n, 0n, 0n);
+      await fotToken.getAddress(), USDC_AMT, TOKEN_AMT);
+    // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+    // caps, so start past the ramp where size is not the constraint.
+    await time.increase(24 * 3600);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -1782,7 +1772,10 @@ describe("Coverage — FeeOnTransferNotSupported guard in _transferIn", function
 
     // Deploy pool (fee disabled so initial addLiquidity succeeds).
     const tx = await factory.connect(creator).createMarket(
-      await token.getAddress(), USDC_AMT, TOKEN_AMT, 0n, 0n, 0n);
+      await token.getAddress(), USDC_AMT, TOKEN_AMT);
+    // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+    // caps, so start past the ramp where size is not the constraint.
+    await time.increase(24 * 3600);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -1946,7 +1939,10 @@ describe("Coverage — ZeroAmount guards on openLong / openShort output", functi
     await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
 
     const tx = await factory.connect(creator).createMarket(
-      await token6.getAddress(), USDC_LARGE, TOKEN_TINY, 0n, 0n, 0n);
+      await token6.getAddress(), USDC_LARGE, TOKEN_TINY);
+    // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+    // caps, so start past the ramp where size is not the constraint.
+    await time.increase(24 * 3600);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -2098,7 +2094,7 @@ describe("Coverage — PositionNFT.tokenURI", function () {
     expect(traits).to.include("Opened");
     expect(traits).to.include("Deadline");
     expect(traits).to.include("Est. PnL (USDC)");
-    expect(traits).to.include("Est. PnL % (on fees)");
+    expect(traits).to.include("Return on Premium %");
     const side = json.attributes.find((a: any) => a.trait_type === "Side");
     expect(side.value).to.equal("Long");
   });
@@ -2121,6 +2117,9 @@ describe("Coverage — PositionNFT.tokenURI", function () {
     // Pump: buy token to push price up
     await fix.usdc.mint(fix.trader2.address, ethers.parseUnits("5000", 6));
     await fix.pool.connect(fix.trader2).swap(ethers.parseUnits("5000", 6), 0n, false, fix.trader2.address);
+    // Age the move out of the settlement clamp window: settlement prices
+    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
+    await mine(SETTLE_GUARD_BLOCKS);
     const svg = decodeSvg(await fix.positionNFT.tokenURI(nftId));
     expect(svg).to.include("+$");
   });
@@ -2143,32 +2142,203 @@ describe("Coverage — PositionNFT.tokenURI", function () {
     const dump = ethers.parseEther("5000000");
     await fix.baseToken.mint(fix.trader2.address, dump);
     await fix.pool.connect(fix.trader2).swap(dump, 0n, true, fix.trader2.address);
+    // Age the move out of the settlement clamp window: settlement prices
+    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
+    await mine(SETTLE_GUARD_BLOCKS);
     const svg = decodeSvg(await fix.positionNFT.tokenURI(nftId));
     expect(svg).to.include("+$");
   });
 
-  it("shows negative PnL or N/A for an underwater short", async function () {
+  it("shows negative PnL for an underwater short", async function () {
     const fix = await loadFixture(deployPoolFixture);
     const nftId = await openShort(fix.pool, fix.trader1, ethers.parseUnits("100", 6));
     // Pump token price up — short loses value
     await fix.usdc.mint(fix.trader2.address, ethers.parseUnits("2000", 6));
     await fix.pool.connect(fix.trader2).swap(ethers.parseUnits("2000", 6), 0n, false, fix.trader2.address);
     const svg = decodeSvg(await fix.positionNFT.tokenURI(nftId));
-    // Deeply underwater: N/A.  Note: lines 332-333 (mildly underwater display
-    // where cost ≈ lockedAmount) require totalBuyable ≈ airTokenMinted — an
-    // infinitesimal boundary that is effectively unreachable via AMM operations.
-    expect(svg).to.match(/-\$|N\/A/);
+    expect(svg).to.include("-$");
+    expect(svg).to.not.include("N/A");
   });
 
-  it("shows N/A for a deeply underwater short", async function () {
+  it("shows the loss, not N/A, for a deeply underwater short", async function () {
     const fix = await loadFixture(deployPoolFixture);
     const nftId = await openShort(fix.pool, fix.trader1, ethers.parseUnits("100", 6));
-    // Big pump: push price up massively
+    // Big pump: past the point the pool can buy the debt back at all, so
+    // _priceClose refuses to price it and quoteClose reports ready = false.
     await fix.usdc.mint(fix.trader2.address, ethers.parseUnits("5000", 6));
     await fix.pool.connect(fix.trader2).swap(ethers.parseUnits("5000", 6), 0n, false, fix.trader2.address);
+    // Age the move out of the settlement clamp window: settlement prices
+    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
+    await mine(SETTLE_GUARD_BLOCKS);
+
+    const [ready, pnl] = await fix.pool.quoteClose(nftId);
+    expect(ready, "an unbuyable debt must stay unsettleable").to.equal(false);
+    expect(pnl, "but the shortfall is still reported").to.be.lessThan(0n);
+
+    // The certificate shows that loss rather than nothing at all. The return
+    // floors at −100%: the premium is the whole cost basis, so no position can
+    // lose more than it.
     const svg = decodeSvg(await fix.positionNFT.tokenURI(nftId));
-    // Deeply underwater: totalBuyable < airTokenMinted → PnL = N/A
-    expect(svg).to.include("N/A");
+    expect(svg).to.not.include("N/A");
+    expect(svg).to.include("-$");
+    expect(svg).to.include("(-100%)");
+
+    const json = decodeJson(await fix.positionNFT.tokenURI(nftId));
+    const pct = json.attributes.find((a: any) => a.trait_type === "Return on Premium %");
+    expect(Number(pct.value)).to.equal(-100);
+  });
+
+  it("paints a positive payout below the premium as a LOSS: +$ figure, red, negative return", async function () {
+    const fix = await loadFixture(deployPoolFixture);
+    const nftId = await openLong(fix.pool, fix.trader1, ethers.parseUnits("100", 6));
+    const pos = await fix.positionNFT.getPosition(nftId);
+
+    // Pump in small steps until the payout is positive but still below the
+    // premium (feesPaid ≈ 5.15 USDC on a 100 USDC long; each 50 USDC pump adds
+    // well under that, so the walk cannot step over the window).
+    let pnl = 0n;
+    for (let i = 0; i < 40; i++) {
+      const [ready, q] = await fix.pool.quoteClose(nftId);
+      if (ready && q > 0n) { pnl = q; break; }
+      await fix.usdc.mint(fix.trader2.address, ethers.parseUnits("50", 6));
+      await fix.pool.connect(fix.trader2).swap(
+        ethers.parseUnits("50", 6), 0n, false, fix.trader2.address
+      );
+    }
+    expect(pnl, "walk must land on a positive payout").to.be.gt(0n);
+    expect(pnl, "payout must still be below the premium").to.be.lt(pos.feesPaid);
+
+    // This is the branch the net-return refactor exists for. The pool's payout
+    // is positive, but it is below the cost basis, so the trader is DOWN. Both
+    // the figure and the percent are net of the premium, so both must be
+    // negative and the hero red — a card showing "+$" next to "(-x%)" was the
+    // contradiction this replaced.
+    const loss = pos.feesPaid - pnl;
+    const svg = decodeSvg(await fix.positionNFT.tokenURI(nftId));
+    expect(svg).to.include("-$");
+    expect(svg).to.not.include("+$");
+    expect(svg).to.match(/\(-\d+%\)/);
+    // Scope the colour check to the hero PnL element — the LONG side badge is
+    // legitimately green regardless of PnL.
+    const pnlHero = svg.match(/font-size="56"[^>]*fill="(#[0-9a-f]{6})"/);
+    expect(pnlHero, "PnL hero element must exist").to.not.be.a("null");
+    expect(pnlHero![1]).to.equal("#ff3b30");
+
+    const json = decodeJson(await fix.positionNFT.tokenURI(nftId));
+
+    // The dollar figure is the amount actually lost, never more than staked.
+    // _fmt6 renders 2 decimals, so compare at that resolution.
+    const usdc = json.attributes.find((a: any) => a.trait_type === "Est. PnL (USDC)");
+    expect(Number(usdc.value)).to.be.closeTo(-Number(loss) / 1e6, 0.01);
+    expect(Math.abs(Number(usdc.value))).to.be.at.most(Number(pos.feesPaid) / 1e6);
+
+    const pct = json.attributes.find((a: any) => a.trait_type === "Return on Premium %");
+    expect(Number(pct.value)).to.equal(-Number((loss * 100n) / pos.feesPaid));
+    expect(Number(pct.value)).to.be.lt(0);
+  });
+
+  /**
+   * The floor that gives the product its shape: openLong/openShort pull only
+   * the fee, so the premium is the entire downside. An underwater position's
+   * "deficit" is a notional gap the trader never owes, and reporting it as the
+   * loss printed figures many times what was ever at risk.
+   */
+  it("never reports a loss larger than the premium, however deep the shortfall", async function () {
+    const fix = await loadFixture(deployPoolFixture);
+    const nftId = await openLong(fix.pool, fix.trader1, ethers.parseUnits("100", 6));
+    const pos = await fix.positionNFT.getPosition(nftId);
+
+    // Dump the price hard, so the reported shortfall dwarfs the premium.
+    const dump = ethers.parseEther("5000000");
+    await fix.baseToken.mint(fix.trader2.address, dump);
+    await fix.pool.connect(fix.trader2).swap(dump, 0n, true, fix.trader2.address);
+    // Age the move out of the settlement clamp window: settlement prices
+    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
+    await mine(SETTLE_GUARD_BLOCKS);
+
+    const [, quoted] = await fix.pool.quoteClose(nftId);
+    expect(quoted, "shortfall must exceed the premium for this to be meaningful")
+      .to.be.lt(-pos.feesPaid);
+
+    const json = decodeJson(await fix.positionNFT.tokenURI(nftId));
+    const usdc = json.attributes.find((a: any) => a.trait_type === "Est. PnL (USDC)");
+    const pct = json.attributes.find((a: any) => a.trait_type === "Return on Premium %");
+
+    // The premium, not the shortfall — a figure many times larger.
+    expect(Number(usdc.value)).to.be.closeTo(-Number(pos.feesPaid) / 1e6, 0.01);
+    expect(Number(pct.value)).to.equal(-100);
+  });
+
+  it("long shortfall branch: an unpriceable long reports its full debt (state override)", async function () {
+    // _quoteShortfall's long branch (airTokenSupply <= lockedAmount → shortfall
+    // = full airUsdMinted) is defense-in-depth: through the public API,
+    // airTokenSupply − locked ≥ backedAirToken, and the CP curve keeps
+    // backedAirToken ≥ 1 wei while positions are open, so the state cannot
+    // arise. Pin the behaviour anyway — quoteClose and the certificate must
+    // degrade sanely if a future change ever makes it reachable — by forcing
+    // the state directly into storage (views only; no invariant check runs).
+    const fix = await loadFixture(deployPoolFixture);
+    const nftId = await openLong(fix.pool, fix.trader1, ethers.parseUnits("100", 6));
+    const pos = await fix.positionNFT.getPosition(nftId);
+
+    // Locate airTokenSupply's storage slot dynamically instead of hardcoding
+    // an offset that silently rots when a state variable is added.
+    //
+    // Matching on value alone is not enough: the settlement guard snapshots
+    // airTokenSupply into guardOpenTokenSupply at the first reserve mutation of
+    // each block, so more than one slot legitimately holds this value. Take
+    // every candidate, then move airTokenSupply and keep the slot that tracked
+    // it — the snapshot holds the block's opening value and does not follow.
+    const supply = await fix.pool.airTokenSupply();
+    const candidates: number[] = [];
+    for (let i = 0; i < 40; i++) {
+      const word = await ethers.provider.getStorage(fix.poolAddress, i);
+      if (BigInt(word) === supply) candidates.push(i);
+    }
+    expect(candidates.length, "airTokenSupply slot not found").to.be.gte(1);
+
+    let slot = -1;
+    if (candidates.length === 1) {
+      slot = candidates[0];
+    } else {
+      // A swap changes airTokenSupply; mine first so the guard re-snapshots
+      // from this block's opening state rather than tracking along with it.
+      await mine(1);
+      await fix.pool.connect(fix.trader2).swap(
+        ethers.parseUnits("10", 6), 0n, false, fix.trader2.address
+      );
+      const moved = await fix.pool.airTokenSupply();
+      expect(moved).to.not.equal(supply);
+      for (const i of candidates) {
+        const word = await ethers.provider.getStorage(fix.poolAddress, i);
+        if (BigInt(word) === moved) {
+          expect(slot, "airTokenSupply slot must be unambiguous").to.equal(-1);
+          slot = i;
+        }
+      }
+    }
+    expect(slot).to.be.gte(0);
+
+    await ethers.provider.send("hardhat_setStorageAt", [
+      fix.poolAddress,
+      ethers.toBeHex(slot),
+      ethers.toBeHex(pos.lockedAmount, 32), // supply == locked triggers `<=`
+    ]);
+
+    // A raw storage write is not a reserve mutation, so it records no guard
+    // snapshot — the ring still describes the priceable state this position was
+    // in beforehand, and the clamp would price against that. Age those entries
+    // out so the quote sees the state the override actually created.
+    await mine(SETTLE_GUARD_BLOCKS);
+
+    const [ready, pnl] = await fix.pool.quoteClose(nftId);
+    expect(ready, "an unpriceable long must stay unsettleable").to.equal(false);
+    expect(pnl, "shortfall = the full synthetic debt").to.equal(-pos.airUsdMinted);
+
+    const svg = decodeSvg(await fix.positionNFT.tokenURI(nftId));
+    expect(svg).to.not.include("N/A");
+    expect(svg).to.include("-$");
+    expect(svg).to.include("(-100%)");
   });
 
   it("reverts for a non-existent token", async function () {
@@ -2242,7 +2412,10 @@ describe("Coverage — Router empty-pool guard", function () {
     await usdc.connect(creator).approve(factoryAddr, ethers.MaxUint256);
 
     const tx = await factory.connect(creator).createMarket(
-      await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN, 0n, 0n, 0n);
+      await baseToken.getAddress(), INITIAL_USDC, INITIAL_TOKEN);
+    // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+    // caps, so start past the ramp where size is not the constraint.
+    await time.increase(24 * 3600);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -2291,6 +2464,9 @@ describe("Regression — N-1: closeShort SWAP-2 reserve symmetry", function () {
     const dump = ethers.parseEther("5000000");
     await fix.baseToken.mint(fix.trader2.address, dump);
     await fix.pool.connect(fix.trader2).swap(dump, 0n, true, fix.trader2.address);
+    // Age the move out of the settlement clamp window: settlement prices
+    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
+    await mine(SETTLE_GUARD_BLOCKS);
 
     // Record balances before close
     const usdcBefore = await fix.usdc.balanceOf(fix.trader1.address);
@@ -2315,6 +2491,9 @@ describe("Regression — N-1: closeShort SWAP-2 reserve symmetry", function () {
     // Pump price up — long profits, short loses
     await fix.usdc.mint(fix.trader3.address, ethers.parseUnits("3000", 6));
     await fix.pool.connect(fix.trader3).swap(ethers.parseUnits("3000", 6), 0n, false, fix.trader3.address);
+    // Age the move out of the settlement clamp window: settlement prices
+    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
+    await mine(SETTLE_GUARD_BLOCKS);
 
     // Long should be closeable (profitable) — verify by closing
     await expect(fix.pool.connect(fix.trader1).closeLong(longId, 0n)).to.not.be.reverted;
@@ -2328,6 +2507,9 @@ describe("Regression — N-1: closeShort SWAP-2 reserve symmetry", function () {
     const dump = ethers.parseEther("9000000");
     await fix.baseToken.mint(fix.trader3.address, dump);
     await fix.pool.connect(fix.trader3).swap(dump, 0n, true, fix.trader3.address);
+    // Age the move out of the settlement clamp window: settlement prices
+    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
+    await mine(SETTLE_GUARD_BLOCKS);
 
     // Now short should be profitable — verify by closing
     await expect(fix.pool.connect(fix.trader2).closeShort(shortId, 0n)).to.not.be.reverted;
@@ -2349,6 +2531,9 @@ describe("Regression — N-1: closeShort SWAP-2 reserve symmetry", function () {
     const dump = ethers.parseEther("9000000");
     await fix.baseToken.mint(fix.trader3.address, dump);
     await fix.pool.connect(fix.trader3).swap(dump, 0n, true, fix.trader3.address);
+    // Age the move out of the settlement clamp window: settlement prices
+    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
+    await mine(SETTLE_GUARD_BLOCKS);
 
     await expect(fix.pool.connect(fix.trader1).closeShort(nftId, 0n)).to.not.be.reverted;
   });
@@ -2376,8 +2561,8 @@ describe("Regression — N-2: renewPosition fee uses notional for shorts", funct
     // base fee on mark (= usdcIn, surplus is 0 on a fresh position) plus the
     // position's OI impact slice (it is the only short → offset 0).
     const BPS_DENOM = 10_000n;
-    const LP_FEE_BPS = 300n;
-    const PROTO_FEE_BPS = 200n;
+    const LP_FEE_BPS = 400n;
+    const PROTO_FEE_BPS = 100n;
     const IMPACT_FEE_BPS = 1500n;
     const backed = await fix.pool.backedAirUsd();
     const expectedFee = (pos.usdcIn * PROTO_FEE_BPS) / BPS_DENOM
@@ -2468,6 +2653,9 @@ describe("Regression — N2-L3: PositionClosed event payout", function () {
     // Pump to make the long profitable
     await fix.usdc.mint(fix.trader2.address, ethers.parseUnits("3000", 6));
     await fix.pool.connect(fix.trader2).swap(ethers.parseUnits("3000", 6), 0n, false, fix.trader2.address);
+    // Age the move out of the settlement clamp window: settlement prices
+    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
+    await mine(SETTLE_GUARD_BLOCKS);
 
     const tx = await fix.pool.connect(fix.trader1).closeLong(nftId, 0n);
     const receipt = await tx.wait();
@@ -2506,33 +2694,10 @@ describe("Regression — N2-I1: openPositionCount tracks correctly through lifec
     // Close long1 (pump first so it is profitable)
     await fix.usdc.mint(fix.trader2.address, ethers.parseUnits("3000", 6));
     await fix.pool.connect(fix.trader2).swap(ethers.parseUnits("3000", 6), 0n, false, fix.trader2.address);
+    // Age the move out of the settlement clamp window: settlement prices
+    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
+    await mine(SETTLE_GUARD_BLOCKS);
     await fix.pool.connect(fix.trader1).closeLong(long1, 0n);
     expect(await fix.pool.openPositionCount()).to.equal(2n);
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Regression — N2-I2: quotePositionFee view
-// ═══════════════════════════════════════════════════════════════════════════════
-
-// quotePositionFee view was removed in deployment size optimization.
-// Fee correctness is tested in ImpactFee.ts and EXNIHILORouter.ts.
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Regression — N2-I3: setPositionCaps no-op when unchanged
-// ═══════════════════════════════════════════════════════════════════════════════
-
-describe("Regression — N2-I3: setPositionCaps no-op", function () {
-  it("does not revert when values are unchanged", async function () {
-    const fix = await loadFixture(deployPoolFixture);
-
-    // First call
-    await fix.pool.connect(fix.creator).setPositionCaps(1000n, 500n);
-    expect(await fix.pool.maxPositionUsd()).to.equal(1000n);
-    expect(await fix.pool.maxPositionBps()).to.equal(500n);
-
-    // Same values — should not revert
-    await expect(fix.pool.connect(fix.creator).setPositionCaps(1000n, 500n))
-      .to.not.be.reverted;
   });
 });

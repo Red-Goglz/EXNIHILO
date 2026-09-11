@@ -67,10 +67,7 @@ async function main() {
   const tx = await factory.connect(deployer).createMarket(
     await baseToken.getAddress(),
     USDC_INITIAL,
-    TOKEN_INITIAL,
-    0n, // no position cap
-    0n, // no bps cap
-    0n); // positionDuration: 0 = default 7 days
+    TOKEN_INITIAL);
   const receipt = await tx.wait();
   console.log("createMarket succeeded! Gas used:", receipt?.gasUsed.toString());
 

@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
+import { loadFixture, time } from "@nomicfoundation/hardhat-network-helpers";
+import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 import {
   EXNIHILOPool,
   EXNIHILOFactory,
@@ -21,12 +22,10 @@ const TRADER_USDC    = ethers.parseUnits("1000", 6);
 const TRADER_TOKEN   = ethers.parseEther("10000");
 const SWAP_FEE_BPS   = 100n;
 const BPS_DENOM      = 10_000n;
-const LP_FEE_BPS     = 300n;
-const PROTO_FEE_BPS  = 200n;
+const LP_FEE_BPS     = 400n;
+const PROTO_FEE_BPS  = 100n;
 const IMPACT_FEE_BPS = 1500n;
 const MIN_POS_FEE    = 50_000n; // 0.05 USDC
-const MAX_POS_USD    = ethers.parseUnits("9000", 6);
-const MAX_POS_BPS    = 9000n;
 
 /** Compute the position fee exactly as the pool + router do (base + OI-integral impact). */
 function positionFee(notional: bigint, backedAirUsd: bigint = INITIAL_USDC, oi: bigint = 0n): bigint {
@@ -81,7 +80,6 @@ async function deploySystem(
       await lpNft.getAddress(),
       usdcAddr,
       treasuryAddr,
-      SWAP_FEE_BPS,
       await poolDeployer.getAddress()
     )) as unknown as EXNIHILOFactory;
 
@@ -128,10 +126,10 @@ async function deployRouterFixture() {
   const tx = await factory.connect(creator).createMarket(
     await baseToken.getAddress(),
     INITIAL_USDC,
-    INITIAL_TOKEN,
-    MAX_POS_USD,
-    MAX_POS_BPS,
-    0n);
+    INITIAL_TOKEN);
+  // Position caps ramp 1 %→20 % over 24 h. These tests are not about
+  // caps, so start past the ramp where size is not the constraint.
+  await time.increase(24 * 3600);
   const receipt = await tx.wait();
   const log = receipt!.logs
     .map((l) => { try { return factory.interface.parseLog(l); } catch { return null; } })
@@ -345,6 +343,20 @@ describe("EXNIHILORouter", function () {
 
       expect(tokenBefore - tokenAfter).to.equal(amountIn);
       expect(usdcAfter).to.be.gt(usdcBefore);
+    });
+
+    it("Swap event names the router as sender and the trader as recipient", async function () {
+      // The common path in production, and a trap for anything indexing Swap:
+      // `sender` is the router contract, not the human. Attribution has to come
+      // from `recipient`.
+      const { router, pool, trader1, poolAddress, routerAddr } =
+        await loadFixture(deployRouterFixture);
+
+      const amountIn = ethers.parseEther("1000");
+
+      await expect(router.connect(trader1).swap(poolAddress, amountIn, 0n, true))
+        .to.emit(pool, "Swap")
+        .withArgs(routerAddr, trader1.address, true, amountIn, anyValue, anyValue, anyValue);
     });
 
     it("USDC→token: trader receives tokens, USDC leaves wallet", async function () {

@@ -22,11 +22,6 @@ export const exnihiloFactoryAbi = [
         "type": "address"
       },
       {
-        "internalType": "uint256",
-        "name": "defaultSwapFeeBps_",
-        "type": "uint256"
-      },
-      {
         "internalType": "address",
         "name": "poolDeployer_",
         "type": "address"
@@ -34,6 +29,11 @@ export const exnihiloFactoryAbi = [
     ],
     "stateMutability": "nonpayable",
     "type": "constructor"
+  },
+  {
+    "inputs": [],
+    "name": "LpNftIdMismatch",
+    "type": "error"
   },
   {
     "inputs": [],
@@ -54,6 +54,21 @@ export const exnihiloFactoryAbi = [
       }
     ],
     "name": "SafeERC20FailedOperation",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "TokenIsUsdc",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ZeroAddress",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ZeroAmount",
     "type": "error"
   },
   {
@@ -135,21 +150,6 @@ export const exnihiloFactoryAbi = [
         "internalType": "uint256",
         "name": "tokenAmount",
         "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "maxPositionUsd",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "maxPositionBps",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "positionDuration",
-        "type": "uint256"
       }
     ],
     "name": "createMarket",
@@ -166,19 +166,6 @@ export const exnihiloFactoryAbi = [
       }
     ],
     "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "defaultSwapFeeBps",
-    "outputs": [
-      {
-        "internalType": "uint256",
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "stateMutability": "view",
     "type": "function"
   },
   {

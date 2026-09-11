@@ -139,7 +139,6 @@ export async function deployProtocol(
     await lpNft.getAddress(),
     await usdc.getAddress(),
     treasury.address,
-    SWAP_FEE_BPS,
     await poolDeployer.getAddress()
   )) as EXNIHILOFactory;
 

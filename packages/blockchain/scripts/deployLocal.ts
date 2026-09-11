@@ -75,7 +75,6 @@ async function main() {
     lpNFTAddress,
     usdcAddress,
     treasury.address,
-    100n, // defaultSwapFeeBps = 1%
     poolDeployerAddress
   );
   await factory.waitForDeployment();
@@ -128,35 +127,30 @@ async function main() {
   // 7. Create markets with varied LP sizes
   //    Each market is seeded by deployer (who becomes the LP NFT holder).
   //    LP sizes intentionally varied to give the UI different TVLs / prices.
-  //    format: [symbolIndex, usdcSeed (6dec), tokenSeed (18dec), swapFeeBps]
-  //   format: [symbol, usdcSeed, tokenSeed, feeBps, maxPositionUsd, maxPositionBps]
-  //   maxPositionUsd: hard USD cap per position (6 dec). 0 = no cap.
-  //   maxPositionBps: % cap on backedAirUsd in bps (10–9900). 0 = no cap.
-  const marketSpecs: [string, bigint, bigint, bigint, bigint, bigint][] = [
-    // ARENA — small pool, low price (~$0.001 / token), capped at $10 per position
-    ["ARENA",   500n   * 1_000_000n,  500_000n * 10n ** 18n, 100n,
-      10n * 1_000_000n, // maxPositionUsd = $10
-      0n],              // no bps cap
-    // NOCHILL — medium pool, ~$1 / token, no caps
-    ["NOCHILL", 20_000n * 1_000_000n,  20_000n * 10n ** 18n, 100n,
-      0n, 0n],
-    // RGOGLZ  — larger pool, ~$5 / token, capped at 1% of pool per position
-    ["RGOGLZ",  50_000n * 1_000_000n,  10_000n * 10n ** 18n, 50n,
-      0n,               // no USD cap
-      100n],            // maxPositionBps = 1% of backedAirUsd
-    // BANDS   — small pool, very cheap token (~$0.0001), capped at $10 and 5%
-    ["BANDS",   1_000n  * 1_000_000n, 10_000_000n * 10n ** 18n, 100n,
-      10n * 1_000_000n, // maxPositionUsd = $10
-      500n],            // maxPositionBps = 5% of backedAirUsd
-    // WAVAX   — large pool, ~$25 / token, no caps
-    ["WAVAX",  100_000n * 1_000_000n,   4_000n * 10n ** 18n, 30n,
-      0n, 0n],
+  //   format: [symbol, usdcSeed (6dec), tokenSeed (18dec)]
+  //
+  //   Per-position caps, position lifetime and the swap fee are no longer
+  //   per-market settings: the pool ramps the first two from its own age
+  //   (currentMaxPositionBps / currentPositionDuration) and the fee is a
+  //   contract constant at 1 %. Seed sizes are the only knob left, and they
+  //   are varied here to give the UI different TVLs and prices.
+  const marketSpecs: [string, bigint, bigint][] = [
+    // ARENA — small pool, low price (~$0.001 / token)
+    ["ARENA",   500n   * 1_000_000n,  500_000n * 10n ** 18n],
+    // NOCHILL — medium pool, ~$1 / token
+    ["NOCHILL", 20_000n * 1_000_000n,  20_000n * 10n ** 18n],
+    // RGOGLZ  — larger pool, ~$5 / token
+    ["RGOGLZ",  50_000n * 1_000_000n,  10_000n * 10n ** 18n],
+    // BANDS   — small pool, very cheap token (~$0.0001)
+    ["BANDS",   1_000n  * 1_000_000n, 10_000_000n * 10n ** 18n],
+    // WAVAX   — large pool, ~$25 / token
+    ["WAVAX",  100_000n * 1_000_000n,   4_000n * 10n ** 18n],
   ];
 
   console.log("\n─── Creating markets ───────────────────────────────────");
   const poolAddresses: Record<string, string> = {};
 
-  for (const [symbol, usdcSeed, tokenSeed, feeBps, maxPosUsd, maxPosBps] of marketSpecs) {
+  for (const [symbol, usdcSeed, tokenSeed] of marketSpecs) {
     const baseToken = baseTokens.find(t => t.symbol === symbol)!;
 
     await usdc.connect(deployer).approve(factoryAddress, usdcSeed);
@@ -165,10 +159,7 @@ async function main() {
     const tx = await factory.connect(deployer).createMarket(
       baseToken.address,
       usdcSeed,
-      tokenSeed,
-      maxPosUsd,
-      maxPosBps,
-      0n // positionDuration: 0 = default 7 days
+      tokenSeed
     );
     const receipt = await tx.wait();
 
