@@ -34,5 +34,5 @@ cleared on every ownership change. A buyer must call `setAutoRenew` themselves
 ## Important notes
 
 - Only the current NFT owner can close or renew the position before its deadline
-- After the deadline, anyone can settle expired positions (via `settleExpired`, earning a 0.05 USDC bounty)
+- After the deadline, anyone can settle expired positions (via `settleExpired`)
 - Transferring the NFT does not change the position's parameters (entry price, debt, fees paid, deadline) — only the auto-renew flag resets

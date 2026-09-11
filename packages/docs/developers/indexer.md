@@ -91,7 +91,7 @@ which desynchronises it from `VITE_INDEXER_URL_*`.
 
 ## Fee accounting — read this before changing handlers
 
-The LP/protocol fee split is **never** derived from the 3%/2% bps constants. The
+The LP/protocol fee split is **never** derived from the 4%/1% bps constants. The
 pool routes the whole impact fee to LPs and takes a separate close fee on
 surplus, so the ratio moves with crowding and depth.
 

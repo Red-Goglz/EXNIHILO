@@ -1,5 +1,5 @@
 ---
-description: "Every EXNIHILO fee in one table: the 5% open premium, the dynamic impact fee, renewal, swaps, the 1% close fee on profit, and the keeper bounty."
+description: "Every EXNIHILO fee in one table: the 5% open premium, the dynamic impact fee, renewal, swaps, and the 1% close fee on profit."
 ---
 
 # Fee Structure
@@ -10,21 +10,20 @@ All fees are deterministic, on-chain, and non-upgradeable.
 
 | Fee | Rate | Recipient | When |
 |---|---|---|---|
-| Position open (base) | 5% of USDC notional | 3% LP + 2% protocol | Every long/short open |
+| Position open (base) | 5% of USDC notional | 4% LP + 1% protocol | Every long/short open |
 | Position open (impact) | Dynamic — see formula below | LP | Every long/short open |
 | Position renewal | Dynamic — see formula below | 3/2 LP/protocol split; impact slice → LP | Every renewal |
 | Swap | Configurable (default 1%) | Pool (passive LP yield) | Every swap |
 | Position close | 1% of profit | Protocol | Profitable closes only |
-| Keeper bounty | 0.05 USDC flat | Whoever calls `settleExpired` | Expired-position settlement |
 | Liquidity ops | 0% | — | Add / withdraw liquidity |
 
 ## Position open fee — 5% base + dynamic impact fee
 
 **Base fee** split (both accrue as pull payments):
-- **3%** → `lpFeesAccumulated` (claimable by LP via `claimFees(to)`)
-- **2%** → `protocolFeesAccumulated` (claimable by treasury via `claimProtocolFees(to)`)
+- **4%** → `lpFeesAccumulated` (claimable by LP via `claimFees(to)`)
+- **1%** → `protocolFeesAccumulated` (claimable by treasury via `claimProtocolFees(to)`)
 
-Minimum floor: **0.05 USDC** (split 3/5 LP, 2/5 protocol). Applies when 5% of notional would be less than 0.05 USDC.
+Minimum floor: **0.05 USDC** (split 4/5 LP, 1/5 protocol). Applies when 5% of notional would be less than 0.05 USDC.
 
 **Impact fee** (LP drain protection):
 
@@ -51,7 +50,7 @@ Renewal re-buys the position's optionality and its open-interest slot at **today
 
 ```
 mark      = N + surplus                       // current gross value, floored at N
-baseFee   = 5% of mark                        // 3% LP + 2% protocol, 0.05 USDC floor
+baseFee   = 5% of mark                        // 4% LP + 1% protocol, 0.05 USDC floor
 impactFee = IMPACT_FEE_BPS × N × (2×(OI−N) + N)
             ───────────────────────────────────  → LP
                 2 × backedAirUsd × BPS_DENOM
@@ -72,7 +71,12 @@ Properties:
 
 ## Swap fee
 
-Set at pool creation as `swapFeeBps` (immutable). Applied to all three AMM curves.
+A fixed 1% (`swapFeeBps`, a contract constant). Applied to all three AMM curves.
+
+It was a per-pool constructor parameter floored at this same 1%, and every pool
+ever deployed took the floor. Making it a constant removes the only setting that
+could have differed between markets — every EXNIHILO pool charges the same swap
+fee, and no deployment can produce one that does not.
 
 The fee is computed on the spot value of the input, giving a true percentage-of-notional fee regardless of trade size. The fee stays in the pool, implicitly increasing the LP's reserves.
 
@@ -85,14 +89,16 @@ Only charged on profitable closes:
 ## Constants
 
 ```solidity
-LP_FEE_BPS       = 300   // 3%
-PROTOCOL_FEE_BPS = 200   // 2%
-IMPACT_FEE_BPS   = 1500  // 15% impact scaling rate
-MIN_POSITION_FEE = 50000 // 0.05 USDC
-CLOSE_FEE_BPS    = 100   // 1%
-KEEPER_BOUNTY    = 50000 // 0.05 USDC flat, paid by settleExpired
+LP_FEE_BPS          = 400   // 4%
+PROTOCOL_FEE_BPS    = 100   // 1%
+IMPACT_FEE_BPS      = 1500  // 15% impact scaling rate
+MIN_POSITION_FEE    = 50000 // 0.05 USDC
+CLOSE_FEE_BPS       = 100   // 1%
+SETTLE_GUARD_BPS    = 100   // 1% move of either settlement price in a block arms the guard
+SETTLE_GUARD_BLOCKS = 5     // blocks third-party settlement stays blocked
+RENEW_MARGIN_BPS    = 200   // auto-renew equity margin, 2% of mark
 ```
 
-The keeper bounty is a flat constant rather than gas-derived because the pool is oracle-free — it cannot convert gas (native units) into USDC on-chain. 0.05 USDC comfortably exceeds the L2 gas cost of the call.
+Settling an expired position pays its caller nothing. A bounty carved from the settlement flow can exceed the payout it is carved from — on a position whose surplus is smaller than the bounty, the caller takes all of it and the holder receives nothing. Cleanup instead runs on the incentives the parties already have: the LP earns the renewal fee on an auto-renew and frees its capital on a close, and the holder collects their own payout by closing before or after the deadline.
 
 These are hardcoded constants — not configurable after deployment.

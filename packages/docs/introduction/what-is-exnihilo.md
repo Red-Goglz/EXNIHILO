@@ -49,9 +49,10 @@ The fee has a **0.05 USDC floor**, so a $1 position is economically real. There 
 minimum account size.
 
 ::: tip These figures scale with the pool
-$100 is an illustration, not what is currently openable. Each pool's LP sets a position
-cap (commonly 1% of reserves), and liquidity is being scaled up deliberately while the
-protocol is young — so today's maximum position is much smaller.
+$100 is an illustration, not what is currently openable. Every market caps a single
+position at 1% of its reserves on day one, widening automatically to 20% over the first
+24 hours, and liquidity is being scaled up deliberately while the protocol is young — so
+today's maximum position is much smaller.
 
 The [app](https://exnihilo.markets/app) shows each pool's live maximum position,
 effective fee rate and break-even move, read straight from the contracts. Trust those
@@ -62,7 +63,7 @@ very small positions pay a proportionally higher fee.
 :::
 
 ::: warning Two things to understand before you trade
-**Positions expire.** Each pool sets a `positionDuration` (default 7 days). Renew before
+**Positions expire.** A position's lifetime comes from the market's age — 1 hour on a brand-new market, stepping up to 30 days once it is a week old. Renew before
 the deadline, opt into auto-renewal, or the position settles. You must be right *within
 the window*.
 
@@ -86,8 +87,9 @@ See [Key Concepts](./key-concepts) for a deeper explanation.
 
 Each pool has exactly one liquidity provider, and that LP is the counterparty to every
 position in it — your profit is paid out of their liquidity. In option terms, the LP is
-the writer. They set position caps to bound their exposure and earn the premium on every
-position opened. See [Fee Earnings](/lp/fees).
+the writer. They earn the premium on every position opened, and their exposure is
+bounded by an automatic [position cap](/lp/position-caps) that no one can widen.
+See [Fee Earnings](/lp/fees).
 
 ## Chains
 

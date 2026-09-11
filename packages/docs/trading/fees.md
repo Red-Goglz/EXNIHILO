@@ -21,10 +21,10 @@ Applied to the USDC notional when opening a long or short:
 
 | Recipient | Share | Description |
 |---|---|---|
-| LP | 3% + impact fee | Base 3% accumulated in `lpFeesAccumulated`, claimable via `claimFees()`. Impact fee also goes entirely to LP. |
-| Protocol Treasury | 2% | Accumulated in `protocolFeesAccumulated`, claimable via `claimProtocolFees()` (pull payment) |
+| LP | 4% + impact fee | Base 4% accumulated in `lpFeesAccumulated`, claimable via `claimFees()`. Impact fee also goes entirely to LP. |
+| Protocol Treasury | 1% | Accumulated in `protocolFeesAccumulated`, claimable via `claimProtocolFees()` (pull payment) |
 
-A minimum floor of **0.05 USDC** applies — if 5% of notional is less than this, the floor is used instead (split 3/5 LP, 2/5 protocol).
+A minimum floor of **0.05 USDC** applies — if 5% of notional is less than this, the floor is used instead (split 4/5 LP, 1/5 protocol).
 
 ### Impact Fee (LP drain protection)
 
@@ -57,14 +57,14 @@ full formula is in [Protocol Fees](/protocol/fees#position-renewal-fee-dynamic).
 
 Renewals stack — each call adds one period. With
 [auto-renewal](/positions/expiry#auto-renewal-opt-in) enabled, the fee (plus a
-0.05 USDC keeper bounty) is paid from the position's own profit instead of
+is paid from the position's own profit instead of
 your wallet.
 
-## Swap Fee — Configurable (default 1%)
+## Swap Fee — 1%, fixed
 
 Applied to all three AMM curves (SWAP-1, SWAP-2, SWAP-3). The fee is computed on the spot value of the input and stays in the pool as passive LP yield.
 
-The swap fee is set at pool creation and is immutable.
+The swap fee is a contract constant. It is the same on every market, cannot be set at pool creation, and cannot be changed afterwards by anyone.
 
 ## Position Close Fee — 1% of profit
 
@@ -74,9 +74,8 @@ When closing a profitable position, 1% of the surplus is sent to the protocol tr
 
 | Action | Fee | Goes to |
 |---|---|---|
-| Open long/short | 5% base + impact fee | 3% + impact → LP, 2% → protocol |
-| Renew / extend | Dynamic: 5% of mark + OI slice | 3/5 of base → LP, 2/5 → protocol; slice → LP |
+| Open long/short | 5% base + impact fee | 4% + impact → LP, 1% → protocol |
+| Renew / extend | Dynamic: 5% of mark + OI slice | 4/5 of base → LP, 1/5 → protocol; slice → LP |
 | Swap | 1% (configurable) | Pool (LP yield) |
 | Close (profit only) | 1% of profit | Protocol |
-| Expired-position settlement | 0.05 USDC flat bounty | Whoever calls `settleExpired` |
 | Add/withdraw liquidity | 0% | — |

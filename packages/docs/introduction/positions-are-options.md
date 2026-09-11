@@ -16,7 +16,7 @@ EXNIHILO positions are not margin trades. They have the exact shape of an option
 | **Premium** — paid upfront, non-refundable | The open fee: 5% of notional + impact fee |
 | **Max loss = premium** | Max loss = the fee you paid |
 | **Strike** | The pool's spot price at open — always at-the-money |
-| **Expiry** | The pool's `positionDuration` (default 7 days) |
+| **Expiry** | Set by market age: 1 hour when new, up to 30 days once a week old |
 | **Rolling to the next expiry** | `renewPosition` — pay the renewal fee |
 | **Expires worthless** | Underwater at deadline → position settles, you get nothing |
 | **Exercise** | `closeLong` / `closeShort` — settle in USDC at any time while in profit |
@@ -103,8 +103,9 @@ raises your break-even. See [Expiry & Renewal](/positions/expiry).
 curves, so the relationship between token price and P&L bends with position size.
 
 **4. The writer is one party, not a market.** Every pool has exactly one LP, and that LP
-is the counterparty to every position in it. They set the position caps and they carry
-the risk. See [Fee Earnings](/lp/fees#you-are-the-counterparty).
+is the counterparty to every position in it. They carry the risk, bounded by a
+[position cap](/lp/position-caps) the protocol sets automatically rather than they do.
+See [Fee Earnings](/lp/fees#you-are-the-counterparty).
 
 ## Who pays for your profit
 

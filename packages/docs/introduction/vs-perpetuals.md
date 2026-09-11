@@ -81,7 +81,8 @@ alive than a fresh one. Each renewal raises your break-even. See
 
 **4. You want depth, or a token nobody has listed.**
 Every EXNIHILO pool has exactly one LP who is the counterparty to every position in it,
-and that LP sets the position caps. Pools are small on purpose right now. A major perp
+and a single position is capped at a share of pool reserves — 1% on day one, 20% after
+24 hours. Pools are small on purpose right now. A major perp
 venue's book is deeper than any pool here by orders of magnitude.
 
 ## Where EXNIHILO is the better instrument
@@ -118,8 +119,8 @@ Worth being direct, since the vocabulary overlaps. EXNIHILO has:
 - no indefinite position lifetime — every position has a deadline
 
 An EXNIHILO long is a **call**; a short is a **put**. The open fee is the premium, the
-strike is the pool's spot price at open (always at-the-money), and expiry is the pool's
-`positionDuration`. If you know options, you already know this instrument. If you were
+strike is the pool's spot price at open (always at-the-money), and expiry is set by the
+market's age. If you know options, you already know this instrument. If you were
 looking specifically for a perp, this is not one.
 
 ## What can go wrong

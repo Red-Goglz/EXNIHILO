@@ -20,8 +20,7 @@ The LP NFT holder has exclusive authority over all LP operations.
 Whoever holds the LP NFT can:
 - **Add liquidity** — deposit more tokens + USDC
 - **Withdraw liquidity** — remove tokens + USDC when there is no open position (long or short)
-- **Claim fees** — withdraw accumulated LP fees (3% of position opens)
-- **Set position caps** — limit individual position sizes
+- **Claim fees** — withdraw accumulated LP fees (4% of position opens)
 - **Close a market** — no new positions or renewals. But trading remains open. 
 
 ## Transferring LP ownership

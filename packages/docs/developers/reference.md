@@ -15,15 +15,14 @@ description: "Function reference for EXNIHILOPool, Factory, Router and the NFT c
 | `openShort(uint256 usdcNotional, uint256 minAirUsdOut, address recipient)` | Anyone | Open a short position, NFT minted to `recipient` |
 | `closeLong(uint256 nftId, uint256 minUsdcOut)` | Position owner | Close long via AMM, receive USDC profit directly |
 | `closeShort(uint256 nftId, uint256 minUsdcOut)` | Position owner | Close short via AMM, receive USDC profit directly |
-| `renewPosition(uint256 nftId, uint256 maxFee)` | Position owner | Pay the dynamic renewal fee (quote via `quoteRenewFee`) to extend the deadline by one period; reverts if the fee exceeds `maxFee` |
-| `closePositionAfterDeadline(uint256 nftId, uint256 minPayout)` | Anyone | Settle an expired position (profitable: payout credited to holder's claimable balance; underwater: collateral returns to LP). Reverts `AutoRenewActive` if an executable auto-renewal exists |
-| `settleExpired(uint256 nftId, uint256 minPayout)` | Anyone | Settle an expired position with a 0.05 USDC caller bounty; auto-renews from position equity instead of closing when the holder opted in via `PositionNFT.setAutoRenew` |
+| `renewPosition(uint256 nftId, uint256 maxFee)` | Position owner | Pay the dynamic renewal fee (quote via `quoteRenewFee`) to extend the deadline by one period; reverts if the fee exceeds `maxFee`. Extends from the existing deadline, so renewals stack — reverts `RenewalExceedsHorizon` if the result would land more than 60 days out, or `RenewalExceedsCloseDate` past a closing pool's `closeDate` |
+| `closePositionAfterDeadline(uint256 nftId, uint256 minPayout)` | Anyone | Settle an expired position (profitable: payout credited to holder's claimable balance; underwater: collateral returns to LP). Reverts `AutoRenewActive` if an executable auto-renewal exists, `SettlementGuardActive` for non-holders within 5 blocks of a swap ≥ 1% of USDC depth |
+| `settleExpired(uint256 nftId, uint256 minPayout)` | Anyone | Settle an expired position; auto-renews from position equity instead of closing when the holder opted in via `PositionNFT.setAutoRenew`. The caller is not paid. Same `SettlementGuardActive` window as above |
 | `claimPayout(address to)` | Credited holder | Withdraw payouts credited by expired-position settlements |
 | `addLiquidity(uint256 tokenAmount, uint256 usdcAmount)` | LP only | Add liquidity (must match reserve ratio) |
 | `removeLiquidity()` | LP only | Withdraw all liquidity (requires zero open positions) |
 | `claimFees(address to)` | LP only | Claim accrued LP fees (fees are pull payments) |
 | `claimProtocolFees(address to)` | Treasury only | Claim accrued protocol fees |
-| `setPositionCaps(uint256 newUsd, uint256 newBps)` | LP only | Set position size caps |
 | `closePool()` | LP or deployer | Start pool wind-down (no new positions; all expire by closeDate) |
 
 ### View functions
@@ -41,14 +40,20 @@ description: "Function reference for EXNIHILOPool, Factory, Router and the NFT c
 | `claimable(address)` | Credited payout awaiting withdrawal |
 | `totalClaimable()` | Sum of all outstanding credited payouts |
 | `totalShortCollateral()` | Sum of `lockedAmount` across open shorts. USDC the pool holds but owes to traders; included in the reserve invariant |
-| `maxPositionUsd()` / `maxPositionBps()` | Position caps |
-| `swapFeeBps()` | Swap fee in bps |
+| `currentMaxPositionBps()` | Current position cap in bps (100 at creation → 2000 after 24h) |
+| `effectiveLeverageCap()` | That cap applied to live reserves, in USDC |
+| `createdAt()` | Market creation timestamp — anchors the cap ramp |
+| `swapFeeBps()` | Swap fee in bps — always 100 (1%), a constant |
 | `openPositionCount()` | Number of open positions |
-| `effectiveLeverageCap()` | Effective position cap in USDC |
 | `quoteOpenFee(uint256 notional, bool isLong)` | Total USDC fee to open a position now |
 | `quoteRenewFee(uint256 nftId)` | Total USDC fee to renew a position now (dynamic: mark value + OI slice) |
-| `quoteClose(uint256 nftId)` | `(ready, pnl)` — live close quote mirroring settlement math |
-| `positionDuration()` / `closeDate()` / `isClosing()` | Expiry / wind-down state |
+| `quoteRenewDeadline(uint256 nftId)` | `(newDeadline, allowed)` — the deadline `renewPosition` would write right now, and whether it would be accepted. `allowed` is false once the position is extended to the 60-day horizon, or past `closeDate` on a closing pool. `newDeadline` is reported either way, so a caller can show how far the position must run down |
+| `quoteClose(uint256 nftId)` | `(ready, pnl)` — close quote mirroring settlement math, priced for the **next** block: it applies the same 5-block clamp a close mined then would face, so it never reports more than the pool will pay. When `ready` is false the position cannot be settled at all and `pnl` carries the *estimated* shortfall (negative, display-only) |
+| `settlementGuardedUntilBlock()` | First block at which a third party may settle an expired position; `0` = unguarded now, which includes any pool that is closing (the guard yields to a wind-down). Keepers should poll this instead of discovering the window through reverts |
+| `settlementGuardBps()` | Displacement threshold that arms the settlement guard, in bps (100 = 1% move of either settlement price within one block) |
+| `lastLargeSwapBlock()` | Block the guard was last armed in; `0` = never armed. Named for the swap-only rule it originally had — any reserve-moving call can arm it |
+| `currentPositionDuration()` | Lifetime a position opened now would receive (1h → 8h → 24h → 7d → 30d by market age) |
+| `closeDate()` / `isClosing()` | Wind-down state |
 | `indexerState()` | `(backedAirToken, backedAirUsd, longPrice, shortPrice, lpFeesLifetime, protocolFeesLifetime)` in one call — see below |
 
 #### `indexerState()`
@@ -70,6 +75,22 @@ a bare Hardhat node.
 ### Events
 
 ```solidity
+// Spot swaps (SWAP-1). Carries post-swap backed reserves so a consumer can
+// derive price and depth without a follow-up read. Deliberately NOT shaped like
+// a Uniswap V2 Swap: one input and one output per call, no token0/token1
+// ordering, and reserves that describe only the backed side — leveraged opens
+// and closes move the supply counters without emitting here.
+// Note: when routed, `sender` is the router. Attribute users via `recipient`.
+event Swap(
+    address indexed sender,
+    address indexed recipient,
+    bool    tokenToUsdc,
+    uint256 amountIn,
+    uint256 amountOut,
+    uint256 backedAirToken,
+    uint256 backedAirUsd
+);
+
 event PositionOpened(uint256 indexed nftId, address indexed holder, bool isLong);
 event PositionRenewed(uint256 indexed nftId, address indexed caller, uint256 feePaid, uint256 newDeadline, bool autoRenewed);
 event PositionClosed(uint256 indexed nftId, address indexed holder, uint256 payout);
@@ -85,7 +106,7 @@ event ProtocolFeesPaid(address indexed to, uint256 amount);
 
 | Function | Description |
 |---|---|
-| `createMarket(address tokenAddress, uint256 usdcAmount, uint256 tokenAmount, uint256 maxPositionUsd, uint256 maxPositionBps, uint256 positionDuration)` | Deploy a new market (positionDuration: 0 = 7-day default; token decimals read on-chain) |
+| `createMarket(address tokenAddress, uint256 usdcAmount, uint256 tokenAmount)` | Deploy a new market (token decimals read on-chain). Position caps and position duration are both automatic and take no arguments. |
 | `allPools(uint256 index)` | Get pool address by index |
 | `allPoolsLength()` | Total number of deployed pools |
 | `isPool(address)` | Whether an address is a factory-deployed pool |

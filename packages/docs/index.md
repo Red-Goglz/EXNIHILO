@@ -35,7 +35,7 @@ See [Positions Are Options](/introduction/positions-are-options) — it is the f
 way to understand the entire protocol.
 
 ::: warning Every position expires
-Positions run for the pool's `positionDuration` (default 7 days). Renew before the
+Positions run for a lifetime set by the market's age — 1 hour on a brand-new market, up to 30 days once it is a week old. Renew before the
 deadline, opt into auto-renewal, or the position settles. Underwater positions settle
 for nothing — you have to be right *within the window*.
 :::

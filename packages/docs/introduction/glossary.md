@@ -26,8 +26,7 @@ description: "Definitions for every EXNIHILO term — airToken and airUsd supply
 | **Position duration**       | Configurable per-pool time window (1 hour – 1 year, default 7 days) for each position period.                                                       |
 | **renewPosition**           | Pay the dynamic renewal fee (repriced at current position value and open interest) to extend a position's deadline by one period. Holder only.      |
 | **Auto-renewal**            | Opt-in (`PositionNFT.setAutoRenew`): at expiry, `settleExpired` renews the position from its own equity instead of closing it. Cleared on transfer. |
-| **settleExpired**           | Settle an expired position — callable by anyone, pays the caller a flat 0.05 USDC keeper bounty. Tries auto-renewal first; otherwise closes. Profit is credited to the holder as a claimable balance; if underwater, collateral returns to the LP. |
-| **closePositionAfterDeadline** | The bounty-free variant of `settleExpired`. Reverts with `AutoRenewActive` if the holder opted into auto-renewal, so it cannot be used to deny them a renewal. |
-| **Keeper bounty**           | Flat 0.05 USDC paid to whoever calls `settleExpired`, carved from the settlement flow and clamped to what is actually available. Makes cleanup economically viable without ever overdrawing the position. |
+| **settleExpired**           | Settle an expired position — callable by anyone, unpaid. Tries auto-renewal first; otherwise closes. Profit is credited to the holder as a claimable balance; if underwater, collateral returns to the LP. |
+| **closePositionAfterDeadline** | Close-only variant of `settleExpired`. Reverts with `AutoRenewActive` if the holder opted into auto-renewal, so it cannot be used to deny them a renewal. |
 | **Claimable balance**       | Pull payment. Third-party settlement credits `claimable[holder]` rather than pushing USDC, so a recipient that cannot receive tokens can never block cleanup. Withdraw with `claimPayout(to)`. |
 | **TVL**                     | Total Value Locked — the combined USDC value of real collateral in a pool.                                                                          |

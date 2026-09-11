@@ -95,7 +95,7 @@ All token operations use OpenZeppelin's `SafeERC20` library, which handles non-s
 ## Immutable architecture
 
 - The Factory has no owner and no admin functions
-- Pool parameters (swap fee, position duration, treasury, NFT contracts) are immutable after deployment
+- Pool parameters (treasury, NFT contracts) are immutable after deployment; the swap fee, position size cap and position duration are not parameters at all — the fee is a constant and the other two ramp from the pool's own age
 - `PositionNFT`'s factory binding is one-shot via `initFactory()`
 - Position state can only be mutated by the owning pool (`applyRenewal` checks `msg.sender == pos.pool`)
 - No proxy patterns, no `delegatecall`, no upgradability
@@ -111,11 +111,39 @@ and can be set to `address(0)` to relinquish it permanently.
 
 ## Audit status
 
-Four automated audit rounds have been performed, each across 11 independent
+Five automated audit rounds have been performed, each across 11 independent
 analysis passes using distinct model generations. The most recent supersedes the
 others.
 
-### Latest: Claude Opus 5 (2026-07-27)
+### Latest: Claude Opus 5 R2 (2026-08-20)
+
+**Scope:** the previously audited contracts, plus `PreMarket`, `PreMarketFactory`
+and `LockedLpVault` — 1,095 lines of new code no prior round had seen — and a
+587-line rewrite of `EXNIHILOPool`.
+
+**Result: 2 Critical | 4 High | 4 Medium | 15 Low | 18 Info | 1 Process**
+
+This round is **not clean**, and it is the first that is not. Value can be stolen
+by two unrelated mechanisms: the pool's new settlement guard does not aggregate
+price movement within a block, letting an LP suppress a holder's payout at zero
+cost; and a pre-market's entire reserve becomes buyable for $1 once its auction
+reaches the floor.
+
+**None of it is deployed.** Mainnet runs the contracts audited in the previous
+round. The affected code is a pending redeploy which, on this result, must not
+ship in its current form.
+
+The round also found **seven substantive errors in the previously published
+report** — including two findings carried as open work for four rounds that were
+never real — and a process failure: seven source comments assert security
+properties the code does not enforce, and two tests were written to confirm a
+comment rather than to attack the code.
+
+**[Read the full report →](./audit-report)** — all findings, the corrections and
+the scope limits, on this site. Raw per-pass files:
+[`.audit/findings-opus5-r2/`](https://github.com/Red-Goglz/EXNIHILO/tree/main/.audit/findings-opus5-r2).
+
+### Previous: Claude Opus 5 (2026-07-27)
 
 **Scope:** EXNIHILOPool, PositionNFT, EXNIHILOFactory, EXNIHILORouter, LpNFT,
 PoolDeployer, Faucet. (`AirToken.sol` was removed from the protocol before this
@@ -141,9 +169,14 @@ Two fixes were applied during the round:
 Both shipped with mutation-tested coverage (`ShortCollateralInvariant.ts`,
 `ZeroOutputSwap.ts`).
 
-**[Read the full report →](./audit-report)** — every open finding, the mutation results
-and the scope limits, on this site. Raw per-pass files:
+Raw per-pass files:
 [`.audit/findings-opus5/`](https://github.com/Red-Goglz/EXNIHILO/tree/main/.audit/findings-opus5).
+
+::: warning Superseded
+The R2 round above corrected seven conclusions from this report, including
+**NM-001** and **NM-002** — two findings it listed as open that were never real.
+Read it alongside this one, not in place of it.
+:::
 
 ### Claude Fable 5 (2026-07-09) — superseded
 
@@ -184,7 +217,7 @@ Cross-pass consensus was strong: the two top issues (`_trySendUsdc` accounting l
 | Socialize failed `_trySendUsdc` payouts into `lpFeesAccumulated` | `EXNIHILOPool.sol` | SI-001, ECS-2, NM-008, BSA-6, DoS-5 |
 | Router residual refund to caller + delete `sweep()` | `EXNIHILORouter.sol` | NM-006, NM-009, DoS-4, DoS-6, IA-10, SI-002, ECS-4, OFL-4 |
 | `closeShort` underflow guard mirroring `closeLong` | `EXNIHILOPool.sol` | SGA-2, IA-8 |
-| `MIN_SWAP_FEE_BPS = 100` floor (1 %) | `EXNIHILOPool.sol` | OFL-3; strengthens OFL-1 / OFL-2 accept-posture |
+| `swapFeeBps = 100` constant (1 %) | `EXNIHILOPool.sol` | OFL-3; strengthens OFL-1 / OFL-2 accept-posture |
 | `setDeployer` NatSpec clarifying `address(0)` is deliberate for permissionless handoff | `EXNIHILOFactory.sol` | NM-007, IA-7, SGA-4 (accepted-with-documentation) |
 
 Remaining open items are LOW or INFO: either mitigated by existing protocol mechanisms (atomic deployment, `closePool` fallback, MIN_POSITION_FEE), accepted by design (theoretical ERC-777 read-only reentrancy, treasury blacklist), or tied to pathological LP token choices (rebasing, extreme decimals).
@@ -211,4 +244,4 @@ The protocol has **414 tests** covering:
 - Blacklist resilience (DoS-2 fix + 4.7 socialization extension)
 - Router residual refund and `sweep()` removal (4.7 Router fix)
 - `closeShort` underwater revert path
-- `MIN_SWAP_FEE_BPS` constructor floor (0 / 99 / 100 / 10000 boundaries)
+- `swapFeeBps` is a constant: no constructor path can produce a pool at any other fee
