@@ -19,7 +19,7 @@ features:
   - title: Positions are NFTs
     details: Every position is a transferable ERC-721 with on-chain SVG art and live P&L. Sell the position without closing it.
   - title: No oracles, no token, no upgrade path
-    details: Price comes from the AMM's own curves. Contracts are immutable and there is no governance to capture. One emergency role can wind a pool down; it cannot move funds.
+    details: Price comes from the AMM's own curves. Contracts are immutable and there is no governance. One emergency role can wind a pool down; it cannot take funds.
 title: EXNIHILO Docs — long or short any ERC-20, no liquidation
 titleTemplate: false
 description: "Documentation for EXNIHILO — go long or short any ERC-20 token with no collateral and no liquidation risk. Start here."
@@ -27,26 +27,23 @@ description: "Documentation for EXNIHILO — go long or short any ERC-20 token w
 
 ## In one line
 
-**EXNIHILO positions are options.** A long is a call, a short is a put, the open fee is
-the premium, and the premium is the most you can lose. There is no strike to pick, no
-implied volatility, and no margin call.
+**EXNIHILO positions are options.** A long is a call, a short is a put, the open fee is the
+premium, and the premium is the most you can lose. There is no strike to pick and no margin
+call. [Positions Are Options](/introduction/positions-are-options) is the fastest way to
+understand the protocol.
 
-See [Positions Are Options](/introduction/positions-are-options) — it is the fastest
-way to understand the entire protocol.
-
-::: warning Every position expires
-Positions run for a lifetime set by the market's age — 1 hour on a brand-new market, up to 30 days once it is a week old. Renew before the
-deadline, opt into auto-renewal, or the position settles. Underwater positions settle
-for nothing — you have to be right *within the window*.
+::: warning Every position decays
+Positions never expire, but [funding](/positions/funding) charges rent by shrinking them —
+steeply on a brand-new market, slowly on a mature one. A losing position cannot be closed, so
+it has to recover before funding shrinks it away.
 :::
 
 <!--
-  These links are not decoration. The sidebar that normally reaches the rest of
-  the docs is rendered by the theme's Vue components, and on the home layout it
-  is collapsed away entirely — so the server HTML for this page previously
-  exposed exactly two links into a 31-page tree. Anything arriving here without
-  executing JavaScript (most AI retrieval crawlers, every link unfurler) could
-  see nothing else. Written as markdown links so they survive in the static
+  These links are not decoration. The sidebar that normally reaches the rest of the docs is
+  rendered by the theme's Vue components, and on the home layout it is collapsed away
+  entirely — so without them the server HTML for this page exposes almost no links into the
+  tree. Anything arriving without executing JavaScript (most AI retrieval crawlers, every link
+  unfurler) would see nothing else. Written as markdown links so they survive in the static
   output.
 -->
 
@@ -55,41 +52,37 @@ for nothing — you have to be right *within the window*.
 **Start here**
 [What is EXNIHILO](/introduction/what-is-exnihilo) ·
 [Positions Are Options](/introduction/positions-are-options) ·
-[Key Concepts](/introduction/key-concepts) ·
+[vs Perpetual Futures](/introduction/vs-perpetuals) ·
 [Glossary](/introduction/glossary)
 
 **Trading**
-[Opening a Long](/trading/opening-a-long) ·
-[Opening a Short](/trading/opening-a-short) ·
+[Opening a Position](/trading/opening) ·
 [Closing Positions](/trading/closing-realizing) ·
 [Swapping](/trading/swapping) ·
-[Fees](/trading/fees) ·
 [P&L](/trading/pnl)
 
 **Positions**
 [Position NFTs](/positions/position-nfts) ·
-[Transferring](/positions/transferring) ·
-[On-chain SVG Metadata](/positions/metadata) ·
-[Expiry & Renewal](/positions/expiry)
+[Funding](/positions/funding)
 
 **Providing liquidity**
-[LP NFT & Ownership](/lp/ownership) ·
-[Adding / Withdrawing](/lp/add-withdraw) ·
+[Running a Pool](/lp/ownership) ·
 [Fee Earnings](/lp/fees) ·
 [Position Caps](/lp/position-caps)
 
 **Markets**
 [Creating a Market](/markets/creating) ·
-[How Pricing Works](/markets/pricing) ·
-[Reserve Accounting](/markets/reserves)
+[Pricing & Reserves](/markets/pricing)
 
 **Protocol**
 [Architecture](/protocol/architecture) ·
 [Contract Addresses](/protocol/addresses) ·
-[Fee Structure](/protocol/fees) ·
-[Security](/protocol/security)
+[Fees](/protocol/fees) ·
+[Security](/protocol/security) ·
+[Audit Report](/protocol/audit-report)
 
 **Developers**
+[SDK](/developers/sdk) ·
 [Contract Reference](/developers/reference) ·
 [ABIs](/developers/abis) ·
 [Local Development](/developers/local-dev) ·

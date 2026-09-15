@@ -32,19 +32,22 @@ export default function PortfolioPage() {
 interface OnChainPosition {
   isLong: boolean;
   pool: `0x${string}`;
-  lockedAmount: bigint;
+  /** Collateral at open. Funding shrinks the live figure; ask the pool for it. */
+  lockedAmountAtOpen: bigint;
   usdcIn: bigint;
   airUsdMinted: bigint;
   airTokenMinted: bigint;
   feesPaid: bigint;
   openedAt: bigint;
-  deadline: bigint;
+  /** The pool's funding index for this side at mint, in RAY. */
+  fundingIndexAtOpen: bigint;
 }
 
 /**
- * Claimable payouts: expired positions closed by third parties credit the
- * holder's `claimable` balance on the pool (pull payment). This section
- * enumerates all pools and offers a one-tap claim wherever a balance exists.
+ * Claimable payouts: a swept position credits any residual to the holder's
+ * `claimable` balance on the pool rather than transferring it, so a sweep can
+ * never be blocked by the recipient. This section enumerates all pools and
+ * offers a one-tap claim wherever a balance exists.
  */
 function ClaimablePayouts({ address, factory }: { address: `0x${string}`; factory: `0x${string}` }) {
   const queryClient = useQueryClient();
@@ -353,7 +356,7 @@ function PortfolioContent() {
         </div>
       )}
 
-      {/* Claimable payouts from expiry-settled positions */}
+      {/* Claimable payouts credited by dust sweeps */}
       {address && <ClaimablePayouts address={address} factory={addrs.factory} />}
 
       {/* Not connected */}
@@ -435,8 +438,7 @@ function PortfolioContent() {
                   <th>MARKET</th>
                   <th>SIZE</th>
                   <th>EST. PNL</th>
-                  <th>EXPIRES</th>
-                  <th>AUTO-RENEW</th>
+                  <th colSpan={2}>FUNDING</th>
                   <th style={{ textAlign: "right" }}>ACTIONS</th>
                 </tr>
               </thead>
@@ -446,8 +448,6 @@ function PortfolioContent() {
                     key={tokenId.toString()}
                     tokenId={tokenId}
                     position={position}
-                    positionNFTAddress={addrs.positionNFT}
-                    underlyingUsdc={addrs.usdc}
                   />
                 ))}
               </tbody>
@@ -479,8 +479,6 @@ function PortfolioContent() {
                   key={tokenId.toString()}
                   tokenId={tokenId}
                   position={position}
-                  positionNFTAddress={addrs.positionNFT}
-                  underlyingUsdc={addrs.usdc}
                 />
               ))}
             </div>
@@ -508,8 +506,6 @@ function PortfolioContent() {
                   key={tokenId.toString()}
                   tokenId={tokenId}
                   position={position}
-                  positionNFTAddress={addrs.positionNFT}
-                  underlyingUsdc={addrs.usdc}
                 />
               ))}
             </div>

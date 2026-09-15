@@ -10,8 +10,8 @@ pre-flight checks that stop an integration failing in front of a user.
 
 It is a thin layer on purpose. Fee maths, position caps and settlement pricing
 all stay in the pool — the SDK never reimplements them, because the base fee has
-a floor, the impact fee moves with open interest, and the renewal fee reprices
-against a position's current mark. A client-side copy drifts the moment any of
+a floor, the impact fee moves with open interest, and the funding rate moves
+with market age and crowding. A client-side copy drifts the moment any of
 those change.
 
 ## Install
@@ -69,7 +69,9 @@ const market = await exnihilo.getMarket(pools[0]);
 | `currentMaxPositionBps` | Position cap in bps — 100 at launch, 2000 after 24h |
 | `effectiveLeverageCap` | That cap as a USDC notional. The largest position openable now |
 | `createdAt` | Market creation time. Anchors the cap ramp |
-| `currentPositionDuration` | Lifetime a position opened now would get — 1h → 8h → 24h → 7d → 30d by market age |
+| `fundingWindow` | Period one funding charge is levied over — `min(1 hour + market age, 30 days)` |
+| `fundingRateLong` / `fundingRateShort` | Each side's per-second funding rate in RAY |
+| `windDownShift` | Times the wind-down has doubled the rate; `0` while the pool is open |
 | `closeDate` | Non-zero once closure has begun; no new positions |
 
 ### Position caps
@@ -92,21 +94,21 @@ the ramp offline with no call:
 const inSixHours = projectPositionCapBps(market.createdAt, now + 6n * 3600n);
 ```
 
-### Position duration
+### The funding window
 
-Also automatic, and also a function of market age — 1 hour on a brand-new
-market, stepping to 8 hours, 24 hours, 7 days, and 30 days once the market is a
-week old. `getMarket` returns `currentPositionDuration`, and the same offline
-projection is available:
+Also automatic, and also a function of market age — one hour on a brand-new
+market, widening by one second per second to a 30-day ceiling. It sets how fast
+funding charges: a short window means a high rate, so a young market is
+expensive to hold a position on by design. `getMarket` returns
+`fundingWindow`, `fundingRateLong` and `fundingRateShort`, and the same
+offline projection is available:
 
 ```ts
-const tomorrow = projectPositionDuration(market.createdAt, now + 86_400n);
+const tomorrow = projectFundingWindow(market.createdAt, now + 86_400n);
 ```
 
-A position keeps the lifetime it was opened under; the step never retroactively
-extends anyone. A *renewal* uses the step current at renewal time, so an old
-position on an aged market extends by 30 days rather than by its original
-lifetime. See [Expiry & Renewal](/positions/expiry#position-duration).
+A position always pays the market's *current* rate, not the one in force when it
+opened. See [Funding](/positions/funding#the-rate).
 
 ## Quotes
 
@@ -114,7 +116,6 @@ All three proxy to the pool.
 
 ```ts
 const fee   = await exnihilo.quoteOpenFee(pool, notional, true); // isLong
-const renew = await exnihilo.quoteRenewFee(pool, tokenId);
 const close = await exnihilo.quoteClose(pool, tokenId);          // { ready, pnl }
 ```
 
@@ -124,13 +125,12 @@ and `pnl` is a display-only estimate of the shortfall.
 ## Trading
 
 Opens route through the router, so a user approves USDC once rather than per
-pool. Closes and renewals are holder-gated and go straight to the pool.
+pool. Closes are holder-gated and go straight to the pool.
 
 ```ts
 await exnihilo.openLong({ pool, notional: 100_000000n, minAmountOut });
 await exnihilo.openShort({ pool, notional: 100_000000n, minAmountOut });
-await exnihilo.closePosition(pool, tokenId, isLong, minUsdcOut);
-await exnihilo.renewPosition(pool, tokenId, maxFee);
+await exnihilo.closePosition(pool, tokenId, isLong, minUsdcOut, to);
 await exnihilo.swap(pool, amountIn, tokenToUsdc, minAmountOut);
 await exnihilo.claimPayout(pool, to);
 ```
@@ -148,24 +148,29 @@ if (!check.ok) return showError(check.reason);
 
 Note `totalRequired` is notional **plus** fee. That is what must be approved.
 
-### Renewal fees move
+### The close recipient
 
-The renewal fee is priced from live reserves, PnL and open interest, so it
-genuinely changes between blocks. Quote it immediately before sending and pass
-the result as `maxFee` — that argument exists to protect the holder from the
-fee moving under them.
+`closePosition` takes a `to`, defaulting to the caller. It is a parameter rather
+than a convention because a holder whose address cannot receive USDC would
+otherwise have no way to realise a winning position.
 
 ## Positions
 
 ```ts
-const state = await exnihilo.getPositionState(tokenId, nowSeconds);
-// position fields + owner, close: { ready, pnl }, isExpired, secondsToExpiry
-
-const { enabled, maxFee } = await exnihilo.getAutoRenew(tokenId);
+const state = await exnihilo.getPositionState(tokenId);
+// position fields + owner, close: { ready, pnl },
+// lockedAmount, debt, notional, remainingBps, isDust
 ```
 
-Auto-renew is funded from a position's own equity, so a profitable position can
-roll without its holder sending USDC.
+`lockedAmount`, `debt` and `notional` are what funding has left the position —
+all three shrink by the same fraction, so the break-even never moves.
+`remainingBps` is that fraction of what it opened with. The amounts on
+`Position` (`lockedAmountAtOpen`, `usdcIn`, `airUsdMinted`, `airTokenMinted`)
+are the opening figures and are *not* the current size — the collateral field's
+name is awkward on purpose, because a bare read of it is a bug you can spot
+without knowing the funding model.
+
+`isDust` means anyone may now call `sweepDust`.
 
 ## Launchpad integration
 
@@ -331,7 +336,8 @@ identical to burning it — but unlike a burn, the fee stream survives and is
 split between the project and the launchpad.
 
 The vault's only income is the pool's LP fee stream: **4% of notional** on every
-open and renewal, plus the whole impact fee. Protocol fees go to the treasury
+open, plus the whole impact fee. Funding is not included — it lands in the
+pool's reserves rather than becoming claimable. Protocol fees go to the treasury
 and are not part of this. Swap fees stay in the pool's reserves, so with a
 locked LP they permanently deepen the market rather than becoming claimable.
 
@@ -369,30 +375,24 @@ claim destination and nothing else. `integratorBps` is immutable.
 Not part of the partner surface, but shipped because someone has to run them.
 
 ```ts
-if (await exnihilo.canSettleNow(pool)) {
-  await exnihilo.settleExpired(pool, tokenId, minPayout);
+if (await exnihilo.canSweep(pool, tokenId)) {
+  await exnihilo.sweepDust(pool, tokenId);
 }
+await exnihilo.pokeFunding(pool); // optional — realises accrued funding without trading
 ```
 
-`settleExpired` is permissionless and clears expired positions. This matters
-more than it looks: open interest only decrements on settlement, and the impact
-fee is priced off open interest — so **an unswept market becomes progressively
-more expensive to trade**.
+`sweepDust` is permissionless and clears a position once funding has decayed it
+below 0.1 % of its opening collateral. A decayed position no longer affects
+prices or open interest — its debt decays with it — but it still counts as
+open, and an LP cannot withdraw until every position is gone. The threshold
+depends only on funding, so no price movement can make a sweep succeed or fail.
 
-With the LP NFT locked in a vault, nobody has a natural incentive to do it. Fee
-recipients are, if anything, mildly better off with inflated open interest, and
-the cost lands on traders as slow decay. Whoever operates a market should run
-this.
-
-Poll `settlementGuardedUntilBlock` rather than discovering the window through a
-revert: a swap moving ≥1% of pool depth arms a 5-block guard that blocks
-third-party settlement, so nobody can settle a position at a price they just
-moved. Position holders are never blocked, so this only affects keepers.
+`pokeFunding` is never required; every trade accrues funding first.
 
 ## Constants
 
 `constants.ts` mirrors the contract's `constant` values — fee splits, cap ramp
-bounds, guard parameters — for display and estimation.
+bounds, funding and wind-down parameters — for display and estimation.
 
 ```ts
 import { LP_FEE_BPS, CAP_MAX_BPS, INTEGRATOR_SHARE_BPS } from "@exnihilio/sdk";
@@ -400,7 +400,7 @@ import { LP_FEE_BPS, CAP_MAX_BPS, INTEGRATOR_SHARE_BPS } from "@exnihilio/sdk";
 
 ::: warning
 These are duplicated, not read from chain, and can drift. Anything that decides
-a transaction must quote the pool: `quoteOpenFee`, `quoteRenewFee`,
+a transaction must quote the pool: `quoteOpenFee`, `fundingRatePerSecond`,
 `effectiveLeverageCap`.
 :::
 
@@ -414,4 +414,4 @@ a transaction must quote the pool: `quoteOpenFee`, `quoteRenewFee`,
 
 On-chain reverts surface as viem `ContractFunctionRevertedError` with the
 decoded custom error — `LeverageCapExceeded`, `InsufficientOutput`,
-`SettlementGuardActive` and so on. See [Contract Reference](/developers/reference).
+`PositionUnderwater`, `PoolClosing` and so on. See [Contract Reference](/developers/reference).

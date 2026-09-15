@@ -195,7 +195,7 @@ export default function PnlCardModal({ onClose, ...data }: PnlCardModalProps) {
           />
         </div>
 
-        {/* No stats grid here — side, size, premium, PnL, opened and expires are
+        {/* No stats grid here — side, size, premium, PnL, opened and size left are
             all already rendered inside the card above. */}
 
         {/* Actions */}

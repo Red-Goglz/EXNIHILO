@@ -48,7 +48,6 @@ export default function LpPanel({
       { ...poolContract, functionName: "effectiveLeverageCap" },
       { ...poolContract, functionName: "createdAt" },
       { ...poolContract, functionName: "closeDate" },
-      { ...poolContract, functionName: "currentPositionDuration" },
       { ...poolContract, functionName: "lpFeesPaidTotal" },
     ],
   });
@@ -76,8 +75,7 @@ export default function LpPanel({
       ? 0
       : Math.max(0, Math.ceil((Number(capCreatedAt) + 24 * 3600 - nowSec) / 3600));
   const closeDate = data?.[8]?.result as bigint | undefined;
-  const positionDuration = data?.[9]?.result as bigint | undefined;
-  const lpFeesPaidTotal = data?.[10]?.result as bigint | undefined;
+  const lpFeesPaidTotal = data?.[9]?.result as bigint | undefined;
 
   const { data: lpOwner } = useReadContracts({
     contracts:
@@ -189,8 +187,6 @@ export default function LpPanel({
   }, [approvalStep, resetApprove]);
 
   const isPoolClosing = closeDate !== undefined && closeDate > 0n;
-  const positionDurationHours = positionDuration !== undefined ? Number(positionDuration) / 3600 : 168;
-  const positionDurationDays = Math.round(positionDurationHours / 24);
 
   // Parse cap inputs: usd is raw USDC (6 dec), bps is integer
   const handleSuccess = () => {
@@ -316,19 +312,21 @@ export default function LpPanel({
         >
           <div>
             {isPoolClosing
-              ? `◉ MARKET CLOSING — ${openPositionCount?.toString()} position(s) must expire before withdrawal`
+              ? `◉ MARKET CLOSING — ${openPositionCount?.toString()} position(s) must close or decay before withdrawal`
               : `◉ ${openPositionCount?.toString()} open position(s) — cannot remove liquidity`}
           </div>
           {!isPoolClosing && (
             <div style={{ color: "var(--muted)", fontSize: "var(--fs-micro)", lineHeight: 1.5 }}>
-              Close the market to block new positions and prevent renewals.
-              All existing positions will expire within {positionDurationDays} day{positionDurationDays !== 1 ? "s" : ""} ({positionDurationHours}h).
-              After that you can withdraw all liquidity.
+              Close the market to block new positions and start the wind-down.
+              After a 7-day grace period the funding rate doubles every day, so
+              positions nobody closes decay into sweep range within about 11 more
+              days. Once every position is closed or swept you can withdraw all
+              liquidity.
             </div>
           )}
           {isPoolClosing && (
             <div style={{ color: "var(--muted)", fontSize: "var(--fs-micro)" }}>
-              Closes {new Date(Number(closeDate!) * 1000).toLocaleString()} — positions cannot be renewed past this date.
+              Wind-down begins {new Date(Number(closeDate!) * 1000).toLocaleString()} — from then the funding rate doubles every day until every position is closed or decayed away.
             </div>
           )}
           {!isPoolClosing && (
@@ -545,7 +543,7 @@ export default function LpPanel({
         />
       </div>
 
-      {/* Earned fees — fees accrue on every position open/renewal (pull
+      {/* Earned fees — fees accrue on every position open (pull
           payment) and are withdrawn here. */}
       {lpFeesClaimable !== undefined && lpFeesClaimable > 0n && (
         <div
@@ -570,7 +568,9 @@ export default function LpPanel({
           </div>
           <div style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-label)", color: "var(--muted)", lineHeight: 1.5 }}>
             ${formatUsdc(lpFeesClaimable)} USDC has accrued from position opens
-            and renewals. Claim it below — optionally to a different address if
+            . Funding is not here: it lands straight in the pool\'s reserves
+            rather than becoming claimable, so it deepens the market instead of
+            paying out. Claim the fees below — optionally to a different address if
             this wallet cannot receive USDC.
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

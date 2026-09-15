@@ -3,93 +3,105 @@ import type { Address, Hash } from "viem";
 import { requireAccount, requireWallet, type Ctx } from "./client.js";
 
 /**
- * Keeper operations. Not part of the partner-facing surface, but shipped
+ * Maintenance operations. Not part of the partner-facing surface, but shipped
  * because someone has to run them.
  *
- * `settleExpired` is permissionless and is what clears expired positions from a
- * pool's book. Open interest only decrements on settlement, and the impact fee
- * is priced off open interest — so a market nobody sweeps becomes progressively
- * more expensive to trade.
+ * This module used to be the keeper interface: positions expired, and somebody
+ * had to settle them or open interest never decremented and the impact fee
+ * priced off a book that was no longer real. Positions no longer expire, and
+ * funding retires them continuously instead, so nothing here is on a clock.
  *
- * With the LP NFT locked in a vault, no participant has a natural incentive to
- * do this: fee recipients are, if anything, mildly better off with inflated
- * open interest. The cost lands on traders as slow competitive decay. Whoever
- * operates a market should run this.
+ * What is left is two chores, neither urgent:
+ *
+ *   pokeFunding  realises accrued funding into the reserves. Never required —
+ *                every trade does it — but a pool that has not traded for a
+ *                while is carrying funding the LP is owed and the holders have
+ *                not yet paid, and anyone may realise it without trading.
+ *
+ *   sweepDust    clears a position funding has decayed to dust. Its debt
+ *                decays with it, so it no longer distorts anyone's price, but it
+ *                still holds a slot in openPositionCount — and the LP cannot
+ *                withdraw until every slot is released.
+ *
+ * Both are unpaid. The party with the motive is the LP, whose withdrawal a dead
+ * position blocks — which is why neither needs a bounty to be run.
  */
 
 /**
- * Settle an expired position. Anyone may call it once the deadline has passed.
+ * Charge funding to both sides up to the current block.
  *
- * If the holder opted into auto-renew and the position's own equity covers the
- * renewal fee plus margin, this renews rather than closes.
- *
- * @param minPayout Slippage guard on the holder's credited payout when the
- *                  close path runs. 0 accepts any outcome.
+ * Idempotent in effect: calling it twice in a block does nothing the second
+ * time, and never calling it costs nobody anything, because the next trade
+ * charges the same total. The charge for a stretch of time is the same however
+ * many pieces it is accrued in.
  */
-export async function settleExpired(
-  ctx: Ctx,
-  pool: Address,
-  tokenId: bigint,
-  minPayout = 0n
-): Promise<Hash> {
-  const wallet = requireWallet(ctx, "settleExpired");
-  const account = requireAccount(ctx, "settleExpired");
+export async function pokeFunding(ctx: Ctx, pool: Address): Promise<Hash> {
+  const wallet = requireWallet(ctx, "pokeFunding");
+  const account = requireAccount(ctx, "pokeFunding");
 
   const { request } = await ctx.publicClient.simulateContract({
     address: pool,
     abi: exnihiloPoolAbi,
-    functionName: "settleExpired",
-    args: [tokenId, minPayout],
+    functionName: "pokeFunding",
     account,
   });
   return wallet.writeContract(request);
 }
 
 /**
- * First block at which a third party may settle an expired position on this
- * pool. `0` means unguarded right now.
+ * Clear a position whose collateral has decayed to dust. Anyone may call it.
  *
- * A move of at least 1 % in either settlement price within a single block arms
- * a 5-block guard, which blocks third-party settlement so an expired position
- * cannot be settled at a price the settler just moved. Poll this rather than
- * discovering the window through a reverted `settleExpired` — the position
- * holder is never blocked, so this only applies to keepers.
+ * Reverts `PositionNotDust` until the position has fallen below 0.1 % of the
+ * collateral it opened with. That threshold is measured against the position's
+ * own opening size rather than against its claim, so it cannot be reached by
+ * pushing the mark down — only by funding, which no caller controls.
+ *
+ * Any residual claim is credited to the holder as a pull payment rather than
+ * transferred, so the sweep cannot be blocked by the holder's wallet and cannot
+ * be used to take value.
  */
-export async function settlementGuardedUntilBlock(
+export async function sweepDust(
   ctx: Ctx,
-  pool: Address
-): Promise<bigint> {
-  return ctx.publicClient.readContract({
+  pool: Address,
+  tokenId: bigint
+): Promise<Hash> {
+  const wallet = requireWallet(ctx, "sweepDust");
+  const account = requireAccount(ctx, "sweepDust");
+
+  const { request } = await ctx.publicClient.simulateContract({
     address: pool,
     abi: exnihiloPoolAbi,
-    functionName: "settlementGuardedUntilBlock",
-  }) as Promise<bigint>;
+    functionName: "sweepDust",
+    args: [tokenId],
+    account,
+  });
+  return wallet.writeContract(request);
 }
 
 /**
- * Relative move, in bps, that either settlement price must make within one
- * block to arm the guard.
- *
- * There is no "size that arms". Arming is the net displacement of
- * backedAirUsd / airTokenSupply or backedAirToken / airUsdSupply since the
- * block opened, from any reserve-mutating path — not a property of one call.
+ * Fraction of its opening collateral a position still has, in bps.
+ * 10000 = untouched, 0 = fully decayed. Below 10 it is sweepable.
  */
-export async function settlementGuardBps(
+export async function remainingSizeBps(
   ctx: Ctx,
-  pool: Address
+  pool: Address,
+  tokenId: bigint
 ): Promise<bigint> {
   return ctx.publicClient.readContract({
     address: pool,
     abi: exnihiloPoolAbi,
-    functionName: "settlementGuardBps",
+    functionName: "remainingSizeBps",
+    args: [tokenId],
   }) as Promise<bigint>;
 }
 
-/** True when a keeper can settle on this pool right now. */
-export async function canSettleNow(ctx: Ctx, pool: Address): Promise<boolean> {
-  const [until, current] = await Promise.all([
-    settlementGuardedUntilBlock(ctx, pool),
-    ctx.publicClient.getBlockNumber(),
-  ]);
-  return until === 0n || current >= until;
+/** True when `sweepDust` would succeed for this position right now. */
+export async function canSweep(
+  ctx: Ctx,
+  pool: Address,
+  tokenId: bigint
+): Promise<boolean> {
+  // Strictly below: remainingSizeBps rounds down, so a reading of 10 can be
+  // anything up to 10.99 bps, which sweepDust still refuses.
+  return (await remainingSizeBps(ctx, pool, tokenId)) < 10n;
 }

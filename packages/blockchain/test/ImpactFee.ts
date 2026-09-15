@@ -505,12 +505,13 @@ describe("Impact Fee — LP Drain Protection", function () {
         // Step 3: close long at profit
         let closedOk = false;
         try {
-          await f.pool.connect(f.trader1).closeLong(nftId, 0n);
+          await f.pool.connect(f.trader1).closeLong(nftId, 0n, f.trader1.address);
           closedOk = true;
         } catch {
-          // Position underwater — liquidate after expiry (attacker gets nothing).
-          await time.increase(7 * 24 * 60 * 60 + 1);
-          await f.pool.connect(f.trader1).closePositionAfterDeadline(nftId, 0n);
+          // Position underwater — there is no expiry to liquidate it at now, so
+          // it is simply left open and worthless. The attacker extracts nothing
+          // either way, which is all this sequence measures; the collateral goes
+          // to the LP through funding instead of through a settlement.
         }
 
         // Step 4: dump — sell all token back for USDC
@@ -525,7 +526,7 @@ describe("Impact Fee — LP Drain Protection", function () {
 
         console.log(
           `      [${ac.label}] net: $${ethers.formatUnits(netGain, 6)} ` +
-          `(closed=${closedOk ? "profit" : "expired"})`
+          `(closed=${closedOk ? "profit" : "left open"})`
         );
       });
     }
@@ -556,11 +557,12 @@ describe("Impact Fee — LP Drain Protection", function () {
       // Close all longs
       for (const nftId of nftIds) {
         try {
-          await f.pool.connect(f.trader1).closeLong(nftId, 0n);
+          await f.pool.connect(f.trader1).closeLong(nftId, 0n, f.trader1.address);
         } catch {
-          // Underwater — liquidate after expiry (attacker gets nothing).
-          await time.increase(7 * 24 * 60 * 60 + 1);
-          await f.pool.connect(f.trader1).closePositionAfterDeadline(nftId, 0n);
+          // Underwater — no expiry to liquidate it at, so it is left open and
+          // worthless. The attacker realises nothing from it either way, and
+          // leaving it open is conservative: a forced settlement could only
+          // have returned more to them, never less.
         }
       }
 
@@ -592,11 +594,12 @@ describe("Impact Fee — LP Drain Protection", function () {
 
       for (const nftId of nftIds) {
         try {
-          await f.pool.connect(f.trader1).closeLong(nftId, 0n);
+          await f.pool.connect(f.trader1).closeLong(nftId, 0n, f.trader1.address);
         } catch {
-          // Underwater — liquidate after expiry (attacker gets nothing).
-          await time.increase(7 * 24 * 60 * 60 + 1);
-          await f.pool.connect(f.trader1).closePositionAfterDeadline(nftId, 0n);
+          // Underwater — no expiry to liquidate it at, so it is left open and
+          // worthless. The attacker realises nothing from it either way, and
+          // leaving it open is conservative: a forced settlement could only
+          // have returned more to them, never less.
         }
       }
 
@@ -627,11 +630,12 @@ describe("Impact Fee — LP Drain Protection", function () {
 
       for (const nftId of nftIds) {
         try {
-          await f.pool.connect(f.trader1).closeLong(nftId, 0n);
+          await f.pool.connect(f.trader1).closeLong(nftId, 0n, f.trader1.address);
         } catch {
-          // Underwater — liquidate after expiry (attacker gets nothing).
-          await time.increase(7 * 24 * 60 * 60 + 1);
-          await f.pool.connect(f.trader1).closePositionAfterDeadline(nftId, 0n);
+          // Underwater — no expiry to liquidate it at, so it is left open and
+          // worthless. The attacker realises nothing from it either way, and
+          // leaving it open is conservative: a forced settlement could only
+          // have returned more to them, never less.
         }
       }
 

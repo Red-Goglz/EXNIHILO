@@ -176,7 +176,7 @@ rots. On Avalanche a full arb currently costs well under a cent.
 - **Leverage-side dislocation.** `longPrice()` (`airUsdSupply / backedAirToken`)
   and `shortPrice()` (`backedAirUsd / airTokenSupply`) can diverge from spot
   within a single pool. That is a genuine intra-protocol opportunity, but it
-  requires *holding a position* with duration, renewal fees, and settlement risk
+  requires *holding a position*, which pays funding for as long as it is open
   rather than an atomic round trip — a different bot.
 - **Multi-pool routing.** Two EXNIHILO pools over the same token would arb
   against each other directly; currently each is only compared to the DEX.

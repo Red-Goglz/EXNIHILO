@@ -75,24 +75,81 @@ app.get("/positions/:pool", async (c) => {
     .orderBy(desc(position.openedAt))
     .limit(limit);
 
+  const metricsRows = await db
+    .select()
+    .from(poolMetrics)
+    .where(eq(poolMetrics.address, pool))
+    .limit(1);
+  const m = metricsRows[0];
+
   return c.json({
     pool,
     count: rows.length,
-    positions: rows.map((r) => ({
-      nftId: r.nftId.toString(),
-      holder: r.holder,
-      isLong: r.isLong,
-      usdcIn: r.usdcIn.toString(),
-      lockedAmount: r.lockedAmount.toString(),
-      feesPaid: r.feesPaid.toString(),
-      openedAt: Number(r.openedAt),
-      deadline: Number(r.deadline),
-      status: r.status,
-      payout: r.payout.toString(),
-      closedAt: Number(r.closedAt),
-    })),
+    fundingIndexLong: (m?.fundingIndexLong ?? 0n).toString(),
+    fundingIndexShort: (m?.fundingIndexShort ?? 0n).toString(),
+    positions: rows.map((r) => {
+      const live = liveAmounts(r, m);
+      return {
+        nftId: r.nftId.toString(),
+        holder: r.holder,
+        isLong: r.isLong,
+        usdcIn: r.usdcIn.toString(),
+        notional: live.notional.toString(),
+        lockedAmount: live.lockedAmount.toString(),
+        lockedAmountAtOpen: r.lockedAmountAtOpen.toString(),
+        remainingBps: live.remainingBps,
+        feesPaid: r.feesPaid.toString(),
+        openedAt: Number(r.openedAt),
+        fundingIndexAtOpen: r.fundingIndexAtOpen.toString(),
+        status: r.status,
+        payout: r.payout.toString(),
+        closedAt: Number(r.closedAt),
+      };
+    }),
   });
 });
+
+/**
+ * A position's LIVE collateral, debt and notional, and how much of its opening
+ * size that is.
+ *
+ * The table stores only what the position opened with, because funding decays
+ * every open position on a side by the same factor every second and there is no
+ * event to hang a per-position update on. The live figures are reconstructed
+ * from the pool's current index — collateral, debt and notional all scale by it:
+ *
+ *   live = atOpen * fundingIndex<Side> / fundingIndexAtOpen
+ *
+ * The pool's own `liveAmountsOf` is the authority; this reproduces it so a list
+ * of a hundred positions does not need a hundred eth_calls. It is exact
+ * whenever the indexer's stored index is current, and the API returns the index
+ * it used so a caller can tell.
+ *
+ * A closed or swept position reports what it had when it left.
+ */
+function liveAmounts(
+  r: {
+    lockedAmountAtOpen: bigint; usdcIn: bigint; airUsdMinted: bigint; airTokenMinted: bigint;
+    fundingIndexAtOpen: bigint; isLong: boolean; status: string;
+  },
+  metrics?: { fundingIndexLong: bigint; fundingIndexShort: bigint },
+): { lockedAmount: bigint; debt: bigint; notional: bigint; remainingBps: number } {
+  const debtAtOpen = r.isLong ? r.airUsdMinted : r.airTokenMinted;
+  const atOpen = {
+    lockedAmount: r.lockedAmountAtOpen, debt: debtAtOpen, notional: r.usdcIn, remainingBps: 10_000,
+  };
+  if (r.status !== "open" || !metrics || r.fundingIndexAtOpen === 0n) return atOpen;
+  const idx = r.isLong ? metrics.fundingIndexLong : metrics.fundingIndexShort;
+  if (idx >= r.fundingIndexAtOpen) return atOpen;
+
+  // Each rounds down, matching EXNIHILOPool._liveAt.
+  const scale = (x: bigint) => (x * idx) / r.fundingIndexAtOpen;
+  const lockedAmount = scale(r.lockedAmountAtOpen);
+  const remainingBps = r.lockedAmountAtOpen === 0n
+    ? 0
+    : Number((lockedAmount * 10_000n) / r.lockedAmountAtOpen);
+  return { lockedAmount, debt: scale(debtAtOpen), notional: scale(r.usdcIn), remainingBps };
+}
 
 // ── Single position ─────────────────────────────────────────────────────────
 
@@ -108,18 +165,29 @@ app.get("/position/:nftId", async (c) => {
   if (rows.length === 0) return c.json({ error: "Position not found" }, 404);
   const r = rows[0];
 
+  const metricsRows = await db
+    .select()
+    .from(poolMetrics)
+    .where(eq(poolMetrics.address, r.pool))
+    .limit(1);
+  const live = liveAmounts(r, metricsRows[0]);
+
   return c.json({
     nftId: r.nftId.toString(),
     pool: r.pool,
     holder: r.holder,
     isLong: r.isLong,
-    lockedAmount: r.lockedAmount.toString(),
+    lockedAmount: live.lockedAmount.toString(),
+    lockedAmountAtOpen: r.lockedAmountAtOpen.toString(),
+    remainingBps: live.remainingBps,
     usdcIn: r.usdcIn.toString(),
+    notional: live.notional.toString(),
+    debt: live.debt.toString(),
     airUsdMinted: r.airUsdMinted.toString(),
     airTokenMinted: r.airTokenMinted.toString(),
     feesPaid: r.feesPaid.toString(),
     openedAt: Number(r.openedAt),
-    deadline: Number(r.deadline),
+    fundingIndexAtOpen: r.fundingIndexAtOpen.toString(),
     status: r.status,
     payout: r.payout.toString(),
     closedAt: Number(r.closedAt),
@@ -144,22 +212,90 @@ app.get("/positions/user/:address", async (c) => {
     .orderBy(desc(position.openedAt))
     .limit(limit);
 
+  // One metrics row per pool the user has a position in, fetched once rather
+  // than per position — a portfolio spanning five pools would otherwise issue a
+  // query per row.
+  const pools = [...new Set(rows.map((r) => r.pool))];
+  const metricsByPool = new Map<string, typeof poolMetrics.$inferSelect>();
+  for (const pl of pools) {
+    const mr = await db
+      .select()
+      .from(poolMetrics)
+      .where(eq(poolMetrics.address, pl))
+      .limit(1);
+    if (mr[0]) metricsByPool.set(pl, mr[0]);
+  }
+
   return c.json({
     address: addr,
     count: rows.length,
-    positions: rows.map((r) => ({
-      nftId: r.nftId.toString(),
-      pool: r.pool,
-      isLong: r.isLong,
-      usdcIn: r.usdcIn.toString(),
-      lockedAmount: r.lockedAmount.toString(),
-      feesPaid: r.feesPaid.toString(),
-      openedAt: Number(r.openedAt),
-      deadline: Number(r.deadline),
-      status: r.status,
-      payout: r.payout.toString(),
-      closedAt: Number(r.closedAt),
-    })),
+    positions: rows.map((r) => {
+      const live = liveAmounts(r, metricsByPool.get(r.pool));
+      return {
+        nftId: r.nftId.toString(),
+        pool: r.pool,
+        isLong: r.isLong,
+        usdcIn: r.usdcIn.toString(),
+        notional: live.notional.toString(),
+        lockedAmount: live.lockedAmount.toString(),
+        lockedAmountAtOpen: r.lockedAmountAtOpen.toString(),
+        remainingBps: live.remainingBps,
+        feesPaid: r.feesPaid.toString(),
+        openedAt: Number(r.openedAt),
+        fundingIndexAtOpen: r.fundingIndexAtOpen.toString(),
+        status: r.status,
+        payout: r.payout.toString(),
+        closedAt: Number(r.closedAt),
+      };
+    }),
+  });
+});
+
+// ── Funding ─────────────────────────────────────────────────────────────────
+
+/**
+ * What a pool is charging to hold a position, and what it has taken so far.
+ *
+ * `rate*PerSecond` is in RAY (1e27). The percentage figures are derived here so
+ * a caller does not have to carry RAY arithmetic just to render a number.
+ *
+ * `released*` are cumulative and in DIFFERENT UNITS — the long side releases
+ * airToken (token decimals), the short side airUsd (6 decimals). They are never
+ * summed for the same reason the indexer keeps them in separate columns.
+ *
+ * `debtCancelled*` is the synthetic debt burned with those releases — airUsd on
+ * the long side, airToken on the short. Released collateral at the day's price
+ * minus the debt cancelled is a lower bound on what funding earned the LP.
+ */
+app.get("/funding/:pool", async (c) => {
+  const pool = c.req.param("pool")?.toLowerCase() as `0x${string}`;
+
+  const rows = await db
+    .select()
+    .from(poolMetrics)
+    .where(eq(poolMetrics.address, pool))
+    .limit(1);
+
+  if (rows.length === 0) return c.json({ error: "Pool not found" }, 404);
+  const m = rows[0];
+
+  const RAY = 10n ** 27n;
+  const pctPerDay = (rateRay: bigint) =>
+    Number((rateRay * 86_400n * 1_000_000n) / RAY) / 10_000;
+
+  return c.json({
+    pool,
+    indexLong: m.fundingIndexLong.toString(),
+    indexShort: m.fundingIndexShort.toString(),
+    rateLongPerSecond: m.fundingRateLong.toString(),
+    rateShortPerSecond: m.fundingRateShort.toString(),
+    rateLongPctPerDay: pctPerDay(m.fundingRateLong),
+    rateShortPctPerDay: pctPerDay(m.fundingRateShort),
+    releasedLongTokens: m.fundingReleasedLong.toString(),
+    releasedShortUsdc: m.fundingReleasedShort.toString(),
+    debtCancelledLongUsdc: m.fundingDebtCancelledLong.toString(),
+    debtCancelledShortTokens: m.fundingDebtCancelledShort.toString(),
+    lastUpdated: Number(m.lastUpdated),
   });
 });
 

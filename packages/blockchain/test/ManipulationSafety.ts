@@ -36,7 +36,7 @@ import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
  * i.e. the LP acting as the house. That is documented, not fixed, below.
  */
 
-const SETTLE_GUARD_BLOCKS = 5;
+const CLAMP_BLOCKS = 5;
 const SWAP_FEE_BPS = 100n;
 
 async function patchImmutableAddress(addr: string, from: string, to: string) {
@@ -155,12 +155,15 @@ async function runManipulation(
 
   let note = isLong ? "closeLong" : "closeShort";
   try {
-    if (isLong) await pool.connect(attacker).closeLong(nftId, 0n);
-    else        await pool.connect(attacker).closeShort(nftId, 0n);
+    if (isLong) await pool.connect(attacker).closeLong(nftId, 0n, attacker.address);
+    else        await pool.connect(attacker).closeShort(nftId, 0n, attacker.address);
   } catch {
-    await time.increase(7 * 24 * 60 * 60 + 1);
-    await pool.connect(attacker).closePositionAfterDeadline(nftId, 0n);
-    note = "expired-underwater";
+    // Underwater, and with no expiry there is nothing to liquidate it at. The
+    // position stays open and keeps decaying into the LP's reserves. The
+    // attacker realises nothing from it, which is what the portfolio delta
+    // below measures — and leaving it open is the conservative choice, since a
+    // forced settlement could only ever have returned MORE to them.
+    note = "underwater-abandoned";
   }
 
   const after = await portfolioAtP0(usdc, baseToken, attacker.address, p0Num, p0Den);
@@ -280,8 +283,8 @@ describe("Inherent LP exposure — documented, not a manipulation", function () 
     // Let the third party's move age out of the settlement clamp window, so
     // what is measured is the inherent exposure to their order flow rather
     // than the clamp refusing to price a move made one block ago (H-2).
-    await mine(SETTLE_GUARD_BLOCKS);
-    await pool.connect(attacker).closeLong(nftId, 0n);
+    await mine(CLAMP_BLOCKS);
+    await pool.connect(attacker).closeLong(nftId, 0n, attacker.address);
 
     const after = await portfolioAtP0(usdc, baseToken, attacker.address, p0Num, p0Den);
     const gain = after - before;
@@ -346,7 +349,7 @@ describe("Manipulation: sandwiching your own close (H-2)", function () {
     // the settlement clamp window or no plain exit exists to compare against.
     // The attacker's pump below stays INSIDE it — one block before the close,
     // which is precisely the cross-block variant this test exists for.
-    await mine(SETTLE_GUARD_BLOCKS);
+    await mine(CLAMP_BLOCKS);
 
     // Also keep the holder's decision point, for the marginal comparison.
     const usdc0  = await usdc.balanceOf(attacker.address);
@@ -362,7 +365,7 @@ describe("Manipulation: sandwiching your own close (H-2)", function () {
 
     const beforeClose = await usdc.balanceOf(attacker.address);
     const protoBefore = await pool.protocolFeesAccumulated();
-    await pool.connect(attacker).closeLong(nftId, 0n);
+    await pool.connect(attacker).closeLong(nftId, 0n, attacker.address);
     const payout   = (await usdc.balanceOf(attacker.address)) - beforeClose;
     // Exact close fee, read off the protocol accumulator rather than derived.
     const closeFee = (await pool.protocolFeesAccumulated()) - protoBefore;
@@ -411,7 +414,7 @@ describe("Manipulation: sandwiching your own close (H-2)", function () {
   // reserves the CURRENT block opened with, and by N+1 those already include
   // the pump — so the clamp was a no-op here and this failed by $265 to $2,034
   // across the grid, while the same-block variant below passed. The clamp now
-  // reaches over every open inside SETTLE_GUARD_BLOCKS, so the pre-pump open is
+  // reaches over every open inside CLAMP_BLOCKS, so the pre-pump open is
   // still on record when the close lands and the manufactured mark is not
   // reachable from either side of the block boundary.
   //
@@ -458,10 +461,10 @@ describe("Manipulation: sandwiching your own close (H-2)", function () {
 
   // What the window does and does not buy, measured rather than assumed.
   //
-  // The clamp makes the displaced mark unreachable for SETTLE_GUARD_BLOCKS. It
+  // The clamp makes the displaced mark unreachable for CLAMP_BLOCKS. It
   // does not make it unreachable: an attacker who makes the move and then WAITS
   // the window out closes at the mark like anyone else. That is the assumption
-  // SETTLE_GUARD_BLOCKS has always rested on for third-party settlement, now
+  // CLAMP_BLOCKS has always rested on for third-party settlement, now
   // carrying the holder too — a price that has to survive open arbitrage for
   // the whole window is not a manufactured one any more.
   //
@@ -486,7 +489,7 @@ describe("Manipulation: sandwiching your own close (H-2)", function () {
       // Strictly inside: the payout is clamped to the pre-pump mark, so the
       // pump buys nothing and its own swap fee plus the unwind slippage are
       // pure loss. Net must come out BELOW a plain exit, every time.
-      for (let hold = 0; hold < SETTLE_GUARD_BLOCKS - 1; hold++) {
+      for (let hold = 0; hold < CLAMP_BLOCKS - 1; hold++) {
         const inside = await exitWithPump(poolUsdc, poolToken, notional, pump, drift, hold);
         expect(inside, `pump $${ethers.formatUnits(pump, 6)} held ${hold} block(s)`)
           .to.be.lt(plain);
@@ -494,14 +497,14 @@ describe("Manipulation: sandwiching your own close (H-2)", function () {
 
       // The full window. Reported, deliberately not asserted to zero.
       const held = await exitWithPump(
-        poolUsdc, poolToken, notional, pump, drift, SETTLE_GUARD_BLOCKS,
+        poolUsdc, poolToken, notional, pump, drift, CLAMP_BLOCKS,
       );
       const edge = held - plain;
       console.log(
         `        [window] pump=$${ethers.formatUnits(pump, 6)} ` +
-        `held ${SETTLE_GUARD_BLOCKS} blocks -> ` +
+        `held ${CLAMP_BLOCKS} blocks -> ` +
         `${edge > 0n ? "+" : ""}$${ethers.formatUnits(edge, 6)} vs plain ` +
-        `(needs the price to survive ${SETTLE_GUARD_BLOCKS} blocks of arbitrage)`
+        `(needs the price to survive ${CLAMP_BLOCKS} blocks of arbitrage)`
       );
     }
   });
@@ -563,7 +566,7 @@ describe("Manipulation: incremental pump on an already-profitable position", fun
     // settlement clamp window, or there is no profitable plain exit to take the
     // increment against. The pump below stays inside it — that is the increment
     // being measured.
-    await mine(SETTLE_GUARD_BLOCKS);
+    await mine(CLAMP_BLOCKS);
 
     if (pump > 0n) {
       try {
@@ -572,7 +575,7 @@ describe("Manipulation: incremental pump on an already-profitable position", fun
     }
 
     try {
-      await pool.connect(attacker).closeLong(nftId, 0n);
+      await pool.connect(attacker).closeLong(nftId, 0n, attacker.address);
     } catch { return null; } // underwater: no voluntary close, not a drain
 
     const held = (await baseToken.balanceOf(attacker.address)) - tokenStart;
@@ -668,10 +671,10 @@ describe("Manipulation: reconciling the two valuation conventions", function () 
       await pool.connect(mover).swap(drift, 0n, false, mover.address);
       // The drift is the position's legitimate profit and must be outside the
       // clamp window; the pump below is the manipulation and must be inside it.
-      await mine(SETTLE_GUARD_BLOCKS);
+      await mine(CLAMP_BLOCKS);
 
       if (pump > 0n) await pool.connect(attacker).swap(pump, 0n, false, attacker.address);
-      await pool.connect(attacker).closeLong(nftId!, 0n);
+      await pool.connect(attacker).closeLong(nftId!, 0n, attacker.address);
 
       const usdcMid  = await usdc.balanceOf(attacker.address);
       const tokensHeld = (await baseToken.balanceOf(attacker.address)) - token0;
@@ -707,7 +710,7 @@ describe("Manipulation: reconciling the two valuation conventions", function () 
 // ═════════════════════════════════════════════════════════════════════════════
 // H-2, the same-block variant — the one the audit measured
 //
-// "swap → settleExpired → swap, one transaction." A test script cannot express
+// "pump → close → unwind, one transaction." A test script cannot express
 // that: Hardhat mines a block per transaction, so the sweep above is always
 // cross-block. SandwichAttacker sequences all three legs in a single call, with
 // the pool's nonReentrant guard releasing between them exactly as it does on
@@ -762,7 +765,7 @@ describe("Manipulation: atomic sandwich of your own close (H-2, same block)", fu
     // The honest gain has to be outside the clamp window for a plain exit to be
     // available at all; the attacker's own pump stays inside it, in the very
     // transaction that closes.
-    await mine(SETTLE_GUARD_BLOCKS);
+    await mine(CLAMP_BLOCKS);
 
     const attBefore = await usdc.balanceOf(attAddr);
 
@@ -846,7 +849,7 @@ describe("Settlement clamp window", function () {
     await fix.usdc.mint(mover.address, DRIFT);
     await fix.usdc.connect(mover).approve(fix.poolAddr, ethers.MaxUint256);
     await fix.pool.connect(mover).swap(DRIFT, 0n, false, mover.address);
-    await mine(SETTLE_GUARD_BLOCKS);
+    await mine(CLAMP_BLOCKS);
 
     return { ...fix, nftId };
   }
@@ -854,7 +857,7 @@ describe("Settlement clamp window", function () {
   /** Payout of a close, read off the balance delta. */
   async function closeFor(fix: any, nftId: bigint): Promise<bigint> {
     const before = await fix.usdc.balanceOf(fix.attacker.address);
-    await fix.pool.connect(fix.attacker).closeLong(nftId, 0n);
+    await fix.pool.connect(fix.attacker).closeLong(nftId, 0n, fix.attacker.address);
     return (await fix.usdc.balanceOf(fix.attacker.address)) - before;
   }
 
@@ -864,8 +867,8 @@ describe("Settlement clamp window", function () {
 
     // delay = blocks mined between the pump and the close. The pre-pump open is
     // recorded at the pump's own block, so it stays in range while
-    // close - pump < SETTLE_GUARD_BLOCKS.
-    for (let delay = 0; delay < SETTLE_GUARD_BLOCKS - 1; delay++) {
+    // close - pump < CLAMP_BLOCKS.
+    for (let delay = 0; delay < CLAMP_BLOCKS - 1; delay++) {
       const fix = await profitableLong();
       await fix.pool.connect(fix.attacker).swap(PUMP, 0n, false, fix.attacker.address);
       if (delay > 0) await mine(delay);
@@ -881,11 +884,11 @@ describe("Settlement clamp window", function () {
 
     const fix = await profitableLong();
     await fix.pool.connect(fix.attacker).swap(PUMP, 0n, false, fix.attacker.address);
-    await mine(SETTLE_GUARD_BLOCKS);
+    await mine(CLAMP_BLOCKS);
 
     // Deliberately asserted, not hedged. Holding a displaced price for the whole
     // window IS how you reach it — that is the security assumption, not a hole:
-    // the price has to survive SETTLE_GUARD_BLOCKS of open arbitrage first. What
+    // the price has to survive CLAMP_BLOCKS of open arbitrage first. What
     // matters here is that the clamp expires at all, so no holder can be held
     // away from their own position indefinitely.
     expect(await closeFor(fix, fix.nftId)).to.be.gt(plain);
@@ -915,11 +918,20 @@ describe("Settlement clamp window", function () {
     // number, so nothing is left to clamp against and the quote is live. Ring
     // entries are only written on mutation, so without the age test a quiet
     // pool would stay pinned to whatever its last active block happened to be.
-    await mine(SETTLE_GUARD_BLOCKS * 4);
+    await mine(CLAMP_BLOCKS * 4);
 
     const [ready, quoted] = await fix.pool.quoteClose(fix.nftId);
     expect(ready).to.equal(true);
-    expect(await closeFor(fix, fix.nftId)).to.equal(quoted);
+
+    // Not exactly equal any more, and the gap is funding rather than a clamp
+    // artefact: a few blocks pass between quoting and closing, and the position
+    // pays for every second of them. What matters here is that the clamp is not
+    // binding — a quiet pool prices live — so the payout tracks the quote to
+    // within that handful of seconds of decay rather than being pinned to a
+    // stale block.
+    const got = await closeFor(fix, fix.nftId);
+    expect(got).to.be.lte(quoted);
+    expect(got).to.be.closeTo(quoted, quoted / 10_000n + 1n);
   });
 
   it("cannot be flushed out of the ring early by extra mutations", async function () {
@@ -931,13 +943,13 @@ describe("Settlement clamp window", function () {
     // only for the block it is in, and the ring is exactly as deep as the
     // window — so filling it completely still cannot displace an entry the
     // window still admits. This is the test that fails if GuardSnapshot[] is
-    // ever sized below SETTLE_GUARD_BLOCKS.
+    // ever sized below CLAMP_BLOCKS.
     const fix = await profitableLong();
     await fix.pool.connect(fix.attacker).swap(PUMP, 0n, false, fix.attacker.address);
 
     // Fill every remaining slot: pump at P, dust at P+1..P+3, close at P+4 —
     // five entries, the oldest of which is still the pre-pump one.
-    for (let i = 0; i < SETTLE_GUARD_BLOCKS - 2; i++) {
+    for (let i = 0; i < CLAMP_BLOCKS - 2; i++) {
       await fix.pool.connect(fix.attacker).swap(
         ethers.parseUnits("1", 6), 0n, false, fix.attacker.address,
       );

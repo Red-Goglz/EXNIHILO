@@ -4,139 +4,66 @@ description: "Leveraged exposure with no liquidation, because EXNIHILO lends you
 
 # EXNIHILO vs Perpetual Futures
 
-People arrive here looking for leverage without liquidation risk, and perps are the
-thing they are comparing against. This page is that comparison, including the cases
-where the honest answer is that a perp suits you better.
-
-**The short version:** a perpetual future *lends* you exposure against collateral, so it
-must be able to recall that loan — liquidation is not a design flaw, it is the necessary
-consequence of borrowing. EXNIHILO lends you nothing. It mints synthetic units out of
-thin air and shifts an AMM curve to create your exposure. Nothing was borrowed, so there
-is nothing to recall.
-
-The price of that is paid up front: your premium is non-refundable, and a losing
-position cannot be closed early at all.
+**The short version:** a perpetual future *lends* you exposure against collateral, so it must be
+able to recall the loan — that is liquidation. EXNIHILO lends you nothing; it mints synthetic
+units against an AMM curve. Nothing was borrowed, so nothing can be recalled. The price is paid
+up front: the premium is non-refundable, and a losing position cannot be closed early.
 
 ## Side by side
 
 | | Perpetual future | EXNIHILO |
 |---|---|---|
-| **Exposure comes from** | Borrowing against posted collateral | Synthetic units minted against an AMM curve |
-| **Collateral required** | Yes — margin | None |
-| **Maximum loss** | Your margin, and on some venues more | The premium you paid, always |
-| **Liquidation** | Yes, at a maintenance margin threshold | Structurally impossible |
-| **Margin calls** | Yes | None to make |
-| **Ongoing cost** | Funding rate — variable, can pay *you* | Renewal fee each period — always a cost |
-| **Cost direction** | Either sign | Always against you |
-| **Closing at a loss** | Any time | **Not possible** — see below |
-| **Payoff shape** | Linear in spot | Bends with size (constant-product curves) |
-| **Counterparty** | Order book or pooled vault | One LP per pool |
-| **Position lifetime** | Indefinite while margin holds | Fixed deadline, renewable |
-| **Position format** | Exchange account balance | Transferable ERC-721 |
+| **Exposure from** | Borrowing against collateral | Synthetic units minted against a curve |
+| **Collateral** | Margin | None |
+| **Maximum loss** | Your margin, sometimes more | The premium, always |
+| **Liquidation** | At a maintenance margin | Structurally impossible |
+| **Ongoing cost** | Funding, either sign | Funding, always a cost, taken in size |
+| **Closing at a loss** | Any time | **Not possible** |
+| **Payoff** | Linear in spot | Bends with size |
+| **Counterparty** | Order book or vault | One LP per pool |
+| **Position** | Account balance | Transferable ERC-721 |
 
-## "Leverage" means something different here
+## "Leverage" means something different
 
-A perp quotes leverage as a multiple you select: 10× means $1,000 of exposure per $100
-of margin, and a roughly 10% adverse move wipes you out.
+A perp's 10× means $1,000 of exposure per $100 of margin, wiped out by a ~10% adverse move.
+EXNIHILO has no leverage selector: $100 of notional costs about $5.08, roughly 20× capital
+efficiency — but a 5%, 50% or 99% adverse move costs nothing beyond that $5.08.
 
-EXNIHILO has no leverage selector. What it has is a **premium-to-notional ratio**. Open
-$100 of notional in a reasonably sized pool and you pay roughly $5.08 — so you control
-$100 of exposure for $5.08 at risk, which is capital efficiency in the neighbourhood of
-20×. But the two are not interchangeable:
+The trade-off is that you **start behind**. The premium is spent, not deposited, so break-even
+for a position at 1% of pool reserves is around **+8.3%**. Funding does not move that
+break-even; it shrinks the position behind it.
 
-- On a 20× perp, a ~5% adverse move liquidates you and you lose the $5.
-- On EXNIHILO, a 5% adverse move costs you nothing extra. A 50% adverse move costs you
-  nothing extra. Your loss is $5.08 in every losing case, including a 99% collapse.
+## Where a perp is the better instrument
 
-The trade-off is on the other side. Because the premium is a real cost rather than a
-returnable margin deposit, **you start behind**. Break-even for a position sized at 1%
-of pool reserves lands around **+8.3%**, and it rises with every renewal. A perp's
-break-even is roughly flat, moved only by funding.
-
-So the accurate framing is not "cheaper leverage". It is *bounded* leverage, bought with
-a known, non-refundable premium — which is to say, an option. See
-[Positions Are Options](./positions-are-options) for the full mapping.
-
-## Where perps are genuinely the better instrument
-
-Four cases, stated plainly.
-
-**1. You want to be able to cut a loser.**
-This is the big one. An underwater EXNIHILO position **cannot be closed at all** — not
-at a loss, not for salvage value. Your only choices are to hold it in the hope it
-recovers, or let it settle for nothing at the deadline. A perp lets you exit at any
-price. If active risk management is your edge, that edge does not exist here.
-
-**2. You want linear payoff.**
-Perp P&L tracks spot linearly. EXNIHILO settlement runs through constant-product curves
-both in and out, so realized profit is reduced by slippage — mildly for a position at 1%
-of pool reserves, severely at 20%. See [P&L Calculation](/trading/pnl).
-
-**3. You want to hold a large position cheaply for a long time.**
-Funding on a perp is often a few basis points per 8 hours and can pay you. EXNIHILO's
-renewal fee is 5% of the position's **current mark value** every period, and because it
-reprices against notional *plus* profit, a deeply profitable position pays more to stay
-alive than a fresh one. Each renewal raises your break-even. See
-[Expiry & Renewal](/positions/expiry).
-
-**4. You want depth, or a token nobody has listed.**
-Every EXNIHILO pool has exactly one LP who is the counterparty to every position in it,
-and a single position is capped at a share of pool reserves — 1% on day one, 20% after
-24 hours. Pools are small on purpose right now. A major perp
-venue's book is deeper than any pool here by orders of magnitude.
+1. **You want to cut a loser.** An underwater EXNIHILO position cannot be closed at any price.
+   If active risk management is your edge, that edge does not exist here.
+2. **You want linear payoff.** Settlement runs through constant-product curves, so profit is
+   reduced by slippage — mildly at 1% of pool reserves, severely at 20%.
+3. **You want to hold size cheaply for a long time.** A perp's funding is often a few basis
+   points per 8 hours and can pay you. EXNIHILO's is priced as an option's carry: around 10% of
+   the position a day on a 1-day-old market, about 0.34% a day on a mature one, and several
+   times that on a crowded side. See [Funding](/positions/funding).
+4. **You want depth.** One LP per pool, and positions capped at 1%–20% of reserves. A major perp
+   venue is deeper by orders of magnitude.
 
 ## Where EXNIHILO is the better instrument
 
-**You are sizing a thesis, not managing a trade.** If your view is "this token either
-runs or it does not, and I want a known amount at risk either way", the premium *is* the
-whole decision. No monitoring, no maintenance margin, no liquidation price to watch.
+- **You are sizing a thesis, not managing a trade.** The premium is the whole decision — no
+  maintenance margin, no liquidation price to watch.
+- **The token is unlisted.** Anyone can create a market for any ERC-20. See
+  [Creating a Market](/markets/creating).
+- **Short-run volatility is against you.** A wick that liquidates a 20× perp does nothing here;
+  only the price when you close matters.
+- **You want a position you can move.** Positions are ERC-721s and can be sold while open, on
+  unchanged terms.
+- **You are trading small.** The fee floor is 0.05 USDC, so a $1 position is real.
 
-**You want exposure to something unlisted.** Markets are permissionless — anyone can
-deploy one for any ERC-20 with no governance vote and no listing process. See
-[Creating a Market](/markets/creating).
+## It is not a perp
 
-**Volatility is against you in the short run.** A wick that would liquidate a 20× perp
-does nothing to an EXNIHILO position. Only the price at the moment you close, or at the
-deadline, matters.
+EXNIHILO has no maintenance margin, no liquidation engine, no order book and no leverage
+multiple. Its funding never pays you and never balances longs against shorts — it is rent on LP
+capital. A long is a **call**, a short is a **put**, and funding takes the place of theta.
 
-**You want a position you can move.** Positions are ERC-721s and can be transferred or
-sold while open. Note the auto-renew opt-in clears on transfer — a buyer must opt in
-themselves.
-
-**You are trading small.** The 0.05 USDC fee floor means a $1 position is economically
-real, and there is no minimum account size. Below about $1 of notional the floor
-dominates and the effective rate rises sharply, so this is a floor, not a free lunch.
-
-## Is this a perp? No.
-
-Worth being direct, since the vocabulary overlaps. EXNIHILO has:
-
-- no funding rate
-- no maintenance margin
-- no liquidation engine
-- no order book
-- no leverage multiple to select
-- no indefinite position lifetime — every position has a deadline
-
-An EXNIHILO long is a **call**; a short is a **put**. The open fee is the premium, the
-strike is the pool's spot price at open (always at-the-money), and expiry is set by the
-market's age. If you know options, you already know this instrument. If you were
-looking specifically for a perp, this is not one.
-
-## What can go wrong
-
-The no-liquidation property is real and structural, but it is not the same as safety.
-The protocol is young, the pools are small, and all four audit rounds were performed by
-AI models rather than a human security firm. Before putting money in, read
-[Risk Disclosure](/faq/risks) and [Security](/protocol/security) — both are written to
-be read *before* you trade, not after.
-
-## Next
-
-| If you want to | Read |
-|---|---|
-| Understand the option mapping in full | [Positions Are Options](./positions-are-options) |
-| See exactly what you pay | [Fees](/trading/fees) |
-| Understand deadlines and renewal cost | [Expiry & Renewal](/positions/expiry) |
-| Open your first position | [Opening a Long](/trading/opening-a-long) |
-| Know what can go wrong | [Risk Disclosure](/faq/risks) |
+The no-liquidation property is structural, but it is not the same as safety. Every audit round
+so far has been performed by AI models, not a human firm — read [Risk Disclosure](/faq/risks)
+and [Security](/protocol/security) before trading.

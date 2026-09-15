@@ -23,6 +23,12 @@ asserting they were impossible. That is the finding under the findings, and it i
 [recorded below](#process-002-the-comments-were-load-bearing-and-some-were-wrong).
 :::
 
+::: tip Status since publication
+C-2 and M-1 are fixed and H-2 is closed. The settlement guard and renewals behind C-1, H-1, H-3 and
+M-4 no longer exist: positions now pay continuous funding instead of expiring. That redesign has not
+itself been audited. See [Security](./security#audit-status).
+:::
+
 ::: warning About the method
 All five audit rounds were performed by **AI models, not a human security firm**.
 No formal verification and no fuzzing campaign was run. Every round has surfaced

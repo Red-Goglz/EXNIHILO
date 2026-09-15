@@ -21,7 +21,8 @@ export interface PnlCardData {
   tokenDecimals: number;
   feesPaid: bigint;
   openedAt: bigint;
-  deadline: bigint;
+  /** Position size left as a fraction of its opening collateral, in bps. */
+  remainingBps: bigint;
   hasPnl: boolean;
   pnlPositive: boolean;
   pnlNetAbs: bigint;
@@ -152,8 +153,8 @@ export function buildPnlCardSvg(d: PnlCardData): string {
 <text x="360" y="360" class="f val">${fmt6(d.feesPaid)}</text>
 <text x="524" y="330" class="f lbl">OPENED</text>
 <text x="524" y="360" class="f dat">${fmtDate(d.openedAt)}</text>
-<text x="656" y="330" class="f lbl">EXPIRES</text>
-<text x="656" y="360" class="f dat">${fmtDate(d.deadline)}</text>
+<text x="656" y="330" class="f lbl">SIZE LEFT</text>
+<text x="656" y="360" class="f dat">${(Number(d.remainingBps) / 100).toFixed(1)}%</text>
 <text x="32" y="424" class="f" font-size="12" letter-spacing="2" fill="#555">exnihilo.markets</text>
 <text x="768" y="424" class="f" font-size="12" letter-spacing="3" fill="#555" text-anchor="end">OUT OF THIN AIR</text>
 </svg>`;

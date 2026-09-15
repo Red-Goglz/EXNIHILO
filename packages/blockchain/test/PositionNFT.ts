@@ -101,7 +101,7 @@ describe("PositionNFT", function () {
 
       expect(pos.isLong).to.equal(true);
       expect(pos.pool).to.equal(pool.address);
-      expect(pos.lockedAmount).to.equal(LOCK_AMOUNT);
+      expect(pos.lockedAmountAtOpen).to.equal(LOCK_AMOUNT);
       expect(pos.usdcIn).to.equal(USDC_IN);
       expect(pos.airUsdMinted).to.equal(AIR_USD_MINTED);
       expect(pos.airTokenMinted).to.equal(0n);
@@ -192,7 +192,7 @@ describe("PositionNFT", function () {
 
       expect(pos.isLong).to.equal(false);
       expect(pos.pool).to.equal(pool.address);
-      expect(pos.lockedAmount).to.equal(AIR_USD_LOCKED);
+      expect(pos.lockedAmountAtOpen).to.equal(AIR_USD_LOCKED);
       expect(pos.usdcIn).to.equal(SHORT_USDC_NOTIONAL);
       expect(pos.airUsdMinted).to.equal(0n);
       expect(pos.airTokenMinted).to.equal(AIR_TOKEN_MINTED);
@@ -239,7 +239,7 @@ describe("PositionNFT", function () {
       const pos = await nft.connect(pool).release.staticCall(0n);
 
       expect(pos.isLong).to.equal(true);
-      expect(pos.lockedAmount).to.equal(LOCK_AMOUNT);
+      expect(pos.lockedAmountAtOpen).to.equal(LOCK_AMOUNT);
       expect(pos.airUsdMinted).to.equal(AIR_USD_MINTED);
       expect(pos.usdcIn).to.equal(USDC_IN);
     });
@@ -255,7 +255,7 @@ describe("PositionNFT", function () {
       const pos = await nft.connect(pool).release.staticCall(0n);
 
       expect(pos.isLong).to.equal(false);
-      expect(pos.lockedAmount).to.equal(AIR_USD_LOCKED);
+      expect(pos.lockedAmountAtOpen).to.equal(AIR_USD_LOCKED);
       expect(pos.airTokenMinted).to.equal(AIR_TOKEN_MINTED);
     });
 

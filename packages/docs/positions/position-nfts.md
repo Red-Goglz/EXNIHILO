@@ -1,37 +1,47 @@
 ---
-description: "Every open position is an ERC-721 NFT that custodies the locked collateral. The fields it stores for longs and shorts, and what each one means."
+description: "Every position is a transferable ERC-721. What the NFT records, where the collateral actually lives, how transfers work, and the fully on-chain artwork."
 ---
 
 # Position NFTs
 
-Every open position in EXNIHILO is represented as an ERC-721 NFT.
+Every open position is an ERC-721 in the shared `PositionNFT` contract. Token IDs are sequential
+across all markets, and each position's `pool` field says which market it belongs to.
 
-## What the NFT holds
-
-The PositionNFT contract custodies the locked wrapper tokens for the lifetime of the position:
+## What it records
 
 | Field | Long | Short |
 |---|---|---|
-| `isLong` | true | false |
+| `isLong` | `true` | `false` |
 | `pool` | Pool address | Pool address |
-| `lockedToken` | airToken address | airUsd address |
-| `lockedAmount` | airToken locked | airUsd locked |
-| `usdcIn` | USDC position size | 0 |
-| `airUsdMinted` | Synthetic debt | 0 |
-| `airTokenMinted` | 0 | Synthetic debt |
-| `feesPaid` | Open fees | Open fees |
-| `openedAt` | Block timestamp | Block timestamp |
+| `lockedAmountAtOpen` | airToken locked | airUsd locked |
+| `usdcIn` | USDC notional | USDC notional |
+| `airUsdMinted` | Synthetic airUsd debt | `0` |
+| `airTokenMinted` | `0` | Synthetic airToken debt |
+| `feesPaid` | Open fee | Open fee |
+| `openedAt` | Timestamp | Timestamp |
+| `fundingIndexAtOpen` | The pool's long funding index at open | The pool's short funding index at open |
 
-## Shared singleton
+Every amount is the **opening** figure. Funding shrinks collateral, debt and notional together,
+so read the live figures from the pool with `liveAmountsOf(nftId)`.
 
-All pools share a single PositionNFT contract. Token IDs are sequential across all markets. The `pool` field in each position identifies which pool it belongs to.
+The NFT is a registry, not a vault. The collateral never leaves the pool; when a position settles,
+the pool calls `release(tokenId)`, which burns the NFT and hands back the record. Only the owning
+pool can release a position.
 
+## Transferring
 
-## Collateral custody
+Positions are standard ERC-721s — `transferFrom`, `safeTransferFrom`, or any wallet or
+marketplace. The new owner can close the position and choose where the payout goes. Nothing is
+tied to the holder: the position keeps its terms and its decay, and there is nothing to re-enable
+after a transfer.
 
-The locked wrapper tokens (airToken for longs, airUsd for shorts) live in the PositionNFT contract, not in the pool. This provides clean separation — the pool's reserves and position collateral are physically separate.
+## On-chain artwork
 
-When a position is settled, the pool calls `release(tokenId)`, which:
-1. Burns the NFT
-2. Returns locked tokens to the pool
-3. Returns the Position struct so the pool can complete settlement math
+`tokenURI` is generated entirely on-chain — no IPFS, no server — reading the pool at call time.
+The card shows the side, market and token ID; position size, locked collateral and fees paid;
+**live estimated P&L** net of the premium, from the pool's `quoteClose`; and the opened date and
+**size remaining**. Size and collateral are net of funding.
+
+The JSON attributes add the synthetic debt — a buyer needs it to price the position — and Return
+on Premium %. View the card on any marketplace or explorer that renders `tokenURI`, or decode the
+base64 JSON directly.

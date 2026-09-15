@@ -12,14 +12,21 @@ export const position = onchainTable("position", (t) => ({
   pool: t.hex().notNull(),
   holder: t.hex().notNull(),
   isLong: t.boolean().notNull(),
-  lockedAmount: t.bigint().notNull(),
+  // Collateral AS AT OPEN. Funding decays every open position on a side by the
+  // same factor, so the live figure is
+  //   lockedAmountAtOpen * poolMetrics.fundingIndex<Side> / fundingIndexAtOpen
+  // and the API computes it on read rather than this table trying to track a
+  // number that changes every second with no event to hang an update on.
+  lockedAmountAtOpen: t.bigint().notNull(),
   usdcIn: t.bigint().notNull(),
   airUsdMinted: t.bigint().notNull(),
   airTokenMinted: t.bigint().notNull(),
   feesPaid: t.bigint().notNull(),
   openedAt: t.bigint().notNull(),
-  deadline: t.bigint().notNull(),
-  status: t.text().notNull(),             // "open" | "closed" | "expired"
+  // Replaces `deadline`. Positions do not expire; this is the denominator of
+  // the decay ratio above, in RAY.
+  fundingIndexAtOpen: t.bigint().notNull(),
+  status: t.text().notNull(),             // "open" | "closed" | "swept"
   payout: t.bigint().notNull(),           // 0 while open
   closedAt: t.bigint().notNull(),         // 0 while open
 }), (t) => ({
@@ -49,6 +56,10 @@ export const priceSnapshot = onchainTable("price_snapshot", (t) => ({
   spotPrice: t.bigint().notNull(),
   longPrice: t.bigint().notNull(),
   shortPrice: t.bigint().notNull(),
+  // Carried on every snapshot so a chart can show a position's decay against
+  // the price history it happened alongside.
+  fundingIndexLong: t.bigint().notNull(),
+  fundingIndexShort: t.bigint().notNull(),
   eventType: t.text().notNull(),
 }), (t) => ({
   // GET /prices/:pool     — where(pool) order by timestamp desc
@@ -73,6 +84,30 @@ export const poolMetrics = onchainTable("pool_metrics", (t) => ({
   shortCount: t.integer().notNull(),
   closeCount: t.integer().notNull(),
   totalPayout: t.bigint().notNull(),
+  // Funding is NOT a fee and deliberately absent from the fee columns above: it
+  // never becomes claimable, it lands straight in the backed reserves. Reading
+  // it out of lpFees would double-count nothing and miss everything, so it is
+  // accumulated here from the FundingAccrued event instead — the only record
+  // that separates reserve growth caused by funding from reserve growth caused
+  // by trading.
+  //
+  // The two released totals are in DIFFERENT UNITS and must never be summed:
+  // the long side releases airToken (token decimals), the short side releases
+  // airUsd (6 decimals).
+  //
+  // Funding shrinks debt with collateral, so each release comes with debt burned
+  // — airUsd (6 dec) on the long side, airToken on the short, so again never
+  // summed. Released collateral valued at the time, minus the debt cancelled, is
+  // a lower bound on what funding was worth to the LP: winners and losers net
+  // against each other in an aggregate.
+  fundingIndexLong: t.bigint().notNull(),
+  fundingIndexShort: t.bigint().notNull(),
+  fundingReleasedLong: t.bigint().notNull(),
+  fundingReleasedShort: t.bigint().notNull(),
+  fundingDebtCancelledLong: t.bigint().notNull(),
+  fundingDebtCancelledShort: t.bigint().notNull(),
+  fundingRateLong: t.bigint().notNull(),
+  fundingRateShort: t.bigint().notNull(),
   lastUpdated: t.bigint().notNull(),
 }));
 

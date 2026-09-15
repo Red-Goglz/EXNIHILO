@@ -4,97 +4,65 @@ description: "EXNIHILO lets you go long or short any ERC-20 token with no collat
 
 # What is EXNIHILO
 
-EXNIHILO ("Out of Thin Air") lets you go long or short on any ERC-20 token without
-posting collateral and without any risk of liquidation.
+EXNIHILO ("out of thin air") lets you go long or short any ERC-20 token without posting
+collateral and without any risk of liquidation.
 
-**The shortest accurate description: EXNIHILO positions are options.** You pay a
-premium — the open fee, roughly 5% of your position size — and that premium is the most
-you can ever lose. A long behaves like a call, a short like a put. There is no strike to
-choose, no implied volatility, and no margin call.
+**Positions are options.** You pay a premium — the open fee, roughly 5% of position size — and
+that premium is the most you can lose. A long behaves like a call, a short like a put.
+[Positions Are Options](./positions-are-options) covers the whole mapping.
 
-If that framing lands, read [Positions Are Options](./positions-are-options) next; it
-covers the whole protocol in one page.
-
-## How it's different
-
-| Traditional Perps | EXNIHILO |
+| Perpetual futures | EXNIHILO |
 |---|---|
-| Requires collateral + margin | Only the open fee — a premium |
-| Liquidation engine force-closes positions | No liquidations, ever — nothing was borrowed |
-| Loss can exceed your deposit | Max loss is fixed and known before you open |
-| Oracle-dependent pricing | Price derived from the pool's own AMM curves |
-| Listing is governance-gated | Anyone can create a market, one transaction |
-| Positions are account-bound | Positions are transferable NFTs |
-| Positions run indefinitely | Positions expire and must be renewed |
+| Collateral and margin | Only the open fee |
+| Liquidation engine | No liquidations — nothing was borrowed |
+| Loss can exceed your deposit | Maximum loss is the fee, known before you open |
+| Oracle prices | Prices from the pool's own curves |
+| Governance-gated listings | Anyone can create a market in one transaction |
+| Account balances | Transferable NFTs |
+| Funding that can pay either side | Funding that shrinks your position, paid to the LP |
 
-## How it works in 30 seconds
+## What it costs
 
-1. **Pick a token** — Browse existing markets or create one for any ERC-20.
-2. **Go long or short** — Enter your USDC amount and pay the fee. The protocol mints
-   synthetic units via its three-curve AMM to give you exposure. You post no collateral.
-3. **Close when ready** — No margin calls, no liquidation risk. Close in profit and
-   receive USDC.
+A $100 position in a pool with $10,000 of USDC costs about **$5.08** — the 5% base fee plus a
+small impact fee. If the token doubles you make roughly $100; if it goes to zero you lose the
+$5.08 and nothing more. The fee has a 0.05 USDC floor.
 
-Your position is an NFT with fully on-chain SVG artwork showing live P&L — you can
-transfer or sell it at any time without closing it.
-
-## What it costs, and what you can lose
-
-Opening a $100 position in a pool with $10,000 of USDC reserves costs about **$5.08**
-(5% base fee + a small impact fee). That $5.08 is your entire downside. If the token
-doubles you make roughly $100 on it; if the token goes to zero you lose the $5.08 and
-nothing more.
-
-The fee has a **0.05 USDC floor**, so a $1 position is economically real. There is no
-minimum account size.
-
-::: tip These figures scale with the pool
-$100 is an illustration, not what is currently openable. Every market caps a single
-position at 1% of its reserves on day one, widening automatically to 20% over the first
-24 hours, and liquidity is being scaled up deliberately while the protocol is young — so
-today's maximum position is much smaller.
-
-The [app](https://exnihilo.markets/app) shows each pool's live maximum position,
-effective fee rate and break-even move, read straight from the contracts. Trust those
-over any number written in the docs.
-
-Note also that below $1 of notional the 0.05 USDC floor exceeds the 5% base rate, so
-very small positions pay a proportionally higher fee.
-:::
+These figures are illustrative. A single position is capped at 1% of a pool's USDC on day one,
+rising to 20% after 24 hours, and the [app](https://exnihilo.markets/app) shows each pool's live
+maximum, fee and break-even.
 
 ::: warning Two things to understand before you trade
-**Positions expire.** A position's lifetime comes from the market's age — 1 hour on a brand-new market, stepping up to 30 days once it is a week old. Renew before
-the deadline, opt into auto-renewal, or the position settles. You must be right *within
-the window*.
+**Positions decay.** There is no deadline, but [funding](/positions/funding) takes a fraction of
+every position every second — steeply on a new market, slowly on a mature one.
 
-**Losing positions cannot be closed.** There is no salvage value — an underwater
-position either recovers or settles for nothing.
+**Losing positions cannot be closed.** An underwater position has no salvage value: it either
+recovers or decays to nothing.
 :::
 
-## Where does the leverage come from?
+## How it works
 
-EXNIHILO uses a three-curve constant-product AMM. When you open a position, the protocol
-mints *synthetic* (unbacked) units that inflate the AMM's supply counters. This shifts
-the price curve, creating exposure without borrowing, margin, or oracles.
+Every pool runs three constant-product curves over two pairs of counters:
 
-This is also the reason there are no liquidations. Margin products **lend** you
-exposure, and anything lent can be recalled — that is what liquidation is. EXNIHILO
-lends you nothing, so there is nothing to recall.
+| Curve | Reserves | Used for |
+|---|---|---|
+| **SWAP-1** | `backedAirToken` / `backedAirUsd` | Ordinary swaps |
+| **SWAP-2** | `backedAirToken` / `airUsdSupply` | Opening longs, closing shorts |
+| **SWAP-3** | `airTokenSupply` / `backedAirUsd` | Opening shorts, closing longs |
 
-See [Key Concepts](./key-concepts) for a deeper explanation.
+The **backed** counters track real tokens and USDC. The **supply** counters also include
+synthetic units created by open positions. Opening a long mints synthetic airUsd and trades it
+through SWAP-2; opening a short mints synthetic airToken and trades it through SWAP-3. Nothing
+is borrowed — the exposure comes from moving a curve — which is why there is nothing to
+liquidate. See [Pricing & Reserves](/markets/pricing).
 
 ## Who is on the other side
 
-Each pool has exactly one liquidity provider, and that LP is the counterparty to every
-position in it — your profit is paid out of their liquidity. In option terms, the LP is
-the writer. They earn the premium on every position opened, and their exposure is
-bounded by an automatic [position cap](/lp/position-caps) that no one can widen.
-See [Fee Earnings](/lp/fees).
+Each pool has exactly one liquidity provider, and that LP is the counterparty to every position
+in it — in option terms, the writer. They earn most of the open fee and all funding, pay every
+profitable close, and are protected by an automatic [position cap](/lp/position-caps). See
+[Fee Earnings](/lp/fees).
 
-## Chains
+## Where it runs
 
-EXNIHILO is live on **Avalanche C-Chain mainnet** (chain ID 43114), quoted in Circle's
-native USDC. It is the only network the app shows.
-
-Market creation is permissionless — pools are created by users rather than shipped with
-the protocol. Contract addresses are on the [addresses page](/protocol/addresses).
+Avalanche C-Chain mainnet (chain ID 43114), quoted in Circle's native USDC. Markets are created
+by users; there are no official ones. See [Contract Addresses](/protocol/addresses).

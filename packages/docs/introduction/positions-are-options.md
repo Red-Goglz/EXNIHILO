@@ -4,128 +4,75 @@ description: "An EXNIHILO long is a call and a short is a put. The full mapping 
 
 # Positions Are Options
 
-If you already know how options work, you already know how EXNIHILO works. This page
-is the fastest path to understanding the protocol.
+If you know how options work, you already know how EXNIHILO works.
 
 ## The mapping
-
-EXNIHILO positions are not margin trades. They have the exact shape of an option:
 
 | Option | EXNIHILO |
 |---|---|
 | **Premium** — paid upfront, non-refundable | The open fee: 5% of notional + impact fee |
-| **Max loss = premium** | Max loss = the fee you paid |
-| **Strike** | The pool's spot price at open — always at-the-money |
-| **Expiry** | Set by market age: 1 hour when new, up to 30 days once a week old |
-| **Rolling to the next expiry** | `renewPosition` — pay the renewal fee |
-| **Expires worthless** | Underwater at deadline → position settles, you get nothing |
-| **Exercise** | `closeLong` / `closeShort` — settle in USDC at any time while in profit |
-| **Call** | **Long** — profits when the token rises |
-| **Put** | **Short** — profits when the token falls |
+| **Maximum loss = premium** | Maximum loss = the fee you paid |
+| **Strike** | The pool price at open — always at-the-money |
+| **Expiry** | None — a perpetual option |
+| **Theta** | Funding: a fraction of the position goes to the LP every second |
+| **Expiring worthless** | An underwater position decays to nothing |
+| **Exercise** | `closeLong` / `closeShort` — settle in USDC any time you are in profit |
+| **Call / put** | **Long** / **short** |
 
 There is no strike to choose, no implied volatility to model, and no Greeks. You pick a
-direction, pay the premium, and the position runs until you close it or it expires.
+direction and pay the premium; the position runs until you close it, shrinking a little every
+second.
 
 ## Why there are no liquidations
 
-This is the question everyone asks first, and the answer is structural rather than
-clever.
-
-Margin products **lend** you exposure. Anything lent can be recalled — that is what
-liquidation *is*. It isn't a design flaw in perps; it's the necessary consequence of
-borrowing.
-
-EXNIHILO lends you nothing. When you open a position, the protocol **mints synthetic
-units out of thin air** and shifts the AMM's price curve to create your exposure. No
-capital was borrowed, so there is nothing to recall. See
-[Key Concepts](./key-concepts#synthetic-minting).
-
-This is precisely why the premium is non-refundable and why a losing position cannot be
-closed: you never posted collateral, so there is nothing to give back.
+Margin products lend you exposure, and anything lent can be recalled — that recall is
+liquidation. EXNIHILO lends nothing: opening a position mints synthetic units and shifts the
+pool's curve ([how](/markets/pricing#synthetic-supply)). With nothing borrowed there is nothing
+to recall. It is also why the premium is non-refundable and a losing position cannot be closed:
+you never posted collateral, so there is nothing to give back.
 
 ## The arithmetic
 
-Opening a $100 position in a pool with $10,000 of USDC reserves:
+A $100 position in a pool with $10,000 of USDC:
 
 ```
 Notional            $100.00
 Base fee (5%)       $  5.00
-Impact fee          $  0.08     (1500 × N × (2·OI + N) / (2 × backedAirUsd × 10000))
+Impact fee          $  0.08
 ─────────────────────────────
-Total premium       $  5.08     ← the most you can ever lose
+Premium             $  5.08     ← the most you can lose
 ```
 
-Approximate outcomes at expiry, **before slippage**:
-
-| Token move | Long P&L | Return on the $5.08 paid |
+| Token move | Long P&L, before slippage and funding | Return on $5.08 |
 |---|---|---|
 | +200% | ≈ +$200 | ≈ 40× |
 | +50% | ≈ +$50 | ≈ 10× |
-| +5% | ≈ +$5 | ≈ 1× |
 | Any move down | −$5.08 | Total loss of premium |
 
-::: warning Settlement is AMM-based, not linear
-These figures are illustrative. Real settlement runs through the pool's curves
-([P&L Calculation](/trading/pnl)), so your realized profit is reduced by slippage —
-significantly so if your position is large relative to pool reserves. A position that
-is 1% of pool reserves behaves close to the table above; one that is 20% does not.
-:::
+Settlement runs through the pool's curves, so real payouts are lower — mildly for a position at
+1% of the pool, heavily at 20% — and break-even for a 1%-sized position is around **+8.3%**.
+Below $1 of notional the 0.05 USDC floor exceeds 5%, so tiny positions pay proportionally more.
+See [P&L Calculation](/trading/pnl).
 
-Because the fee has a **0.05 USDC floor**, a $1 position costs $0.05 and is
-economically real. There is no minimum account size.
+## Where the analogy breaks
 
-::: warning The floor cuts both ways
-Below $1 of notional the floor *exceeds* the 5% base rate, and the effective cost rises
-sharply — a $0.25 position still pays $0.05, which is 20%. Above $1 the rate settles at
-5% and break-even lands around **+8.3%** for a position sized at 1% of pool reserves,
-regardless of how large the pool is.
+1. **No salvage value.** A losing option can be sold for its remaining time value. An
+   underwater EXNIHILO position cannot be closed at all — it recovers or decays.
+2. **The premium recurs.** An option's premium is paid once; here funding is charged for as long
+   as you hold, because a perpetual option with a single premium would be worth an unbounded
+   amount. It is charged in size, not value: collateral and debt shrink together, so your
+   break-even never moves — there is just less position behind it.
+3. **Payoff is not linear in spot.** Entry and exit both run through constant-product curves, so
+   P&L bends with position size.
+4. **The writer is one party.** Each pool's single LP is the counterparty to every position in
+   it, bounded by an automatic [position cap](/lp/position-caps). See [Fee Earnings](/lp/fees).
 
-The pool sizes above are illustrative. The [app](https://exnihilo.markets/app) computes
-the real maximum position, effective fee rate and break-even for each live pool.
-:::
-
-## Where the option analogy breaks
-
-Four differences that matter, stated plainly:
-
-**1. There is no salvage value.** A losing option can usually be sold back for whatever
-time value remains. An underwater EXNIHILO position cannot be closed at all — it can
-only be held in the hope it recovers, or left to settle for nothing. Your exit is
-binary.
-
-**2. The premium recurs.** An option's premium is paid once. EXNIHILO's renewal fee is
-charged every period, and it is **repriced against the position's current mark value**
-(notional + profit, floored at notional) plus a slice of the open-interest impact fee.
-A deeply profitable position pays more to stay alive than a fresh one. Each renewal
-raises your break-even. See [Expiry & Renewal](/positions/expiry).
-
-**3. Payoff is not linear in spot.** Both entry and exit run through constant-product
-curves, so the relationship between token price and P&L bends with position size.
-
-**4. The writer is one party, not a market.** Every pool has exactly one LP, and that LP
-is the counterparty to every position in it. They carry the risk, bounded by a
-[position cap](/lp/position-caps) the protocol sets automatically rather than they do.
-See [Fee Earnings](/lp/fees#you-are-the-counterparty).
-
-## Who pays for your profit
-
-The pool's LP. Their liquidity is the source of every payout, which is why the protocol
-charges an impact fee that scales quadratically with position size and open interest —
-it is sized to compensate the LP above the price-distortion cost of writing the
-position.
-
-Externally, the pool's price is kept honest by arbitrage: when EXNIHILO's price diverges
-from other venues, arbitrageurs swap against SWAP-1 to close the gap. Your long is
-ultimately paid by flow that pushes the pool price up.
-
-## Reading the rest of the docs
+## Where to next
 
 | If you want to | Read |
 |---|---|
-| Compare this against perps | [vs Perpetual Futures](./vs-perpetuals) |
-| Open your first position | [Opening a Long](/trading/opening-a-long) |
-| Understand the pricing engine | [Key Concepts](./key-concepts) |
-| Know exactly what you pay | [Fees](/trading/fees) |
-| Understand expiry and rolling | [Expiry & Renewal](/positions/expiry) |
-| Write options as an LP | [Fee Earnings](/lp/fees) |
+| Compare against perps | [vs Perpetual Futures](./vs-perpetuals) |
+| Open a position | [Opening a Position](/trading/opening) |
+| Know exactly what you pay | [Fees](/protocol/fees) |
+| Understand holding costs | [Funding](/positions/funding) |
 | See what can go wrong | [Risk Disclosure](/faq/risks) |

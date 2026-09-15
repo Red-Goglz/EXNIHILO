@@ -1,64 +1,41 @@
-import { useState, useEffect } from "react";
-import { formatUsdc, formatToken, formatDuration } from "../../lib/format.ts";
-import {
-  usePositionState,
-  parseUsdcInput,
-  fmtCountdown,
-  type Position,
-} from "../../hooks/usePositionState.ts";
+import { useState } from "react";
+import { formatUsdc, formatToken } from "../../lib/format.ts";
+import { usePositionState, fmtDuration, type Position } from "../../hooks/usePositionState.ts";
 import TxButton from "../shared/TxButton.tsx";
 import PnlCardModal from "./PnlCardModal.tsx";
+import FundingMeter from "./FundingMeter.tsx";
 
 interface PositionRowProps {
   tokenId: bigint;
   position: Position;
-  positionNFTAddress: `0x${string}`;
-  underlyingUsdc: `0x${string}`;
 }
 
 /**
  * One position as a table row (desktop portfolio view). Everything needed
- * day-to-day sits inline: PnL, countdown, extend, close, auto-renew toggle.
- * Secondary data and the auto-renew arm panel live in an expandable detail
- * row so the table stays one line per position.
+ * day-to-day sits inline: PnL, what funding has left of the position, and
+ * close. Secondary data lives in an expandable detail row so the table stays
+ * one line per position.
+ *
+ * There is no countdown and no extend button because there is nothing to
+ * extend: positions do not expire, they are charged continuously and shrink.
+ * The meter in the FUNDING column is the position.
  */
 export default function PositionRow({
   tokenId,
   position,
-  positionNFTAddress,
-  underlyingUsdc,
 }: PositionRowProps) {
-  const st = usePositionState(tokenId, position, positionNFTAddress, underlyingUsdc);
+  const st = usePositionState(tokenId, position);
 
   const [expanded, setExpanded] = useState(false);
-  const [armPanelOpen, setArmPanelOpen] = useState(false);
   const [pnlCardOpen, setPnlCardOpen] = useState(false);
-
-  // Extending pulls the fee via allowance, so an approval may be needed first.
-  const needsApprovalFirst = st.needsRenewApproval && !st.approveSuccess;
-  const [capInput, setCapInput] = useState<string>("");
-  const capValue = capInput === "" ? st.suggestedCap : parseUsdcInput(capInput);
-  const capBelowFee = capValue !== null && capValue < st.renewalFee;
-
-  useEffect(() => {
-    if (st.autoRenewSuccess) {
-      setArmPanelOpen(false);
-      setCapInput("");
-    }
-  }, [st.autoRenewSuccess]);
 
   const sideColor = position.isLong ? "var(--green)" : "var(--magenta)";
   // Colour by return, not by payout: a position can pay out a positive number
   // and still be below the premium that bought it.
   const inProfit = st.returnPct !== null ? st.returnPct >= 0 : st.pnlPositive;
   const pnlColor = inProfit ? "var(--green)" : "var(--red)";
-  const expiryColor = st.isExpired
-    ? "var(--red)"
-    : st.isUrgent
-    ? "var(--orange)"
-    : "var(--cyan)";
 
-  const detailOpen = expanded || (armPanelOpen && !st.autoRenewOn);
+  const detailOpen = expanded;
 
   return (
     <>
@@ -81,7 +58,7 @@ export default function PositionRow({
         </td>
 
         {/* SIZE */}
-        <td>${formatUsdc(position.usdcIn)}</td>
+        <td>${formatUsdc(st.notional)}</td>
 
         {/* EST. PNL */}
         <td>
@@ -100,108 +77,27 @@ export default function PositionRow({
           )}
         </td>
 
-        {/* EXPIRES */}
-        <td>
-          {st.isMarketClosed ? (
-            <span style={{ color: "var(--red)", fontSize: "var(--fs-label)", letterSpacing: "0.06em" }}>
-              MARKET CLOSED
-            </span>
-          ) : (
-            <span style={{ color: expiryColor, fontWeight: 600, fontSize: "0.72rem", letterSpacing: "0.06em" }}>
-              {st.isExpired ? `EXPIRED ${st.deadlineDate}` : fmtCountdown(st.secondsLeft)}
-            </span>
-          )}
-        </td>
-
-        {/* AUTO-RENEW */}
-        <td>
-          {st.isMarketClosed ? (
-            <span style={{ color: "var(--dim)" }}>—</span>
-          ) : (
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <button
-                onClick={() => {
-                  if (st.autoRenewBusy) return;
-                  if (st.autoRenewOn) {
-                    st.disarmAutoRenew();
-                  } else {
-                    setArmPanelOpen((v) => !v);
-                  }
-                }}
-                disabled={st.autoRenewBusy}
-                aria-label={st.autoRenewOn ? "Disable auto-renew" : "Enable auto-renew"}
-                title={st.autoRenewOn ? `Auto-renew armed · cap $${formatUsdc(st.autoRenewCap)}` : "Auto-renew off — settles at expiry"}
-                style={{
-                  width: 36,
-                  height: 18,
-                  padding: 0,
-                  background: "var(--bg)",
-                  border: `1px solid ${st.autoRenewOn ? "var(--cyan)" : "var(--border-bright)"}`,
-                  cursor: st.autoRenewBusy ? "wait" : "pointer",
-                  position: "relative",
-                  flexShrink: 0,
-                  opacity: st.autoRenewBusy ? 0.6 : 1,
-                }}
-              >
-                <span
-                  style={{
-                    position: "absolute",
-                    top: 2,
-                    left: 2,
-                    width: 12,
-                    height: 12,
-                    background: st.autoRenewOn ? "var(--cyan)" : "var(--muted)",
-                    boxShadow: st.autoRenewOn ? "0 0 8px rgba(0,229,255,0.6)" : "none",
-                    transform: st.autoRenewOn ? "translateX(18px)" : "translateX(0)",
-                    transition: "transform 0.18s ease, background 0.18s ease, box-shadow 0.18s ease",
-                  }}
-                />
-              </button>
-              {st.autoRenewOn && (
-                <span style={{ fontSize: "var(--fs-label)", color: "var(--cyan)", letterSpacing: "0.06em", whiteSpace: "nowrap" }}>
-                  CAP ${formatUsdc(st.autoRenewCap)}
-                </span>
-              )}
-            </div>
-          )}
+        {/* FUNDING — what replaced EXPIRES and AUTO-RENEW.
+            Two columns collapse into one because the two things they showed
+            were the same thing: what holding costs, and what happens if you do
+            nothing. Now doing nothing has exactly one outcome, and the meter
+            shows how far along it is. */}
+        <td colSpan={2} style={{ minWidth: 190 }}>
+          <FundingMeter
+            compact
+            remainingBps={st.remainingBps}
+            pctPerDay={st.fundingPctDay}
+            halfLifeSeconds={st.halfLifeSeconds}
+            windDownShift={st.windDownShift}
+            isMarketClosed={st.isMarketClosed}
+            isDust={st.isDust}
+          />
         </td>
 
         {/* ACTIONS */}
         <td>
           <div style={{ display: "flex", gap: 6, alignItems: "center", justifyContent: "flex-end" }}>
-            {/* Always reads "Extend …" so its purpose is clear; approving is a
-                step inside that flow, taken only on click. A bare "Approve
-                USDC" gave no hint what it was for. */}
-            {!st.isMarketClosed && st.renewAllowed !== false && (
-              <TxButton
-                idleLabel={`Extend +${formatDuration(st.poolPositionDuration)} ($${formatUsdc(st.renewalFee)})`}
-                status={needsApprovalFirst ? st.approveStatus : st.renewStatus}
-                variant="default"
-                onClick={needsApprovalFirst ? st.approveRenewal : st.renew}
-                title={needsApprovalFirst
-                  ? "Approves USDC first, then extend"
-                  : "Stacks · dynamic fee · repriced live"}
-                style={{ fontSize: "var(--fs-label)", padding: "4px 8px", whiteSpace: "nowrap" }}
-              />
-            )}
-            {/* Already extended as far as the pool's 60-day horizon allows.
-                Renewals stack from the existing deadline, so this one has to
-                run down before it can be extended again. */}
-            {!st.isMarketClosed && st.renewAllowed === false && (
-              <span
-                title={`Extended to the pool limit — expires ${st.deadlineDate}. Extend again as it runs down.`}
-                style={{
-                  fontSize: "var(--fs-nano)",
-                  letterSpacing: "0.1em",
-                  color: "var(--muted)",
-                  whiteSpace: "nowrap",
-                  padding: "4px 8px",
-                }}
-              >
-                EXTENDED TO LIMIT
-              </span>
-            )}
-            {/* Same btn-terminal treatment as Extend/Close so the actions read
+            {/* Same btn-terminal treatment as Close so the actions read
                 as one row of buttons rather than a stray icon. */}
             <button
               onClick={() => setPnlCardOpen(true)}
@@ -215,7 +111,7 @@ export default function PositionRow({
               idleLabel="Close"
               status={st.closeStatus}
               variant={position.isLong ? "red" : "green"}
-              onClick={st.close}
+              onClick={() => st.close()}
               disabled={!st.canClose}
               style={{ fontSize: "var(--fs-label)", padding: "4px 10px" }}
             />
@@ -246,11 +142,11 @@ export default function PositionRow({
               tokenId={tokenId}
               tokenSymbol={st.tokenSymbol}
               isLong={position.isLong}
-              usdcIn={position.usdcIn}
-              lockedAmount={position.lockedAmount}
+              usdcIn={st.notional}
+              lockedAmount={st.lockedAmount}
+              remainingBps={st.remainingBps}
               tokenDecimals={st.tokenDecimals}
               openedAt={position.openedAt}
-              deadline={position.deadline}
               feesPaid={position.feesPaid}
               hasPnl={st.hasPnl}
               pnlPositive={st.pnlPositive}
@@ -273,8 +169,8 @@ export default function PositionRow({
                   <div className="stat-label">{position.isLong ? "LOCKED TOKEN" : "LOCKED USDC"}</div>
                   <div style={{ fontSize: "0.78rem", color: "var(--body)" }}>
                     {position.isLong
-                      ? formatToken(position.lockedAmount, 18)
-                      : formatUsdc(position.lockedAmount)}
+                      ? formatToken(st.lockedAmount, st.tokenDecimals)
+                      : formatUsdc(st.lockedAmount)}
                   </div>
                 </div>
                 <div>
@@ -283,11 +179,17 @@ export default function PositionRow({
                     {formatUsdc(position.feesPaid)}
                   </div>
                 </div>
-                {position.isLong && position.airUsdMinted > position.usdcIn && (
-                  <div title="Auto-extend fees are written against the position as extra debt — your break-even rises by this difference.">
-                    <div className="stat-label">DEBT · AUTO-EXTENDS</div>
-                    <div style={{ fontSize: "0.78rem", color: "var(--orange)" }}>
-                      {formatUsdc(position.airUsdMinted)}
+                <div title="Shrinks with funding in step with the collateral, so your break-even price stays where you opened it — there is just less position behind it.">
+                  <div className="stat-label">{position.isLong ? "DEBT" : "NOTIONAL"}</div>
+                  <div style={{ fontSize: "0.78rem", color: "var(--body)" }}>
+                    {formatUsdc(position.isLong ? st.debt : st.notional)}
+                  </div>
+                </div>
+                {st.halfLifeSeconds !== null && (
+                  <div title="At the current rate. The rate itself moves with open interest, pool depth and market age, so this is a reading, not a schedule.">
+                    <div className="stat-label">HALF GONE IN</div>
+                    <div style={{ fontSize: "0.78rem", color: "var(--body)" }}>
+                      {fmtDuration(st.halfLifeSeconds)}
                     </div>
                   </div>
                 )}
@@ -305,96 +207,12 @@ export default function PositionRow({
                   <div>
                     <div className="stat-label">MARKET CLOSED</div>
                     <div style={{ fontSize: "0.78rem", color: "var(--red)" }}>
-                      {new Date(Number(st.marketClosedAt) * 1000).toLocaleDateString()} — renew unavailable
+                      {new Date(Number(st.marketClosedAt) * 1000).toLocaleDateString()} — funding doubles daily after 7d
                     </div>
                   </div>
                 )}
               </div>
 
-              {/* Expired hint */}
-              {st.isExpired && (
-                <p style={{ fontSize: "var(--fs-micro)", color: st.autoRenewOn ? "var(--cyan)" : "var(--red)", letterSpacing: "0.04em" }}>
-                  {st.autoRenewOn
-                    ? "EXPIRED -- auto-renew armed: a keeper renews it from position profit (or settles if it can't pay)"
-                    : "EXPIRED -- position can be settled by anyone"}
-                </p>
-              )}
-
-              {/* Auto-renew arm panel */}
-              {armPanelOpen && !st.autoRenewOn && !st.isMarketClosed && (
-                <div
-                  style={{
-                    border: "1px solid rgba(0,229,255,0.2)",
-                    background: "rgba(0,229,255,0.03)",
-                    padding: "10px 12px",
-                    maxWidth: 480,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 6,
-                  }}
-                >
-                  <div style={{ fontSize: "var(--fs-micro)", letterSpacing: "0.15em", color: "var(--muted)" }}>
-                    ARM AUTO-RENEW — FEE CAP (USDC)
-                  </div>
-                  <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-                    <input
-                      value={capInput}
-                      onChange={(e) => setCapInput(e.target.value)}
-                      placeholder={formatUsdc(st.suggestedCap)}
-                      inputMode="decimal"
-                      style={{
-                        flex: 1,
-                        background: "var(--bg)",
-                        border: `1px solid ${capValue === null ? "var(--red)" : capBelowFee ? "var(--orange)" : "var(--border-bright)"}`,
-                        color: "var(--body)",
-                        fontFamily: "var(--font-mono)",
-                        fontSize: "var(--fs-body-s)",
-                        padding: "5px 8px",
-                        outline: "none",
-                        letterSpacing: "0.04em",
-                      }}
-                    />
-                    <TxButton
-                      idleLabel="Arm"
-                      status={st.autoRenewStatus}
-                      variant="cyan"
-                      disabled={capValue === null}
-                      onClick={() => capValue !== null && st.armAutoRenew(capValue)}
-                      style={{ fontSize: "var(--fs-label)", padding: "5px 14px" }}
-                    />
-                    <button
-                      onClick={() => setArmPanelOpen(false)}
-                      style={{
-                        background: "transparent",
-                        border: "1px solid var(--border)",
-                        color: "var(--muted)",
-                        fontFamily: "var(--font-mono)",
-                        fontSize: "var(--fs-label)",
-                        padding: "5px 10px",
-                        cursor: "pointer",
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                  {capValue === null ? (
-                    <span style={{ fontSize: "var(--fs-label)", color: "var(--red)", letterSpacing: "0.04em" }}>
-                      invalid amount
-                    </span>
-                  ) : capBelowFee ? (
-                    <span style={{ fontSize: "var(--fs-label)", color: "var(--orange)", letterSpacing: "0.04em" }}>
-                      below the current fee (${formatUsdc(st.renewalFee)}) — the keeper would settle instead of renewing
-                    </span>
-                  ) : (
-                    <span style={{ fontSize: "var(--fs-label)", color: "var(--muted)", letterSpacing: "0.04em", lineHeight: 1.6 }}>
-                      At expiry, anyone may renew this position for you. The fee is paid from
-                      the position's own profit — nothing leaves your wallet. If the profit
-                      can't cover it with a small safety margin, or the fee exceeds your cap,
-                      it settles instead. Cleared if the NFT is transferred.
-                    </span>
-                  )}
-                </div>
-              )}
             </div>
           </td>
         </tr>

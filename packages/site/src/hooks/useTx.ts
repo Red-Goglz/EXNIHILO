@@ -11,7 +11,7 @@ export type TxStatus = "idle" | "pending" | "confirming" | "success" | "error";
  * fire a toast. Every tx flow in the app should use this instead of
  * hand-rolling the pair (a hand-rolled pair silently swallows errors).
  *
- * @param label Short action name used in toasts, e.g. "RENEWAL", "CLAIM".
+ * @param label Short action name used in toasts, e.g. "CLOSE", "CLAIM".
  */
 export function useTx(label: string) {
   const {

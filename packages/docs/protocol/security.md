@@ -1,247 +1,110 @@
 ---
-description: "EXNIHILO's security posture — reentrancy guards, the CEI pattern, immutability, the single privileged role, and four published AI audit rounds."
+description: "EXNIHILO's security model — reentrancy guards, exact reserve invariants, the close-price clamp, immutability and its one privileged role — and the status of five AI audit rounds."
 ---
 
 # Security
 
-EXNIHILO prioritizes security through multiple layers of protection.
+## Protections in the code
 
-## Reentrancy protection
+### Reentrancy and ordering
 
-Every state-changing external function in EXNIHILOPool and EXNIHILOFactory uses OpenZeppelin's `ReentrancyGuard`. This prevents callbacks from re-entering the contract during token transfers.
+Every pool and factory function that moves tokens is `nonReentrant`, and state is written before
+any external call.
 
-## CEI pattern
+### Reserve invariant
 
-All functions follow the Checks-Effects-Interactions pattern:
-1. **Checks** — validate inputs, permissions, caps
-2. **Effects** — update all state variables
-3. **Interactions** — make external calls (transfers, mints)
-
-This ordering ensures that even if reentrancy guard were bypassed, state is already updated before any external call.
-
-## Reserve invariant
-
-`_assertReserveInvariant()` runs after every state-changing operation and
-reverts if any of four conditions fails:
+After every operation that touches the reserves, the pool reverts unless:
 
 ```
 backedAirToken ≤ airTokenSupply
 backedAirUsd   ≤ airUsdSupply
 
-underlyingToken.balanceOf(pool) ≥ backedAirToken
-
-underlyingUsdc.balanceOf(pool)  ≥ backedAirUsd
-                                + totalShortCollateral
-                                + lpFeesAccumulated
-                                + protocolFeesAccumulated
-                                + totalClaimable
+token balance  ≥ backedAirToken + totalLongCollateral
+USDC balance   ≥ backedAirUsd + totalShortCollateral
+               + lpFeesAccumulated + protocolFeesAccumulated + totalClaimable
 ```
 
-The first two say the pool never claims more backing than its supply counters
-allow — the gap between them is the outstanding synthetic debt. The last two
-check **real token balances** against every liability the pool carries: LP
-reserves, collateral locked by open shorts, unclaimed fees, and credited
-payouts.
+The balance checks count every obligation — LP reserves, collateral held for open positions,
+unclaimed fees and credited payouts — so a leak of any of them reverts instead of passing unnoticed.
+There are no `unchecked` blocks, so an accounting desync that would drive a counter negative reverts
+rather than wrapping: the pool fails closed.
 
-`totalShortCollateral` matters more than it looks. `openShort` moves real USDC
-out of `backedAirUsd` and records it as the position's `lockedAmount` — still
-held by the pool, but owed to the trader. Without that term the check passed
-whether or not the collateral was still there. With it, the fourth condition is
-an exact conservation law rather than a loose lower bound.
+### Close-price clamp
 
-Because there are no `unchecked` blocks anywhere in the protocol, an accounting
-desync that would drive any counter negative reverts rather than wrapping. The
-pool fails closed, not open.
+A holder can move the price their own close settles against. So a close is priced against the worst
+of the last 5 block opens wherever that is less favourable than live, with entries ageing out by
+block. Pumping, closing and unwinding — in one transaction or across blocks — pays no more than an
+honest close. The holder can always close; they just cannot close at a price they moved.
 
-## Fee-on-transfer protection
+### Funding cannot be steered
 
-The `_transferIn()` helper verifies that the actual tokens received match the expected amount:
+No position is valued at accrual time, and a stretch of time costs the same however it is accrued.
+Only the holder can close a position with value; the one third-party action, `sweepDust`, needs
+decay that only funding can cause.
 
-```solidity
-uint256 before = token.balanceOf(address(this));
-token.safeTransferFrom(msg.sender, address(this), amount);
-uint256 after = token.balanceOf(address(this));
-if (after - before != amount) revert FeeOnTransferNotSupported();
-```
+### Tokens, outputs and slippage
 
-This rejects fee-on-transfer, rebasing, and deflationary tokens that would break the accounting.
+- `SafeERC20` everywhere, and every inbound transfer checks the balance delta, rejecting
+  fee-on-transfer and rebasing tokens.
+- Opens and swaps that would return nothing revert instead of keeping the input.
+- Every swap, open and close takes a minimum output.
+- The swap fee is 1% of the input's spot value, rounded up, so no swap is free and a trade that
+  moves the price pays on its full size rather than on its reduced output.
 
-## Zero-output guards
+## Immutability and the one privileged role
 
-Operations that would produce zero output are rejected rather than silently
-taking the caller's input:
+No proxies, no `delegatecall`, no owner on the factory, and every pool parameter is a constant.
+`PositionNFT` is bound to its factory once, and only the owning pool can release a position. A
+defect in a deployed pool is therefore permanent; the remedy is a new deployment.
 
-- `if (airTokenOut == 0) revert ZeroAmount()` on `openLong`
-- `if (airUsdOut == 0) revert ZeroAmount()` on `openShort`
-- `if (netOut == 0) revert InsufficientOutput()` on both swap directions
-
-The swap guard closes a case where the fee could exceed the raw output. Because
-`_cpAmountOut` divides the fee by `reserveIn` rather than `reserveIn + amountIn`,
-the effective rate is `swapFeeBps × (1 + amountIn/reserveIn)` — it rises with
-trade size, and past roughly 99× the reserve (at a 1% fee) it consumes the whole
-output. A caller passing `minAmountOut = 0` in that regime previously paid for
-nothing. That fee shape is deliberate: it never *under*charges, which is the
-conservative direction, and it makes large price manipulation progressively more
-expensive.
-
-## Slippage protection
-
-All swaps and position opens accept `minAmountOut`. Transactions revert if output falls below this threshold.
-
-## Safe token handling
-
-All token operations use OpenZeppelin's `SafeERC20` library, which handles non-standard ERC-20 implementations (missing return values, etc.).
-
-## Immutable architecture
-
-- The Factory has no owner and no admin functions
-- Pool parameters (treasury, NFT contracts) are immutable after deployment; the swap fee, position size cap and position duration are not parameters at all — the fee is a constant and the other two ramp from the pool's own age
-- `PositionNFT`'s factory binding is one-shot via `initFactory()`
-- Position state can only be mutated by the owning pool (`applyRenewal` checks `msg.sender == pos.pool`)
-- No proxy patterns, no `delegatecall`, no upgradability
-
-Immutability cuts both ways: because nothing is upgradeable, a defect in a
-deployed pool is permanent. The only remediation is deploying a new factory and
-migrating liquidity.
-
-One privileged role remains: `EXNIHILOFactory.deployer` can call `closePool()`
-on any pool, forcing it into wind-down. It moves no value — positions still
-settle and LPs still withdraw — but it is unilateral. The role is transferable
-and can be set to `address(0)` to relinquish it permanently.
+One role remains: `EXNIHILOFactory.deployer` can call `closePool()` on any pool. It cannot move
+funds, but a closure starts the wind-down — after 7 days funding doubles daily, so positions nobody
+closes decay away within about eleven more days. The role is transferable and can be renounced by
+setting it to `address(0)`.
 
 ## Audit status
 
-Five automated audit rounds have been performed, each across 11 independent
-analysis passes using distinct model generations. The most recent supersedes the
-others.
-
-### Latest: Claude Opus 5 R2 (2026-08-20)
-
-**Scope:** the previously audited contracts, plus `PreMarket`, `PreMarketFactory`
-and `LockedLpVault` — 1,095 lines of new code no prior round had seen — and a
-587-line rewrite of `EXNIHILOPool`.
-
-**Result: 2 Critical | 4 High | 4 Medium | 15 Low | 18 Info | 1 Process**
-
-This round is **not clean**, and it is the first that is not. Value can be stolen
-by two unrelated mechanisms: the pool's new settlement guard does not aggregate
-price movement within a block, letting an LP suppress a holder's payout at zero
-cost; and a pre-market's entire reserve becomes buyable for $1 once its auction
-reaches the floor.
-
-**None of it is deployed.** Mainnet runs the contracts audited in the previous
-round. The affected code is a pending redeploy which, on this result, must not
-ship in its current form.
-
-The round also found **seven substantive errors in the previously published
-report** — including two findings carried as open work for four rounds that were
-never real — and a process failure: seven source comments assert security
-properties the code does not enforce, and two tests were written to confirm a
-comment rather than to attack the code.
-
-**[Read the full report →](./audit-report)** — all findings, the corrections and
-the scope limits, on this site. Raw per-pass files:
-[`.audit/findings-opus5-r2/`](https://github.com/Red-Goglz/EXNIHILO/tree/main/.audit/findings-opus5-r2).
-
-### Previous: Claude Opus 5 (2026-07-27)
-
-**Scope:** EXNIHILOPool, PositionNFT, EXNIHILOFactory, EXNIHILORouter, LpNFT,
-PoolDeployer, Faucet. (`AirToken.sol` was removed from the protocol before this
-round — `airToken`/`airUsd` are supply counters inside the pool, not contracts.)
-
-**Result: 0 Critical | 0 High | 0 Medium | 6 Low | 8 Info | 1 Process**
-
-No path was found by which LP funds can be drained or value stolen.
-
-The round's most serious finding was **not a code defect**: the previous
-(Fable 5) report asserted that the only change since the 4.7 audit was
-`PositionNFT` display code, when in fact ~1,171 lines of `EXNIHILOPool.sol` had
-changed and the entire renewal / auto-renew / keeper / claim subsystem had never
-been audited. Audit deltas must be derived from version control, not asserted.
-
-Two fixes were applied during the round:
-
-| Fix | Rationale |
-|---|---|
-| `totalShortCollateral` added to the reserve invariant | `openShort` moves USDC out of `backedAirUsd` into a position's `lockedAmount`; the invariant had stopped tracking it, so it could not detect a leak of short collateral. The invariant is now an exact conservation law (verified zero slack). |
-| `if (netOut == 0) revert InsufficientOutput()` on both swap paths | A trade large enough that the fee exceeded raw output took the caller's input and returned nothing. |
-
-Both shipped with mutation-tested coverage (`ShortCollateralInvariant.ts`,
-`ZeroOutputSwap.ts`).
-
-Raw per-pass files:
-[`.audit/findings-opus5/`](https://github.com/Red-Goglz/EXNIHILO/tree/main/.audit/findings-opus5).
-
-::: warning Superseded
-The R2 round above corrected seven conclusions from this report, including
-**NM-001** and **NM-002** — two findings it listed as open that were never real.
-Read it alongside this one, not in place of it.
-:::
-
-### Claude Fable 5 (2026-07-09) — superseded
-
-Reported 0 Critical / 0 High / 0 Medium / 4 Low. Retained here for the record,
-but its central claim — that nothing value-moving had changed since the 4.7
-round — did not hold, so its clean result should not be read as covering the
-renewal, auto-renew, keeper or claim subsystems. Superseded by the Opus 5 round
-above. Reports: [`.audit/findings-fable5/`](https://github.com/Red-Goglz/EXNIHILO/tree/main/.audit/findings-fable5).
-
-### Re-audit: Claude Opus 4.7 (2026-04-17, remediated 2026-04-18)
-
-**Scope:** EXNIHILOPool, PositionNFT, EXNIHILOFactory, EXNIHILORouter, LpNFT, AirToken (+ PoolDeployer for proxy/upgrade pass)
-
-**Result (post-remediation): 0 Critical | 0 High | 0 Medium | 4 Low | 4 Info**
-
-The 4.7 re-audit surfaced one token-conditional HIGH and four MEDIUMs that the 4.6 pass missed, including the accounting side-effect of the DoS-2 fix itself. All HIGH and MEDIUM findings have been remediated.
-
-| Pass | Focus | Findings (at audit) |
-|------|-------|---------------------|
-| Nemesis (Feynman + State Inconsistency + Fusion) | Iterative triple-engine deep audit | 2M, 6L, 1I |
-| Behavioral State Analysis | Economic, access control, state integrity | 1M, 5L, 1I |
-| DoS & Griefing | Unbounded loops, external call failure, storage bloat | 1M, 5L |
-| External Call Safety | Unchecked returns, fee-on-transfer, rebasing, ERC-777 | 1H (conditional), 3L, 1I |
-| Input & Arithmetic | Zero checks, rounding, overflow, dust amounts | 2M, 6L, 4I |
-| Oracle & Flash Loan | Price manipulation, flash loan vectors | 2M, 2L |
-| Proxy & Upgrade | Storage collisions, initialization, selector clashing | 1L, 1I |
-| Reentrancy | Classic, cross-function, cross-contract, read-only | 1L |
-| Semantic Guard | Guard consistency across all state variables | 1M, 2L, 1I |
-| Signature & Replay | Signature verification, replay vectors | Clean |
-| State Invariant | Mathematical invariant detection and verification | 1H, 1L, 1I |
-
-Cross-pass consensus was strong: the two top issues (`_trySendUsdc` accounting leak and the Router fee-race + permissionless `sweep` chain) were each independently flagged by 5-8 of the 11 passes.
-
-### Remediation (2026-04-18)
-
-| Patch | File(s) | Closes |
-|-------|---------|--------|
-| Socialize failed `_trySendUsdc` payouts into `lpFeesAccumulated` | `EXNIHILOPool.sol` | SI-001, ECS-2, NM-008, BSA-6, DoS-5 |
-| Router residual refund to caller + delete `sweep()` | `EXNIHILORouter.sol` | NM-006, NM-009, DoS-4, DoS-6, IA-10, SI-002, ECS-4, OFL-4 |
-| `closeShort` underflow guard mirroring `closeLong` | `EXNIHILOPool.sol` | SGA-2, IA-8 |
-| `swapFeeBps = 100` constant (1 %) | `EXNIHILOPool.sol` | OFL-3; strengthens OFL-1 / OFL-2 accept-posture |
-| `setDeployer` NatSpec clarifying `address(0)` is deliberate for permissionless handoff | `EXNIHILOFactory.sol` | NM-007, IA-7, SGA-4 (accepted-with-documentation) |
-
-Remaining open items are LOW or INFO: either mitigated by existing protocol mechanisms (atomic deployment, `closePool` fallback, MIN_POSITION_FEE), accepted by design (theoretical ERC-777 read-only reentrancy, treasury blacklist), or tied to pathological LP token choices (rebasing, extreme decimals).
-
-Full pass-by-pass reports: [`.audit/findings-4.7/`](https://github.com/Red-Goglz/EXNIHILO/tree/main/.audit/findings-4.7).
-
-### Original audit: Claude Opus 4.6 (2026-04-04)
-
-The 4.6 pass found 0 Critical, 0 High, 1 Medium (DoS-2: blacklisted holder blocks LP exit — fixed via `_trySendUsdc` try/catch), 7 Low, 6 Info. Nine dedicated tests in `BlacklistResilience.ts` confirmed the DoS-2 fix. Full reports: [`.audit/findings/`](https://github.com/Red-Goglz/EXNIHILO/tree/main/.audit/findings).
-
 ::: warning
-All four rounds were performed by AI models, not human auditors. They cover a wide range of vulnerability classes, and each round has independently surfaced findings its predecessors missed — but they do not replace a formal professional audit. Use at your own risk.
+Every audit round has been performed by AI models, not a human security firm, and every round has
+found things its predecessors missed. None of them replaces a professional audit.
 :::
 
-## Test coverage
+### Round five — Claude Opus 5 R2 (2026-08-20)
 
-The protocol has **414 tests** covering:
-- Core logic (swaps, positions, liquidity)
-- Edge cases and boundary conditions
-- Reentrancy attack vectors
-- Fee-on-transfer rejection
-- Zero-output guards
-- Factory fallback behavior
-- Blacklist resilience (DoS-2 fix + 4.7 socialization extension)
-- Router residual refund and `sweep()` removal (4.7 Router fix)
-- `closeShort` underwater revert path
-- `swapFeeBps` is a constant: no constructor path can produce a pool at any other fee
+The first round that was not clean: **2 Critical, 4 High, 4 Medium, 15 Low, 18 Info, 1 Process**,
+all in code written after round four. [Full report →](./audit-report)
+
+| Finding | Status |
+|---|---|
+| **C-1, H-1, M-4** — the settlement guard | Removed with the guard: positions no longer expire, so no third party settles a position with value |
+| **C-2** — pre-market reserve buyable for $1 | Fixed 2026-08-21: the auction stops at 90% of its start price, and the buyout cost always rises with the reserve |
+| **H-2** — holder sandwiches own close | Closed by the 5-block close-price clamp, in one transaction and across blocks |
+| **H-3** — renewal stacking freezes LP exit | Removed with renewals; LP exit is bounded by the wind-down |
+| **H-4** — buyout depends on the token's `transferFrom` | Documented — exempt the factory ([token compatibility](/markets/creating#token-compatibility)) |
+| **M-1** — USDC as the project token bricks a pre-market | Fixed 2026-08-22: rejected at seed time |
+| **M-3** — pre-markets have no refund path | By design; documented |
+| Token-side reserve invariant too loose | Fixed: `totalLongCollateral` added |
+
+::: danger Changes since round five are unaudited
+The contracts these docs describe replaced expiry and renewals with continuous funding that shrinks
+collateral and debt together. That redesign has not been through an audit round — nor has the fix,
+on 2026-09-15, for a bug it introduced, where a profitable short closed inside the clamp window
+could revert.
+:::
+
+### Earlier rounds
+
+| Round | Date | Result | Notes |
+|---|---|---|---|
+| Claude Opus 5 | 2026-07-27 | 0 C / 0 H / 0 M / 6 L | Added short collateral to the invariant and the zero-output swap guard. Seven of its conclusions were corrected by round five |
+| Claude Fable 5 | 2026-07-09 | 0 C / 0 H / 0 M / 4 L | Superseded: it wrongly assumed nothing value-moving had changed since the previous round |
+| Claude Opus 4.7 | 2026-04-17 | 0 C / 0 H / 0 M / 4 L after fixes | Found a conditional High and four Mediums the first round missed; all fixed |
+| Claude Opus 4.6 | 2026-04-04 | 0 C / 0 H / 1 M / 7 L | A blacklisted holder could block LP exit; fixed |
+
+Per-pass reports for every round: [`.audit/`](https://github.com/Red-Goglz/EXNIHILO/tree/main/.audit).
+
+## Tests
+
+The contract suite has **630 tests**, including randomized interleavings that check the reserve
+identities and aggregate bounds after every step, an attacker contract that sandwiches its own close
+in one transaction, blacklisted-token resilience, and path-independence of funding accrual.

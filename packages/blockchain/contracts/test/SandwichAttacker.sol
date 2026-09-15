@@ -8,7 +8,7 @@ interface IPoolSandwich {
     function swap(uint256 amountIn, uint256 minAmountOut, bool tokenToUsdc, address recipient)
         external;
     function openLong(uint256 usdcAmount, uint256 minAirTokenOut, address recipient) external;
-    function closeLong(uint256 nftId, uint256 minUsdcOut) external;
+    function closeLong(uint256 nftId, uint256 minUsdcOut, address to) external;
 }
 
 /**
@@ -42,13 +42,13 @@ contract SandwichAttacker is IERC721Receiver {
 
     /// @notice Close with no manipulation — the honest baseline.
     function plainClose(uint256 nftId) external {
-        pool.closeLong(nftId, 0);
+        pool.closeLong(nftId, 0, address(this));
     }
 
     /// @notice Pump, close at the moved mark, unwind. All in this one call.
     function sandwichClose(uint256 nftId, uint256 pumpUsdc) external {
         pool.swap(pumpUsdc, 0, false, address(this)); // USDC → token, price up
-        pool.closeLong(nftId, 0);
+        pool.closeLong(nftId, 0, address(this));
         uint256 bal = token.balanceOf(address(this));
         if (bal > 0) {
             pool.swap(bal, 0, true, address(this)); // token → USDC, unwind

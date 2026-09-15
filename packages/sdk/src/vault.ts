@@ -11,10 +11,15 @@ import { requireAccount, requireWallet, type Ctx } from "./client.js";
  * LP owner) and the launchpad (the integrator).
  *
  * The vault's only income is the pool's LP fee stream — 4 % of notional on
- * every open and renewal, plus the whole impact fee. Protocol fees go to the
- * factory's treasury and are not part of this. Swap fees are retained in the
- * pool's reserves, so with a locked LP they permanently deepen the market
- * rather than becoming claimable.
+ * every open, plus the whole impact fee. Protocol fees go to the factory's
+ * treasury and are not part of this.
+ *
+ * Two things deliberately do NOT flow through here, for the same reason: swap
+ * fees and funding are both retained in the pool's reserves rather than
+ * accrued as claimable. With a locked LP that means they permanently deepen
+ * the market instead of paying anyone out — which for funding is most of what
+ * a busy market earns, so a vault's claimable balance understates what the
+ * position is actually making.
  */
 
 export interface VaultInfo {

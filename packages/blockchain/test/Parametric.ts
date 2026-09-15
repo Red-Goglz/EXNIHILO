@@ -1,8 +1,8 @@
 /**
  * Parametric.ts — Parametric test suite for the "LP + openLong + Swap + Close" sequence.
  *
- * One wallet (trader) performs: openLong → USDC→token pump swap → closeLong (or
- * expiry liquidation if underwater) → sell token back.
+ * One wallet (trader) performs: openLong → USDC→token pump swap → closeLong (or,
+ * if underwater, wind-down and dust sweep) → sell token back.
  *
  * LP is a separate wallet.  Assertions after each run:
  *   - All positions settled (openPositionCount == 0)
@@ -23,12 +23,13 @@ import {
   PositionNFT,
   MockERC20,
 } from "../typechain-types";
+import { windDownAndSweep } from "./helpers/winddown";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants (mirror contract values)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SETTLE_GUARD_BLOCKS = 5;
+const CLAMP_BLOCKS = 5;
 const SWAP_FEE_BPS  = 100n;
 const LP_FEE_BPS    = 400n;
 const PROTO_FEE_BPS = 100n;
@@ -128,7 +129,7 @@ const FIXED_CASES: Params[] = [
     swapUsdc: 15n * E6,
   },
   {
-    label:    "deep pool, micro long, no pump → expired",
+    label:    "deep pool, micro long, no pump → swept",
     lpToken:   10_000_000n * E18,
     lpUsdc:   100_000n * E6,
     longUsdc: 1n * E6,
@@ -156,7 +157,7 @@ const FIXED_CASES: Params[] = [
     swapUsdc: 2n * E6,
   },
   {
-    label:    "large long, tiny pump (borderline: closeLong or expired)",
+    label:    "large long, tiny pump (borderline: closeLong or swept)",
     lpToken:   500_000n * E18,
     lpUsdc:   5_000n * E6,
     longUsdc: 1_000n * E6,
@@ -177,7 +178,7 @@ const FIXED_CASES: Params[] = [
     swapUsdc: 100_000n * E6,  // 100× — dumps USDC, barely gets token back
   },
   {
-    label:    "small LP at cap, no pump → expired",
+    label:    "small LP at cap, no pump → swept",
     lpToken:   50_000n * E18,
     lpUsdc:   500n * E6,
     longUsdc: 100n * E6,   // 20 % of lpUsdc — the position cap
@@ -243,7 +244,7 @@ function generateRandomCases(count: number, seed: number): Params[] {
     // Long: 1–8% of lpUsdc (keeps it well within reserves)
     const longUsdcUnits = BigInt(Math.max(1, Math.floor(Number(lpUsdcUnits) * (0.01 + rng() * 0.07))));
 
-    // Pump: 15% chance of no pump (→ expiry-liquidation path); otherwise 1–25% of lpUsdc
+    // Pump: 15% chance of no pump (→ wind-down and sweep path); otherwise 1–25% of lpUsdc
     const swapUsdcUnits = rng() < 0.15
       ? 0n
       : BigInt(Math.floor(Number(lpUsdcUnits) * rng() * 0.25));
@@ -378,20 +379,20 @@ async function runSequence(params: Params): Promise<void> {
   }
 
   // Let the pump age out of the settlement clamp window. Settlement prices
-  // against the worst open in the last SETTLE_GUARD_BLOCKS blocks, so closing
+  // against the worst open in the last CLAMP_BLOCKS blocks, so closing
   // in the block straight after a pump is priced at the pre-pump mark by
   // design (audit finding H-2). This sequence is measuring conservation across
-  // a lifecycle, not the guard — and a real position lives for days, so the
-  // window is always long expired by the time it closes.
-  await mine(SETTLE_GUARD_BLOCKS);
+  // a lifecycle, not the clamp — and a real position lives for days, so the
+  // window has always long passed by the time it closes.
+  await mine(CLAMP_BLOCKS);
 
   // ── Step 3: Decide close path from live chain state ───────────────────────
   // Read state now (post-pump) to decide whether closeLong succeeds or the
-  // position is underwater and must be liquidated after expiry.
+  // position is underwater and has to be wound down and swept.
   const airTokenSupply = await pool.airTokenSupply();
   const backedAirUsd  = await pool.backedAirUsd();
   const pos           = await positionNFT.getPosition(nftId);
-  const lockedAmount  = pos.lockedAmount;
+  const lockedAmount  = pos.lockedAmountAtOpen;
   const airUsdMinted  = pos.airUsdMinted;
 
   // Mirror closeLong CHECKS: profitable iff SWAP-3 output ≥ synthetic debt
@@ -401,11 +402,16 @@ async function runSequence(params: Params): Promise<void> {
 
   if (profitable) {
     // ── Step 3a: Close long (profitable) — receive USDC surplus ─────────────
-    await pool.connect(trader).closeLong(nftId, 0n);
+    await pool.connect(trader).closeLong(nftId, 0n, trader.address);
   } else {
-    // ── Step 3b: Underwater — expire and liquidate (collateral → LP, no payout)
-    await time.increase(7 * 24 * 60 * 60 + 1);
-    await pool.connect(trader).closePositionAfterDeadline(nftId, 0n);
+    // ── Step 3b: Underwater — no voluntary exit, so the position is left to
+    // funding. It has no deadline to be liquidated at any more; its collateral
+    // decays into the LP's reserves until sweepDust can clear the husk. The
+    // trader receives nothing either way, which is the property this sequence
+    // is measuring — but the LP now collects the collateral gradually rather
+    // than in one settlement, so the pool has to be wound down for the
+    // openPositionCount == 0 assertion below to be reachable.
+    await windDownAndSweep(pool, lp, [nftId]);
   }
 
   // ── Step 4: Sell ALL token back to the pool (token → USDC) ─────────────────
@@ -432,7 +438,7 @@ async function runSequence(params: Params): Promise<void> {
   console.log(
     `    [${params.label}] ` +
     `net: ${sign}$${usdStr} | ` +
-    `mode: ${profitable ? "closeLong" : "expiredUnderwater"}`
+    `mode: ${profitable ? "closeLong" : "sweptUnderwater"}`
   );
 
   // ── Assertions ────────────────────────────────────────────────────────────

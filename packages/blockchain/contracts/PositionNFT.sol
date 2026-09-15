@@ -12,8 +12,7 @@ import "@openzeppelin/contracts/utils/Strings.sol";
  * Registry model
  * ──────────────
  * The NFT is a pure position registry: locked collateral never leaves the
- * pool — the pool's supply counters plus the Position struct's lockedAmount
- * fully describe it. mintLong / mintShort record the position and mint the
+ * pool — the pool's supply counters plus the Position struct fully describe it. mintLong / mintShort record the position and mint the
  * NFT; release() burns the NFT and returns the Position struct, which gives
  * the pool everything it needs to complete the settlement math.
  *
@@ -27,6 +26,9 @@ import "@openzeppelin/contracts/utils/Strings.sol";
 interface IEXNIHILOPool {
     function underlyingToken() external view returns (address);
     function quoteClose(uint256 nftId) external view returns (bool ready, int256 pnl);
+    function liveAmountsOf(uint256 nftId)
+        external view returns (uint256 locked, uint256 debt, uint256 notional);
+    function remainingSizeBps(uint256 nftId) external view returns (uint256);
 }
 
 interface ITokenMeta {
@@ -47,9 +49,15 @@ contract PositionNFT is ERC721Enumerable {
     struct Position {
         bool isLong;
         address pool;
-        /// @dev airTokenLocked for longs, airUsdLocked for shorts
-        uint256 lockedAmount;
-        /// @dev Long only: USDC notional used to open the position
+        /// @dev airTokenLocked for longs, airUsdLocked for shorts, AS AT OPEN.
+        ///      Funding shrinks every position on a side by the same factor —
+        ///      this and the three amounts below alike — so each live figure is
+        ///        atOpen * poolFundingIndex / fundingIndexAtOpen
+        ///      and this registry deliberately does not track them — recording a
+        ///      decaying number per position is exactly the per-position write
+        ///      the index exists to avoid. Ask the pool: EXNIHILOPool.liveAmountsOf().
+        uint256 lockedAmountAtOpen;
+        /// @dev USDC notional at open, both sides
         uint256 usdcIn;
         /// @dev Long only: synthetic airUsd debt minted at open
         uint256 airUsdMinted;
@@ -57,8 +65,12 @@ contract PositionNFT is ERC721Enumerable {
         uint256 airTokenMinted;
         uint256 feesPaid;
         uint256 openedAt;
-        /// @dev Timestamp after which the position can be closed by anyone.
-        uint256 deadline;
+        /// @dev The pool's funding index for this position's side at the moment
+        ///      it was minted, in RAY. The denominator of the decay ratio above.
+        ///      Positions no longer expire, so this replaces what used to be the
+        ///      deadline: the charge for holding is continuous rather than a
+        ///      lease that has to be renewed.
+        uint256 fundingIndexAtOpen;
     }
 
     /// @dev Live pool data resolved at tokenURI call time.
@@ -68,6 +80,10 @@ contract PositionNFT is ERC721Enumerable {
         bool   pnlPositive;
         uint256 pnlAbs;      // abs PnL in USDC 6-dec units (net of 1% close fee on profit)
         uint8  tokenDecimals; // underlying token decimals (for display formatting)
+        uint256 locked;      // collateral still backing the position, net of funding
+        uint256 debt;        // synthetic debt left, net of funding (airUsd long / airToken short)
+        uint256 notional;    // USDC notional left, net of funding
+        uint256 remainingBps; // all three as a fraction of what the position opened with
     }
 
     // ── State ──────────────────────────────────────────────────────────────────
@@ -75,15 +91,6 @@ contract PositionNFT is ERC721Enumerable {
     uint256 private _nextTokenId;
     mapping(uint256 => Position) private _positions;
 
-    /// @dev Auto-renew opt-in per position. `maxFee` caps the renewal fee the
-    ///      pool may charge against the position's equity at expiry. Cleared on
-    ///      every ownership change so each new holder must opt in themselves.
-    struct AutoRenewConfig {
-        bool    enabled;
-        uint256 maxFee;
-    }
-
-    mapping(uint256 => AutoRenewConfig) private _autoRenew;
 
     /// @notice The deployer address (used to authorize initFactory).
     address private immutable _deployer;
@@ -112,7 +119,6 @@ contract PositionNFT is ERC721Enumerable {
     // ── Events ─────────────────────────────────────────────────────────────────
 
     event FactoryInitialized(address indexed factory);
-    event AutoRenewSet(uint256 indexed tokenId, bool enabled, uint256 maxFee);
 
     // ── Factory initialisation ────────────────────────────────────────────────
 
@@ -184,7 +190,7 @@ contract PositionNFT is ERC721Enumerable {
      *      Two floors follow from the settlement rules, and both matter:
      *
      *      - `payout` floors at ZERO. A position below break-even cannot be
-     *        closed and pays nothing at expiry; the pool's reported shortfall
+     *        closed and pays nothing when swept; the pool's reported shortfall
      *        is a notional gap, not a debt the trader owes. Carrying that gap
      *        into the display printed losses many times the premium — a
      *        position that risked $5 rendering as −$80.
@@ -226,23 +232,23 @@ contract PositionNFT is ERC721Enumerable {
             '{"trait_type":"Side","value":"', pos.isLong ? "Long" : "Short", '"},',
             '{"trait_type":"Market","value":"', ld.tokenSymbol, '/USDC"},',
             '{"trait_type":"Token ID","display_type":"number","value":', tokenId.toString(), '},',
-            '{"trait_type":"Position Size (USDC)","display_type":"number","value":', _fmt6(pos.usdcIn), '},'
+            '{"trait_type":"Position Size (USDC)","display_type":"number","value":', _fmt6(ld.notional), '},'
         );
 
         bytes memory a2 = pos.isLong
             ? abi.encodePacked(
-                '{"trait_type":"Locked ', ld.tokenSymbol, '","display_type":"number","value":', _fmtToken(pos.lockedAmount, ld.tokenDecimals), '},',
-                '{"trait_type":"Debt (airUSD)","display_type":"number","value":', _fmt6(pos.airUsdMinted), '},'
+                '{"trait_type":"Locked ', ld.tokenSymbol, '","display_type":"number","value":', _fmtToken(ld.locked, ld.tokenDecimals), '},',
+                '{"trait_type":"Debt (airUSD)","display_type":"number","value":', _fmt6(ld.debt), '},'
             )
             : abi.encodePacked(
-                '{"trait_type":"Locked USDC","display_type":"number","value":', _fmt6(pos.lockedAmount), '},',
-                '{"trait_type":"Debt (airToken)","display_type":"number","value":', _fmtToken(pos.airTokenMinted, ld.tokenDecimals), '},'
+                '{"trait_type":"Locked USDC","display_type":"number","value":', _fmt6(ld.locked), '},',
+                '{"trait_type":"Debt (airToken)","display_type":"number","value":', _fmtToken(ld.debt, ld.tokenDecimals), '},'
             );
 
         bytes memory a3 = abi.encodePacked(
             '{"trait_type":"Fees Paid (USDC)","display_type":"number","value":', _fmt6(pos.feesPaid), '},',
             '{"trait_type":"Opened","display_type":"date","value":', pos.openedAt.toString(), '},',
-            '{"trait_type":"Deadline","display_type":"date","value":', pos.deadline.toString(), '},'
+            '{"trait_type":"Size Remaining %","display_type":"number","value":', (ld.remainingBps / 100).toString(), '},'
         );
 
         bytes memory pnlAttr;
@@ -274,7 +280,7 @@ contract PositionNFT is ERC721Enumerable {
         uint256 airUsdMinted,
         uint256 airTokenLocked,
         uint256 feesPaid,
-        uint256 deadline
+        uint256 fundingIndexAtOpen
     ) external returns (uint256 tokenId) {
         if (factory == address(0)) revert FactoryNotSet();
         if (msg.sender != pool) revert OnlyPool();
@@ -284,13 +290,13 @@ contract PositionNFT is ERC721Enumerable {
         _positions[tokenId] = Position({
             isLong: true,
             pool: pool,
-            lockedAmount: airTokenLocked,
+            lockedAmountAtOpen: airTokenLocked,
             usdcIn: usdcIn,
             airUsdMinted: airUsdMinted,
             airTokenMinted: 0,
             feesPaid: feesPaid,
             openedAt: block.timestamp,
-            deadline: deadline
+            fundingIndexAtOpen: fundingIndexAtOpen
         });
 
         _safeMint(to, tokenId);
@@ -303,7 +309,7 @@ contract PositionNFT is ERC721Enumerable {
         uint256 airUsdLocked,
         uint256 usdcIn,
         uint256 feesPaid,
-        uint256 deadline
+        uint256 fundingIndexAtOpen
     ) external returns (uint256 tokenId) {
         if (factory == address(0)) revert FactoryNotSet();
         if (msg.sender != pool) revert OnlyPool();
@@ -313,89 +319,16 @@ contract PositionNFT is ERC721Enumerable {
         _positions[tokenId] = Position({
             isLong: false,
             pool: pool,
-            lockedAmount: airUsdLocked,
+            lockedAmountAtOpen: airUsdLocked,
             usdcIn: usdcIn,
             airUsdMinted: 0,
             airTokenMinted: airTokenMinted,
             feesPaid: feesPaid,
             openedAt: block.timestamp,
-            deadline: deadline
+            fundingIndexAtOpen: fundingIndexAtOpen
         });
 
         _safeMint(to, tokenId);
-    }
-
-    // ── Renewal ───────────────────────────────────────────────────────────────
-
-    /**
-     * @notice Apply a renewal to a position. Pool-only.
-     *
-     *         Covers both renewal modes:
-     *           Manual  — locked/debt unchanged, deadline extended, fee added.
-     *           Auto    — the pool charges the fee against the position's own
-     *                     equity: a long's synthetic debt grows, a short's
-     *                     locked collateral shrinks. The pool passes the new
-     *                     values; this contract just records them.
-     */
-    function applyRenewal(
-        uint256 tokenId,
-        uint256 newLockedAmount,
-        uint256 newAirUsdMinted,
-        uint256 addFeesPaid,
-        uint256 newDeadline
-    ) external {
-        Position storage pos = _positions[tokenId];
-        if (pos.pool == address(0)) revert PositionNotFound();
-        if (msg.sender != pos.pool) revert PositionNotFromPool();
-        pos.lockedAmount = newLockedAmount;
-        pos.airUsdMinted = newAirUsdMinted;
-        pos.feesPaid    += addFeesPaid;
-        pos.deadline     = newDeadline;
-    }
-
-    // ── Auto-renew opt-in ─────────────────────────────────────────────────────
-
-    /**
-     * @notice Opt a position in or out of keeper-driven auto-renewal at expiry.
-     *         Holder only. `maxFee` is the ceiling on the renewal fee the pool
-     *         may charge against the position's equity — if the dynamic fee
-     *         quote exceeds it at expiry, the keeper closes instead of renewing.
-     *
-     *         The setting is cleared on every transfer: each new holder must
-     *         opt in themselves.
-     */
-    function setAutoRenew(uint256 tokenId, bool enabled, uint256 maxFee) external {
-        if (_positions[tokenId].pool == address(0)) revert PositionNotFound();
-        if (ownerOf(tokenId) != msg.sender) revert OnlyTokenOwner();
-        if (enabled) {
-            _autoRenew[tokenId] = AutoRenewConfig({enabled: true, maxFee: maxFee});
-        } else {
-            delete _autoRenew[tokenId];
-        }
-        emit AutoRenewSet(tokenId, enabled, enabled ? maxFee : 0);
-    }
-
-    /// @notice Auto-renew configuration for `tokenId` (enabled=false if unset).
-    function getAutoRenew(uint256 tokenId) external view returns (bool enabled, uint256 maxFee) {
-        AutoRenewConfig memory cfg = _autoRenew[tokenId];
-        return (cfg.enabled, cfg.maxFee);
-    }
-
-    /**
-     * @dev Clear the auto-renew opt-in on every ownership change (transfer or
-     *      burn). Opt-in is personal to the holder who set it — a buyer must
-     *      not inherit a keeper authorization they never gave.
-     */
-    function _update(address to, uint256 tokenId, address auth)
-        internal
-        override
-        returns (address from)
-    {
-        from = super._update(to, tokenId, auth);
-        if (from != address(0) && _autoRenew[tokenId].enabled) {
-            delete _autoRenew[tokenId];
-            emit AutoRenewSet(tokenId, false, 0);
-        }
     }
 
     // ── Release ────────────────────────────────────────────────────────────────
@@ -422,6 +355,27 @@ contract PositionNFT is ERC721Enumerable {
      */
     function _readLive(uint256 tokenId, Position memory pos) internal view returns (LiveData memory ld) {
         ld.tokenDecimals = 18; // safe default
+
+        // Collateral, debt and notional net of funding. The registry stores only
+        // the opening figures — see Position.lockedAmountAtOpen — so the live
+        // ones have to come from the pool, which owns the index. Falling back to the opening
+        // figure on a failed call would overstate the position, so the fallback
+        // is the same best-effort shape as every other call here and the
+        // remaining fraction reads 0 (unknown) rather than 10000 (untouched).
+        ld.locked       = pos.lockedAmountAtOpen;
+        ld.debt         = pos.isLong ? pos.airUsdMinted : pos.airTokenMinted;
+        ld.notional     = pos.usdcIn;
+        ld.remainingBps = 10_000;
+        try IEXNIHILOPool(pos.pool).liveAmountsOf(tokenId) returns (
+            uint256 liveLocked, uint256 liveDebt, uint256 liveNotional
+        ) {
+            ld.locked   = liveLocked;
+            ld.debt     = liveDebt;
+            ld.notional = liveNotional;
+            try IEXNIHILOPool(pos.pool).remainingSizeBps(tokenId) returns (uint256 bps) {
+                ld.remainingBps = bps;
+            } catch {}
+        } catch {}
 
         // Token symbol + decimals (best-effort)
         try IEXNIHILOPool(pos.pool).underlyingToken() returns (address token) {
@@ -462,7 +416,7 @@ contract PositionNFT is ERC721Enumerable {
             _svgChrome(tokenId, sc, sl, ld.tokenSymbol),
             pos.isLong ? _svgLongData(pos, ld) : _svgShortData(pos, ld),
             _svgPnl(pos, ld),
-            _svgFooter(pos),
+            _svgFooter(pos, ld),
             "</svg>"
         );
     }
@@ -554,13 +508,13 @@ contract PositionNFT is ERC721Enumerable {
             '<text x="32"  y="330" class="f lbl">POSITION SIZE</text>',
             '<text x="196" y="330" class="f lbl">', lockedLabel, "</text>",
             '<text x="360" y="330" class="f lbl">PREMIUM PAID</text>',
-            '<text x="32"  y="360" class="f val">', _fmt6(pos.usdcIn),        "</text>",
-            '<text x="196" y="360" class="f val">', _fmtToken(pos.lockedAmount, ld.tokenDecimals), "</text>",
+            '<text x="32"  y="360" class="f val">', _fmt6(ld.notional),       "</text>",
+            '<text x="196" y="360" class="f val">', _fmtToken(ld.locked, ld.tokenDecimals), "</text>",
             '<text x="360" y="360" class="f val">', _fmt6(pos.feesPaid), "</text>"
         );
     }
 
-    function _svgShortData(Position memory pos, LiveData memory) internal pure returns (bytes memory) {
+    function _svgShortData(Position memory pos, LiveData memory ld) internal pure returns (bytes memory) {
         // Mirrors the long layout (SIZE | LOCKED collateral) so both sides
         // read the same. The airToken debt stays in the JSON attributes for
         // marketplace pricing — on the certificate it is noise.
@@ -568,8 +522,8 @@ contract PositionNFT is ERC721Enumerable {
             '<text x="32"  y="330" class="f lbl">POSITION SIZE</text>',
             '<text x="196" y="330" class="f lbl">LOCKED USDC</text>',
             '<text x="360" y="330" class="f lbl">PREMIUM PAID</text>',
-            '<text x="32"  y="360" class="f val">', _fmt6(pos.usdcIn),      "</text>",
-            '<text x="196" y="360" class="f val">', _fmt6(pos.lockedAmount), "</text>",
+            '<text x="32"  y="360" class="f val">', _fmt6(ld.notional),     "</text>",
+            '<text x="196" y="360" class="f val">', _fmt6(ld.locked), "</text>",
             '<text x="360" y="360" class="f val">', _fmt6(pos.feesPaid),     "</text>"
         );
     }
@@ -617,14 +571,14 @@ contract PositionNFT is ERC721Enumerable {
         );
     }
 
-    function _svgFooter(Position memory pos) internal pure returns (bytes memory) {
+    function _svgFooter(Position memory pos, LiveData memory ld) internal pure returns (bytes memory) {
         // Divider above the strip, columns 4-5, and the tagline.
         return abi.encodePacked(
             '<line x1="32" y1="300" x2="768" y2="300" stroke="#1a1a1a"/>',
             '<text x="524" y="330" class="f lbl">OPENED</text>',
             '<text x="524" y="360" class="f dat">', _fmtDate(pos.openedAt), "</text>",
-            '<text x="656" y="330" class="f lbl">EXPIRES</text>',
-            '<text x="656" y="360" class="f dat">', _fmtDate(pos.deadline), "</text>",
+            '<text x="656" y="330" class="f lbl">SIZE LEFT</text>',
+            '<text x="656" y="360" class="f dat">', (ld.remainingBps / 100).toString(), '%', "</text>",
             '<text x="768" y="424" class="f" font-size="12" letter-spacing="3" fill="#555" text-anchor="end">OUT OF THIN AIR</text>',
             '<text x="32" y="424" class="f" font-size="12" letter-spacing="2" fill="#555">exnihilo.markets</text>'
         );

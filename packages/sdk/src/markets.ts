@@ -1,7 +1,7 @@
 import { exnihiloFactoryAbi, exnihiloPoolAbi, erc20Abi } from "@exnihilio/abis";
 import type { Address } from "viem";
 import type { Ctx } from "./client.js";
-import { BPS_DENOM, CAP_MAX_BPS, CAP_RAMP_SECONDS, DURATION_STEPS, DURATION_MAX } from "./constants.js";
+import { BPS_DENOM, CAP_MAX_BPS, CAP_RAMP_SECONDS, FUNDING_WINDOW_MIN, FUNDING_WINDOW_MAX } from "./constants.js";
 
 export interface MarketSummary {
   pool: Address;
@@ -20,12 +20,26 @@ export interface MarketSummary {
   /** Market creation timestamp. Anchors the cap ramp. */
   createdAt: bigint;
   /**
-   * Lifetime a position opened right now would receive, in seconds. Steps with
-   * market age: 1h → 24h → 7d → 30d over the first week.
+   * The period one funding charge is levied over, in seconds. One hour at
+   * market creation, widening by one second per second, capped at 30 days.
+   *
+   * A market's first hours are its most volatile — no price history, whatever
+   * depth the creator seeded — so rent starts high and falls as the market
+   * earns a history. This replaced the position lifetime that used to sit here:
+   * positions no longer expire, they are charged continuously instead.
    */
-  currentPositionDuration: bigint;
+  fundingWindow: bigint;
+  /** Per-second funding rate on the long side, in RAY (1e27). */
+  fundingRateLong: bigint;
+  /** Per-second funding rate on the short side, in RAY (1e27). */
+  fundingRateShort: bigint;
   /** Non-zero once closure has been initiated; no new positions can open. */
   closeDate: bigint;
+  /**
+   * How many times the wind-down has doubled the funding rate. 0 while the pool
+   * is open or still inside the grace period after closePool.
+   */
+  windDownShift: bigint;
   openPositionCount: bigint;
 }
 
@@ -72,9 +86,12 @@ export async function getMarket(ctx: Ctx, pool: Address): Promise<MarketSummary>
       { ...c, functionName: "currentMaxPositionBps" },
       { ...c, functionName: "effectiveLeverageCap" },
       { ...c, functionName: "createdAt" },
-      { ...c, functionName: "currentPositionDuration" },
+      { ...c, functionName: "fundingWindow" },
       { ...c, functionName: "closeDate" },
       { ...c, functionName: "openPositionCount" },
+      { ...c, functionName: "fundingRatePerSecond", args: [true] },
+      { ...c, functionName: "fundingRatePerSecond", args: [false] },
+      { ...c, functionName: "windDownShift" },
     ],
     allowFailure: false,
   });
@@ -89,9 +106,12 @@ export async function getMarket(ctx: Ctx, pool: Address): Promise<MarketSummary>
     currentMaxPositionBps: results[5] as bigint,
     effectiveLeverageCap: results[6] as bigint,
     createdAt: results[7] as bigint,
-    currentPositionDuration: results[8] as bigint,
+    fundingWindow: results[8] as bigint,
     closeDate: results[9] as bigint,
     openPositionCount: results[10] as bigint,
+    fundingRateLong: results[11] as bigint,
+    fundingRateShort: results[12] as bigint,
+    windDownShift: results[13] as bigint,
   };
 }
 
@@ -158,17 +178,28 @@ export function projectPositionCapBps(createdAt: bigint, atTime: bigint): bigint
 }
 
 /**
- * Predict the position lifetime at some future time, without a call.
+ * Predict the funding window at some future time, without a call.
  *
- * Mirrors `EXNIHILOPool.currentPositionDuration` exactly. Useful for telling a
- * trader when longer-dated positions become available on a young market.
+ * Mirrors `EXNIHILOPool.fundingWindow` exactly: one hour at creation, widening
+ * by one second per second, capped at thirty days. Useful for telling a trader
+ * how much cheaper holding gets as a market matures.
  */
-export function projectPositionDuration(createdAt: bigint, atTime: bigint): bigint {
+export function projectFundingWindow(createdAt: bigint, atTime: bigint): bigint {
   const age = atTime > createdAt ? atTime - createdAt : 0n;
-  for (const step of DURATION_STEPS) {
-    if (age < step.maxAge) return step.duration;
-  }
-  return DURATION_MAX;
+  const w = FUNDING_WINDOW_MIN + age;
+  return w > FUNDING_WINDOW_MAX ? FUNDING_WINDOW_MAX : w;
+}
+
+/**
+ * The funding rate a side would pay, as a percentage per day.
+ *
+ * `rateRay` is what `fundingRatePerSecond` and `MarketSummary.fundingRate*`
+ * return. Kept here so callers do not have to carry RAY arithmetic around just
+ * to render a number.
+ */
+export function fundingRatePctPerDay(rateRay: bigint): number {
+  const RAY = 10n ** 27n;
+  return Number((rateRay * 86_400n * 1_000_000n) / RAY) / 10_000;
 }
 
 /** Token metadata for display. Falls back gracefully on non-standard tokens. */

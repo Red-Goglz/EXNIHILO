@@ -30,7 +30,7 @@ interface IEXNIHILOPool {
  *
  *         LP operations (addLiquidity, removeLiquidity, claimFees)
  *         and holder-only position operations (closeLong, closeShort,
- *         renewPosition, claimPayout) are called directly on the pool — the
+ *         claimPayout, sweepDust) are called directly on the pool — the
  *         router does not wrap them.
  */
 contract EXNIHILORouter is ReentrancyGuard {

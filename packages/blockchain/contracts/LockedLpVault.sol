@@ -62,7 +62,10 @@ interface ILockedLpNFT {
  * ── Fee split ────────────────────────────────────────────────────────────────
  *
  *   pool.claimFees() is the vault's only income. It carries the base LP fee
- *   (4 % of notional on every open and renewal) and the whole impact fee.
+ *   (4 % of notional on every open) and the whole impact fee. Funding is not
+ *   included: it never becomes a claimable fee, it lands straight in the backed
+ *   reserves, so the vault sees it as growth in the position rather than as yield
+ *   to distribute.
  *   Protocol fees are not part of it — those go to the factory's own treasury.
  *
  *   Each harvest splits the amount received: `integratorBps` to the integrator

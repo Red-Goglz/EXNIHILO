@@ -15,21 +15,33 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
  *      it without import gymnastics.
  *
  *      Fields used per side:
- *        Long  — lockedAmount = airTokenLocked (airToken units),
+ *        Long  — lockedAmountAtOpen = airTokenLocked (airToken units),
  *                usdcIn, airUsdMinted, feesPaid
- *        Short — lockedAmount = airUsdLocked (airUsd units),
- *                airTokenMinted, feesPaid
+ *        Short — lockedAmountAtOpen = airUsdLocked (airUsd units),
+ *                usdcIn, airTokenMinted, feesPaid
+ *
+ *      Every amount here is as it stood the moment the position was minted,
+ *      and none is the live figure: funding shrinks every position on a side
+ *      by the same factor — collateral, debt and notional together — so each
+ *      of them now stands at
+ *
+ *        atOpen * fundingIndex(side) / fundingIndexAtOpen
+ *
+ *      `lockedAmountAtOpen` is deliberately awkwardly named, and the debt and
+ *      notional fields decay the same way. Every consumer must go through
+ *      EXNIHILOPool.liveAmountsOf() or effectiveLocked(); a bare read of any of
+ *      them is a stale number.
  */
 struct Position {
     bool    isLong;
     address pool;
-    uint256 lockedAmount;
+    uint256 lockedAmountAtOpen;
     uint256 usdcIn;
     uint256 airUsdMinted;
     uint256 airTokenMinted;
     uint256 feesPaid;
     uint256 openedAt;
-    uint256 deadline;
+    uint256 fundingIndexAtOpen;
 }
 
 /**
@@ -43,7 +55,7 @@ interface IPositionNFT {
         uint256 airUsdMinted,
         uint256 airTokenLocked,
         uint256 feesPaid,
-        uint256 deadline
+        uint256 fundingIndexAtOpen
     ) external returns (uint256 tokenId);
 
     function mintShort(
@@ -53,20 +65,10 @@ interface IPositionNFT {
         uint256 airUsdLocked,
         uint256 usdcIn,
         uint256 feesPaid,
-        uint256 deadline
+        uint256 fundingIndexAtOpen
     ) external returns (uint256 tokenId);
 
     function release(uint256 tokenId) external returns (Position memory);
-
-    function applyRenewal(
-        uint256 tokenId,
-        uint256 newLockedAmount,
-        uint256 newAirUsdMinted,
-        uint256 addFeesPaid,
-        uint256 newDeadline
-    ) external;
-
-    function getAutoRenew(uint256 tokenId) external view returns (bool enabled, uint256 maxFee);
 
     function getPosition(uint256 tokenId) external view returns (Position memory);
 
@@ -132,7 +134,7 @@ interface IEXNIHILOFactory {
  *
  *   Collateral locked in a position stays counted in the supply counters
  *   (it exists, it is just out of circulation); settlement math subtracts
- *   pos.lockedAmount from the relevant supply where required.
+ *   the position's effective locked collateral from the relevant supply where required.
  *
  * ── Fee Structure ────────────────────────────────────────────────────────────
  *
@@ -209,110 +211,182 @@ contract EXNIHILOPool is ReentrancyGuard {
     uint256 private constant CAP_MAX_BPS       = 2_000;  // 20 % of backedAirUsd
     uint256 private constant CAP_RAMP_DURATION = 24 hours;
 
-    /// @dev Position lifetime, stepped by market age. Like the size cap, this is
-    ///      automatic rather than a creation parameter: a duration is genuinely
-    ///      hard to pick correctly up front, and the right answer changes as a
-    ///      market ages.
+    /// @dev Funding. A position posts no margin — the open fee is the whole of
+    ///      what the trader pays up front, and the collateral locked against it
+    ///      is the LP's own. What the holder receives is therefore an option the
+    ///      LP wrote, and with no expiry that option's value to the holder is
+    ///      unbounded unless its premium is charged continuously.
     ///
-    ///      A market's first hours are its most volatile — a week-long position
-    ///      opened into a token with no price history is a bet on noise, and the
-    ///      LP writes it. Short lifetimes early force frequent repricing through
-    ///      the renewal fee, which is exactly when repricing is worth most. Once
-    ///      the market has a week behind it, long-dated positions are a normal
-    ///      product rather than an asymmetric one.
+    ///      Funding is that charge. Every second, each side is shrunk by a fixed
+    ///      FRACTION d — collateral, synthetic debt and notional together — as if
+    ///      that fraction of every position on the side were closed with its
+    ///      payout kept by the pool:
     ///
-    ///      MUST be non-decreasing in market age. closePool sets
-    ///      closeDate = now + currentPositionDuration(), and the bound on how
-    ///      long the LP can be kept waiting by it depends on no earlier
-    ///      position having been issued a longer lifetime.
-    uint256 private constant DURATION_AGE_1 = 1 hours;
-    uint256 private constant DURATION_AGE_2 = 8 hours;
-    uint256 private constant DURATION_AGE_3 = 24 hours;
-    uint256 private constant DURATION_AGE_4 = 7 days;
-    uint256 private constant DURATION_MAX   = 30 days;
+    ///        Long   totalLongCollateral  -= d*C ; backedAirToken += d*C
+    ///               longOpenInterest     -= d*D ; airUsdSupply   -= d*D
+    ///        Short  totalShortCollateral -= d*C ; backedAirUsd   += d*C
+    ///               totalShortDebt       -= d*D ; airTokenSupply -= d*D
+    ///               shortOpenInterest    -= d*N
+    ///
+    ///      That is the underwater branch of _settle applied to a slice: the
+    ///      collateral returns to the LP and the debt it was locked against is
+    ///      cancelled. No swap is executed, so no swap fee is charged, and
+    ///      nothing becomes claimable — whatever the slice was worth lands in
+    ///      reserves the LP already owns. Only the open fee and the close fee
+    ///      accrue to lpFeesAccumulated.
+    ///
+    ///      Multiplicative, not additive, and that is the load-bearing choice.
+    ///      An additive debt (the usual perp `owed = N * dIndex`) can exceed
+    ///      what the position holds, which creates bad debt and forces a
+    ///      liquidation path with a bounty to pay for it. A fraction of what is
+    ///      actually there is always collectible and can never drive a claim
+    ///      below zero, so there is nothing to liquidate and no keeper to fund.
+    ///
+    ///      It is also what lets the whole book decay from a single number per
+    ///      side. Every position on a side takes the same factor, so one index
+    ///      serves all of them and no position is ever touched between open and
+    ///      close. See fundingIndexLong / _accrueFunding.
+    ///
+    ///      What a holder pays is the slice itself. Collateral and debt shrink
+    ///      in step, so a position keeps its break-even price and simply gets
+    ///      smaller: a winner gives up `d` of its profit, a flat or losing
+    ///      position `d` of its upside. Nothing is priced to do it, so there is
+    ///      no spot read at accrual time for anyone to manipulate.
+    ///
+    ///      Shrinking the debt with the collateral is also what lets the book
+    ///      heal on its own. Debt that outlived its collateral would go on
+    ///      inflating the supply counters and open interest until someone swept
+    ///      the position; decaying it in step means a decayed position stops
+    ///      distorting the curves, the impact fee and the funding rate.
+    ///
+    ///      Price effect, in terms of the pool's own views:
+    ///        Long funding   backedAirToken up, airUsdSupply down
+    ///                         =>  spotPrice down, longPrice down
+    ///        Short funding  backedAirUsd up, airTokenSupply down
+    ///                         =>  spotPrice up,   shortPrice up
+    ///      Each side moves the prices that contain its own reserves, against
+    ///      itself — funding is a slow-motion version of that side's own close,
+    ///      and it prices like one.
+    uint256 private constant RAY = 1e27;
 
-    /// @dev Absolute ceiling on how far past NOW a renewal may place a deadline.
+    /// @dev Funding rate, as bps of the position per FUNDING WINDOW:
     ///
-    ///      renewPosition extends from the position's existing deadline rather
-    ///      than from now, so renewals STACK. closeDate was the only other
-    ///      bound and it is zero until the LP closes the pool, so without this
-    ///      a holder could push a deadline out arbitrarily far — and
-    ///      removeLiquidity reverts while openPositionCount != 0. A dust
-    ///      position renewed at the MIN_POSITION_FEE floor would freeze 100 %
-    ///      of LP principal for as long as it cared to keep paying, at a cost
-    ///      independent of pool size.
+    ///        ratePerWindow = FUNDING_BASE_BPS + FUNDING_UTIL_BPS * utilization
+    ///        utilization   = sameSideOpenInterest / backedAirUsd
     ///
-    ///      Two times DURATION_MAX. That is the smallest horizon that still
-    ///      lets a position on the 30-day ceiling renew before it expires:
-    ///      renewing a freshly opened one lands exactly on the horizon and is
-    ///      allowed, renewing that result again is not. So a holder always has
-    ///      one renewal in hand and never has to race their own deadline, and
-    ///      a long-dated position has to be allowed to run down before it can
-    ///      be extended again. Below the ceiling — a market's first week, where
-    ///      durations are hours — renewal stays effectively unlimited, which is
-    ///      the intent: short positions renew often, long ones renew once.
+    ///      Priced against what the position is, not inherited from the renewal
+    ///      fee it replaced. A position is a perpetual at-the-money option that
+    ///      cannot be liquidated and loses at most its premium, so holding one
+    ///      has to cost more than a perp's funding. At a mature market's 30-day
+    ///      window the base term takes ~0.33 % of the position a day — roughly
+    ///      what a perpetual option on a major pays at 100 % implied volatility —
+    ///      and a young market, where volatility is highest, pays many times
+    ///      that. The utilization term prices crowding on top: a side whose open
+    ///      interest equals the pool's depth pays three times the base.
     ///
-    ///      What it guarantees the LP: every deadline a renewal writes is at
-    ///      most RENEW_HORIZON past the moment it was written, so at any time T
-    ///      no outstanding position can expire later than T + RENEW_HORIZON.
-    ///      closePool at T therefore bounds the wait for removeLiquidity at 60
-    ///      days instead of leaving it open-ended.
+    ///      Funding shrinks the whole position rather than only its collateral,
+    ///      so a winner gives up that share of its profit, and a flat or losing
+    ///      position that share of its size.
     ///
-    ///      It does NOT make closeDate bind retroactively: a deadline already
-    ///      stacked past closeDate stands, and closePositionAfterDeadline
-    ///      cannot reach that position until it passes. The wait is bounded,
-    ///      not eliminated.
-    uint256 private constant RENEW_HORIZON = 2 * DURATION_MAX; // 60 days from now
+    ///      Open interest decays with funding, so a crowded side pays more, and
+    ///      pays less as its own positions shrink. _decayFactor integrates that
+    ///      feedback exactly rather than holding the opening rate.
+    uint256 private constant FUNDING_BASE_BPS = 1_000; // 10 % of the position / window
+    uint256 private constant FUNDING_UTIL_BPS = 2_000; // + 20 % x utilization / window
 
-    /// @dev Expiry-settlement manipulation guard. Both expiry entry points read
-    ///      live AMM reserves — through _priceClose for the payout and through
-    ///      _renewFees for the auto-renew decision — so a third party could
-    ///      otherwise swap, settle, and reverse the swap atomically: flipping a
-    ///      renewable position onto the close path against the holder's recorded
-    ///      opt-in, or suppressing the priced surplus the close pays out. The
-    ///      round trip costs 2 × swapFeeBps, which the pool's sole LP receives
-    ///      back into its own reserves (see _swapTokenToUsdc), so for the LP —
-    ///      the only party that profits from either outcome — it is very nearly
-    ///      free.
+    /// @dev Ceiling on the utilization term, in bps of utilization.
     ///
-    ///      Two constants close it together, and the pairing is what makes it
-    ///      work:
+    ///      utilization is OI / backedAirUsd, and backedAirUsd is a denominator
+    ///      nobody guarantees stays large: a pool whose reserves are drawn down
+    ///      while open interest stands still can push the ratio arbitrarily
+    ///      high. Uncapped, the per-second rate can reach or exceed RAY, and
+    ///      `RAY - rate` in _accrueFunding underflows. Capped at 4x, the worst
+    ///      per-window rate is 10 % + 80 % = 90 %, which at the one-hour floor is
+    ///      2.5e-4 per second — more than three orders of magnitude clear of RAY.
+    uint256 private constant FUNDING_UTIL_CAP_BPS = 4 * BPS_DENOM; // 4x utilization
+
+    /// @dev The funding window: the period over which one `ratePerWindow` is
+    ///      charged. It opens at one hour and widens by one second per second of
+    ///      market age, to a thirty-day ceiling:
     ///
-    ///        SETTLE_GUARD_BPS   a swap moving at least this fraction of
-    ///                           backedAirUsd arms the guard, blocking
-    ///                           third-party settlement for SETTLE_GUARD_BLOCKS.
-    ///        RENEW_MARGIN_BPS   the auto-renew decision must clear the equity
-    ///                           test by this fraction of the position's MARK.
+    ///        window(age) = min(1 hour + age, 30 days)
     ///
-    ///      The pairing rests on constant-product output being proportional to
-    ///      the output-side reserve: a swap that moves backedAirUsd by a fraction
-    ///      f of its depth moves a long's priced value (airUsdOut through SWAP-3)
-    ///      by very nearly the same f, and correspondingly moves a short's
-    ///      buyback cost through SWAP-2. So the achievable surplus swing is
-    ///      ≈ f × mark, where mark = N + surplus — the same quantity _renewFees
-    ///      prices the base fee on — and NOT f × N. Basing the margin on the
-    ///      notional would under-size it by mark/N, which on a position several
-    ///      times in profit is several-fold.
+    ///      A market's first hours are its most volatile. The token has no price
+    ///      history, depth is whatever the creator seeded, and an option written
+    ///      against it is a bet on noise that the LP is on the wrong side of —
+    ///      so rent starts high and falls as the market earns a history.
     ///
-    ///      Capping f at SETTLE_GUARD_BPS therefore caps the swing at
-    ///      SETTLE_GUARD_BPS × mark, and a margin of RENEW_MARGIN_BPS × mark
-    ///      above that bound cannot be crossed by any swap small enough to evade
-    ///      the guard. Dust cannot grief settlement, and real manipulation cannot
-    ///      hide under the threshold.
+    ///      This replaces a five-step ladder (1h / 8h / 24h / 7d / 30d keyed on
+    ///      age) and reproduces it to within a few percent at every step — age 8h
+    ///      gives a 9-hour window against the ladder's 8, age 24h gives 25
+    ///      against 24 — while removing the cliffs, where a market seconds either
+    ///      side of a step boundary priced eight times differently.
+    uint256 private constant FUNDING_WINDOW_MIN = 1 hours;
+    uint256 private constant FUNDING_WINDOW_MAX = 30 days;
+
+    /// @dev Wind-down. closePool blocks new opens immediately and sets
+    ///      closeDate = now + WIND_DOWN_GRACE. Past closeDate the funding rate
+    ///      DOUBLES every WIND_DOWN_DOUBLING, up to a shift of WIND_DOWN_MAX_SHIFT.
     ///
-    ///      RENEW_MARGIN_BPS is set to twice SETTLE_GUARD_BPS: the proportionality
-    ///      above is first-order, so the factor absorbs curve convexity and the
-    ///      integer flooring of the margin itself.
+    ///      This is the whole of the LP's exit guarantee, and it replaces
+    ///      per-position deadlines, RENEW_HORIZON, and the stacking analysis
+    ///      those required. Positions are never force-closed at a price someone
+    ///      else chose; they are made progressively more expensive to hold until
+    ///      the holder closes voluntarily or the collateral decays to dust that
+    ///      sweepDust() can clear.
     ///
-    ///      SETTLE_GUARD_BPS = 1 % also lines up with the swap fee: the smallest
-    ///      flip-capable manipulation is about the size at which reversing it
-    ///      becomes profitable for an arbitrageur, so the blocked blocks are real
-    ///      exposure rather than a notional delay.
-    uint256 private constant SETTLE_GUARD_BPS    = 100; // 1 % of backedAirUsd arms
-    uint256 private constant RENEW_MARGIN_BPS    = 200; // 2 % of mark margin
-    /// @dev Blocks of arbitrage exposure a manipulator must survive before it can
-    ///      settle someone else's expired position. ~10 s at Avalanche block times.
-    uint256 private constant SETTLE_GUARD_BLOCKS = 5;
+    ///      The doubling period sets the whole of the wait, and it is the number
+    ///      worth arguing about. At seven days an abandoned position on a mature
+    ///      market still holds 0.6 % of its collateral after three months, which
+    ///      is not a wind-down, it is a lien. At one day the slowest case — a
+    ///      mature market at its 30-day window, carrying a small position —
+    ///      still holds 3.2 % ten days past closeDate and is dust about a day
+    ///      later, so the LP's worst case is the grace period plus about eleven
+    ///      days. Measured, not asserted — see the wind-down tests.
+    ///
+    ///      The shift cap exists so the rate cannot overflow on a pool left
+    ///      closed for years; it binds at 16 days past closeDate, after every
+    ///      position has already decayed into sweep range.
+    uint256 private constant WIND_DOWN_GRACE     = 7 days;
+    uint256 private constant WIND_DOWN_DOUBLING  = 1 days;
+    uint256 private constant WIND_DOWN_MAX_SHIFT = 16;
+
+    /// @dev A position is sweepable once its effective collateral has decayed to
+    ///      this fraction of what it was opened with.
+    ///
+    ///      Funding decays a position geometrically, so it approaches zero
+    ///      without reaching it. Its debt and notional decay in step, so by then
+    ///      the husk distorts nothing — but it still holds a slot in
+    ///      openPositionCount, and removeLiquidity cannot unblock until every
+    ///      slot is released. The sweep releases it.
+    ///
+    ///      Permissionless and unpaid, like the settlement it replaces. It needs
+    ///      no bounty because it is never urgent and never involves bad debt: the
+    ///      party with both the motive and the standing is the LP, whose
+    ///      withdrawal the husk is blocking. At 0.1 % of opening collateral the
+    ///      holder's claim is worth less than the gas to collect it, so nothing
+    ///      of value is taken — but the test is on COLLATERAL rather than on
+    ///      claim, so a position cannot be swept by anyone who first pushes its
+    ///      claim to zero on a manipulated curve.
+    uint256 private constant SWEEP_DUST_BPS = 10; // 0.1 % of opening collateral
+
+    /// @dev Close-price clamp. A holder can move the curve their own close
+    ///      settles against — closeLong / closeShort are ungated and must stay
+    ///      that way — so _priceCloseClamped values a close against the worst of
+    ///      the last CLAMP_BLOCKS block-opens wherever that is less favourable
+    ///      than live. See _priceCloseClamped (audit finding H-2).
+    ///
+    ///      This is all that remains of what used to be the "settlement guard".
+    ///      The other half of it — lastLargeSwapBlock, SETTLE_GUARD_BPS,
+    ///      RENEW_MARGIN_BPS, and _assertSettlementUnguarded — existed to stop a
+    ///      third party flipping or suppressing the settlement of somebody
+    ///      else's EXPIRED position. Positions no longer expire, and the only
+    ///      third-party path that remains is sweepDust, which by construction
+    ///      can only touch a position whose collateral is already worth nothing.
+    ///      There is no longer a valuable settlement for a stranger to steer, so
+    ///      the lockout and its threshold are gone. The clamp is not: it defends
+    ///      against the HOLDER, and voluntary closes are untouched by any of it.
+    uint256 private constant CLAMP_BLOCKS = 5;
 
     // ── Immutables ────────────────────────────────────────────────────────────
 
@@ -374,10 +448,10 @@ contract EXNIHILOPool is ReentrancyGuard {
     /// @notice Cumulative USDC (6 dec) claimed by the treasury. Display only.
     uint256 public protocolFeesPaidTotal;
 
-    /// @notice USDC payouts (6 dec) credited from third-party-triggered
-    ///         settlements (expired-position closes). Pull payment — the
-    ///         recipient withdraws via claimPayout(to), so no recipient can
-    ///         ever block position cleanup.
+    /// @notice USDC payouts (6 dec) credited by sweepDust when a swept position
+    ///         still had a residual claim. Pull payment — the recipient
+    ///         withdraws via claimPayout(to), so no recipient can ever block
+    ///         position cleanup.
     mapping(address => uint256) public claimable;
 
     /// @notice Sum of all outstanding claimable payouts (solvency accounting).
@@ -386,17 +460,24 @@ contract EXNIHILOPool is ReentrancyGuard {
     /// @notice Total number of open long + short positions.
     uint256 public openPositionCount;
 
-    /// @notice Sum of USDC notional for all open long positions (6 dec).
+    /// @notice Sum of the LIVE USDC notional of every open long (6 dec). A long's
+    ///         notional is also its synthetic airUsd debt, so this doubles as
+    ///         the long-side debt aggregate: funding shrinks it by the side's
+    ///         decay and burns the same amount out of airUsdSupply.
+    ///
+    /// @dev    As of the last accrual. Between accruals it overstates the live
+    ///         figure by the funding not yet written; views that price off it
+    ///         project first (see _projectedOpenInterest).
     uint256 public longOpenInterest;
 
-    /// @notice Sum of USDC notional for all open short positions (6 dec).
+    /// @notice Sum of the LIVE USDC notional of every open short (6 dec). Decays
+    ///         with the short side's funding. See longOpenInterest.
     uint256 public shortOpenInterest;
 
-    /// @notice Duration (seconds) of each position period before expiry.
-    ///         Set at market creation (1 hour – 1 year, default 7 days).
-
-    /// @notice Timestamp after which no new positions can be opened and
-    ///         existing positions cannot be renewed past. 0 = pool is open.
+    /// @notice End of the wind-down grace period, set by closePool to
+    ///         now + WIND_DOWN_GRACE. New positions are blocked from the moment
+    ///         it is set; past it the funding rate starts doubling. 0 = pool is
+    ///         open.
     uint256 public closeDate;
 
     /// @notice Sum of `lockedAmount` across all open SHORT positions (6 dec).
@@ -422,65 +503,96 @@ contract EXNIHILOPool is ReentrancyGuard {
     ///         the token leg against 0 % on USDC, and exactly 0 once this term
     ///         is added (audit SI-001).
     ///
-    ///         Long renewals do not touch it: applyRenewal carries
-    ///         pos.lockedAmount through unchanged and charges the fee to
-    ///         backedAirUsd instead, so the only movements are open and settle.
+    ///         Moves on open, on settle, and with funding: _accrueFunding
+    ///         shrinks it by the long side's decay and hands the released units
+    ///         to backedAirToken.
     uint256 public totalLongCollateral;
 
-    /// @notice Block of the last swap large enough to move an expiry settlement
-    ///         decision (see SETTLE_GUARD_BPS). Third-party settlement of an
-    ///         expired position is blocked for SETTLE_GUARD_BLOCKS afterwards.
-    ///         0 = never armed.
+    /// @notice Funding index for the long side, in RAY. Starts at RAY and only
+    ///         ever decreases. A position's live collateral is
+    ///         `lockedAmountAtOpen * fundingIndexLong / fundingIndexAtOpen`.
     ///
-    /// @dev    Set by _armSettlementGuard from EVERY reserve-mutating path
-    ///         except _settle, whenever a settlement price has moved
-    ///         SETTLE_GUARD_BPS since the block opened.
-    ///
-    ///         `_settle` is the one deliberate exclusion, so a keeper can batch
-    ///         several expiries in one block. It is safe in a way the former
-    ///         openLong/openShort exclusion was not: the holder is exempt from
-    ///         the guard anyway, so settlement is useless as a self-directed
-    ///         lever, and a settle's price impact is fixed by the expiring
-    ///         position's own size and side rather than chosen by the caller.
-    ///         With no keeper bounty, batching is load-bearing for cleanup.
-    uint256 public lastLargeSwapBlock;
+    /// @dev    One number per side is enough because funding takes the same
+    ///         FRACTION from every position on that side. See RAY.
+    uint256 public fundingIndexLong = RAY;
 
-    /// @dev The four reserve terms as one block OPENED, plus the block they
-    ///      describe. A long settles against backedAirUsd / airTokenSupply, a
-    ///      short against backedAirToken / airUsdSupply.
+    /// @notice Funding index for the short side, in RAY. See fundingIndexLong.
+    uint256 public fundingIndexShort = RAY;
+
+    /// @notice Timestamp through which long-side funding has been charged.
+    ///
+    /// @dev    Advanced only when an accrual actually lands. A release that
+    ///         rounds to zero — a sub-second interval, or a side whose whole
+    ///         collateral is dust — leaves this where it was so the elapsed time
+    ///         is not silently forgiven; the next accrual charges for it.
+    uint256 public lastFundingLong;
+
+    /// @notice Timestamp through which short-side funding has been charged.
+    uint256 public lastFundingShort;
+
+    /// @dev The four reserve terms as one block OPENED, the block they describe,
+    ///      and the two funding indices that were live at that moment. A long
+    ///      settles against backedAirUsd / airTokenSupply, a short against
+    ///      backedAirToken / airUsdSupply.
+    ///
     ///      `timestamp` is carried alongside `blockNumber` so a snapshot can be
     ///      compared against Position.openedAt, which PositionNFT records as a
     ///      timestamp. A block's open predates any position opened IN that
     ///      block, and valuing a position against reserves from before it
     ///      existed is meaningless — see _priceCloseClamped.
-    struct GuardSnapshot {
+    ///
+    ///      The indices are carried for the same reason the reserves are. A
+    ///      position's collateral shrinks continuously, so pricing it against an
+    ///      older block's reserves while using TODAY's collateral values a
+    ///      position that never existed — and in the holder's favour, since
+    ///      collateral only ever falls. The clamp has to reconstruct the
+    ///      collateral as of the snapshot, which needs the index as of the
+    ///      snapshot.
+    struct PriceSnapshot {
         uint256 blockNumber;
         uint256 timestamp;
         uint256 backedUsd;
         uint256 tokenSupply;
         uint256 backedToken;
         uint256 usdSupply;
+        uint256 fundingLong;
+        uint256 fundingShort;
     }
 
-    /// @dev Ring of the opens of the last SETTLE_GUARD_BLOCKS blocks in which
-    ///      the reserves were mutated. `guardRingHead` indexes the newest.
+    /// @dev Ring of the opens of the last CLAMP_BLOCKS blocks in which the
+    ///      reserves were mutated. `priceRingHead` indexes the newest.
     ///
-    ///      Two consumers, not one. _armSettlementGuard measures this block's
-    ///      displacement against the newest entry; _priceCloseClamped clamps a
-    ///      settlement payout to the worst of every entry still inside the
-    ///      window. The second is what stops a holder pricing their own close
-    ///      against a swap they made recently (H-2). The pairs are exactly the
-    ///      ones _priceCloseAt reads, on both sides — the guard and settlement
-    ///      pricing measure the same two prices, so one snapshot serves both and
-    ///      they cannot disagree about what a block "opened with" means.
+    ///      One consumer now: _priceCloseClamped, which clamps a close payout to
+    ///      the worst of every entry still inside the window. That is what stops
+    ///      a holder pricing their own close against a swap they just made (H-2).
+    ///      It used to have a second — _armSettlementGuard, which measured this
+    ///      block's displacement to decide whether a stranger could settle
+    ///      somebody else's expired position. Nothing expires any more, so that
+    ///      consumer and its threshold are gone; see CLAMP_BLOCKS.
+    ///
+    ///      The pairs are exactly the ones _priceCloseAt reads, on both sides, so
+    ///      the snapshot and the settlement pricing cannot disagree about what a
+    ///      block "opened with".
     ///
     ///      Sized to the window deliberately: entries are one per block and the
-    ///      window admits blocks `asOfBlock - SETTLE_GUARD_BLOCKS + 1 ..
-    ///      asOfBlock`, so SETTLE_GUARD_BLOCKS slots can never drop an entry
-    ///      that is still eligible. Written once per block, so the per-block
-    ///      cost is the same five words the single snapshot it replaced cost.
-    GuardSnapshot[SETTLE_GUARD_BLOCKS] private guardRing;
-    uint256 private guardRingHead;
+    ///      window admits blocks `asOfBlock - CLAMP_BLOCKS + 1 .. asOfBlock`, so
+    ///      CLAMP_BLOCKS slots can never drop an entry that is still eligible.
+    ///      Written once per block.
+    PriceSnapshot[CLAMP_BLOCKS] private priceRing;
+    uint256 private priceRingHead;
+
+    /// @notice Sum of every OPEN short's live synthetic airToken debt.
+    ///
+    /// @dev    The short-side counterpart of longOpenInterest, which already
+    ///         carries the long debt. Shorts need their own counter because
+    ///         their notional is USDC and their debt airToken. Funding shrinks it
+    ///         by the side's decay and burns the same amount out of
+    ///         airTokenSupply, which keeps
+    ///
+    ///           airTokenSupply == backedAirToken + totalLongCollateral + totalShortDebt
+    ///
+    ///         exact. Declared last so no existing storage slot moves.
+    uint256 public totalShortDebt;
 
     // ── Custom errors ─────────────────────────────────────────────────────────
 
@@ -500,16 +612,11 @@ contract EXNIHILOPool is ReentrancyGuard {
     error ZeroLiquidity();
     error RatioMismatch();
     error FeeOnTransferNotSupported();
-    error PositionNotExpired();
     error PoolClosing();
     error PoolAlreadyClosed();
-    error RenewalExceedsCloseDate();
-    error RenewalExceedsHorizon();
     error OnlyLpHolderOrDeployer();
     error OnlyTreasury();
-    error RenewalFeeExceedsMax();
-    error AutoRenewActive();
-    error SettlementGuardActive();
+    error PositionNotDust();
 
     // ── Events ────────────────────────────────────────────────────────────────
 
@@ -548,15 +655,41 @@ contract EXNIHILOPool is ReentrancyGuard {
     );
 
     event PositionOpened(uint256 indexed nftId, address indexed holder, bool isLong);
-    event PositionRenewed(
-        uint256 indexed nftId,
-        address indexed caller,
-        uint256 feePaid,
-        uint256 newDeadline,
-        bool autoRenewed
-    );
     event PositionClosed(uint256 indexed nftId, address indexed holder, uint256 payout);
-    event PositionClosedAfterDeadline(uint256 indexed nftId, address indexed caller, uint256 payout);
+
+    /// @notice A dust position was cleared by a third party. `payout` is what was
+    ///         credited to the holder, which is 0 in every case the sweep can
+    ///         reach — see SWEEP_DUST_BPS.
+    event PositionSwept(uint256 indexed nftId, address indexed caller, uint256 payout);
+
+    /// @notice Funding charged to one side since the last accrual.
+    ///
+    /// @dev    The indexer cannot read funding out of lpFeesAccumulated the way
+    ///         it reads the open and close fees, because funding is not a fee:
+    ///         it lands directly in the backed reserves and never becomes
+    ///         claimable. This event is the only record that separates reserve
+    ///         growth caused by funding from reserve growth caused by trading,
+    ///         so LP yield attribution depends on it.
+    ///
+    /// @param isLong        Which side paid.
+    /// @param released      Collateral units moved into the backed reserve —
+    ///                      airToken for the long side, airUsd (== USDC, 6 dec)
+    ///                      for the short.
+    /// @param debtCancelled Synthetic debt burned with it — airUsd (6 dec) for
+    ///                      the long side, airToken for the short. Both describe
+    ///                      the same slice of the same positions, so `released`
+    ///                      valued at the time, minus `debtCancelled`, is a lower
+    ///                      bound on what the slice was worth to the LP: winners
+    ///                      and losers net against each other in an aggregate.
+    /// @param newIndex      The side's funding index after this accrual, in RAY.
+    /// @param elapsed       Seconds covered by this accrual.
+    event FundingAccrued(
+        bool indexed isLong,
+        uint256 released,
+        uint256 debtCancelled,
+        uint256 newIndex,
+        uint256 elapsed
+    );
     event PayoutCredited(address indexed recipient, uint256 amount);
     event PayoutClaimed(address indexed recipient, address indexed to, uint256 amount);
     event PoolClosed(address indexed closedBy, uint256 closeDate);
@@ -574,32 +707,17 @@ contract EXNIHILOPool is ReentrancyGuard {
     }
 
     /**
-     * @dev Every path that mutates the backed reserves carries this. It pins the
-     *      block's opening reserves before the body runs, asserts conservation
-     *      after it, and re-arms the settlement guard from the resulting price
-     *      displacement.
+     * @dev Every path that mutates the backed reserves carries this. It charges
+     *      funding up to this block, pins the block's opening reserves for the
+     *      close-price clamp, and asserts conservation after the body runs.
      *
-     *      Binding the three together is the point. The settlement guard used to
-     *      be armed by hand at the two swap sites, and openLong/openShort — which
-     *      move the opposite side's settlement price by up to twenty times the
-     *      arming threshold — were simply never wired to it. A guard hung off
-     *      the same hook as the reserve invariant cannot be omitted from a new
-     *      path without also dropping the invariant, which no review would miss.
+     *      Binding them to one hook is the point: none of the three can be
+     *      omitted from a new path without dropping the other two, which no
+     *      review would miss.
      */
     modifier reserveMutation() {
-        _guardSnapshot();
-        _;
-        _assertReserveInvariant();
-        _armSettlementGuard();
-    }
-
-    /**
-     * @dev As reserveMutation, but does not arm the guard. `_settle` is the only
-     *      user — see lastLargeSwapBlock for why settlement is excluded. Named
-     *      rather than left as a missing call so the exception is greppable.
-     */
-    modifier reserveMutationUnarmed() {
-        _guardSnapshot();
+        _accrueFunding();
+        _priceRingSnapshot();
         _;
         _assertReserveInvariant();
     }
@@ -607,13 +725,24 @@ contract EXNIHILOPool is ReentrancyGuard {
     // ── Admin functions ───────────────────────────────────────────────────────
 
     /**
-     * @notice Initiate pool closure. Sets closeDate = now + currentPositionDuration().
+     * @notice Initiate pool closure. Sets closeDate = now + WIND_DOWN_GRACE.
      *
      *         Once set:
      *           - No new positions can be opened (openLong / openShort revert).
-     *           - Positions cannot be renewed past closeDate.
-     *           - After closeDate all positions are guaranteed expired and can
-     *             be closed via closePositionAfterDeadline(), allowing the LP to call removeLiquidity().
+     *           - Holders may still close voluntarily, at any time, at the same
+     *             price they always could. Nothing is force-settled.
+     *           - After closeDate the funding rate DOUBLES every
+     *             WIND_DOWN_DOUBLING, without limit up to WIND_DOWN_MAX_SHIFT.
+     *             Holding becomes geometrically more expensive until every
+     *             position is either closed by its holder or decayed to dust
+     *             that sweepDust() can clear, which is what finally lets the LP
+     *             call removeLiquidity().
+     *
+     *         This replaces the former guarantee that all positions are expired
+     *         and closeable after closeDate. That one was exact but rested on
+     *         per-position deadlines and a horizon cap on stacked renewals; this
+     *         one is economic, and bounds the wait at weeks rather than at a
+     *         constant. See WIND_DOWN_GRACE.
      *
      *         Callable by the LP NFT holder or the factory's emergency deployer.
      *         Irreversible — reverts if already closed.
@@ -628,7 +757,12 @@ contract EXNIHILOPool is ReentrancyGuard {
             revert OnlyLpHolderOrDeployer();
         }
 
-        closeDate = block.timestamp + currentPositionDuration();
+        // Accrue at the pre-close rate before closeDate starts bending it —
+        // _ratePerSecond reads closeDate, so writing it first would apply the
+        // wind-down multiplier to time that elapsed before the wind-down began.
+        _accrueFunding();
+
+        closeDate = block.timestamp + WIND_DOWN_GRACE;
 
         emit PoolClosed(msg.sender, closeDate);
     }
@@ -671,6 +805,14 @@ contract EXNIHILOPool is ReentrancyGuard {
         protocolTreasury = protocolTreasury_;
         createdAt        = block.timestamp;
         factory          = IEXNIHILOFactory(factory_);
+
+        // Both sides start charging from creation. Leaving these at zero would
+        // make the first accrual bill an elapsed time measured from the unix
+        // epoch — _projectFunding would find no collateral and simply advance
+        // the clock, but only by luck of ordering, and the invariant that these
+        // are always <= block.timestamp is worth having unconditionally.
+        lastFundingLong  = block.timestamp;
+        lastFundingShort = block.timestamp;
     }
 
     // =========================================================================
@@ -726,7 +868,7 @@ contract EXNIHILOPool is ReentrancyGuard {
      *   airToken per USDC than the backed ratio would give — that is the leverage.
      *   The minted airToken leaves the pool's backed reserves and is locked in the
      *   PositionNFT. The synthetic airUsd remains as an outstanding debt in
-     *   totalSupply until the position is closed.
+     *   airUsdSupply, shrinking with funding, until the position is closed.
      *
      *   State changes
      *   ─────────────
@@ -776,7 +918,7 @@ contract EXNIHILOPool is ReentrancyGuard {
         airUsdSupply += usdcAmount;
 
         // Collateral leaves the backed reserves; it stays counted in
-        // airTokenSupply and is recorded as pos.lockedAmount on the NFT.
+        // airTokenSupply and is recorded as lockedAmountAtOpen on the NFT.
         backedAirToken -= airTokenOut;
         totalLongCollateral += airTokenOut;
 
@@ -795,7 +937,7 @@ contract EXNIHILOPool is ReentrancyGuard {
             usdcAmount,   // airUsdMinted — synthetic debt owed
             airTokenOut,   // airTokenLocked
             totalFee,
-            block.timestamp + currentPositionDuration()
+            fundingIndexLong
         );
 
 
@@ -826,16 +968,19 @@ contract EXNIHILOPool is ReentrancyGuard {
      *
      * @param nftId      Position NFT token ID.
      * @param minUsdcOut Slippage guard on USDC profit (surplus after debt).
+     * @param to         Where the profit is sent. Pass a different address if
+     *                   the holder wallet itself cannot receive USDC.
      */
-    function closeLong(uint256 nftId, uint256 minUsdcOut) external nonReentrant {
+    function closeLong(uint256 nftId, uint256 minUsdcOut, address to) external nonReentrant {
         address holder = positionNFT.ownerOf(nftId);
         if (holder != msg.sender) revert OnlyPositionHolder();
+        if (to == address(0)) revert ZeroAddress();
 
         Position memory pos = positionNFT.getPosition(nftId);
         if (pos.pool != address(this)) revert PositionNotFromThisPool();
         if (!pos.isLong) revert PositionNotLong();
 
-        _settle(nftId, pos, holder, minUsdcOut, false);
+        _settle(nftId, pos, holder, to, minUsdcOut, false);
     }
 
     // =========================================================================
@@ -851,7 +996,7 @@ contract EXNIHILOPool is ReentrancyGuard {
      *   the current backed rate. This inflates airTokenSupply.
      *   The resulting airUsd (real, from backedAirUsd) is locked against the
      *   position. The synthetic airToken remains as outstanding debt in
-     *   airTokenSupply until the position is closed.
+     *   airTokenSupply, shrinking with funding, until the position is closed.
      *
      *   State changes
      *   ─────────────
@@ -902,9 +1047,10 @@ contract EXNIHILOPool is ReentrancyGuard {
 
         // Mint synthetic airToken: inflates the supply counter, no new token backing.
         airTokenSupply += airTokenMinted;
+        totalShortDebt += airTokenMinted;
 
         // Real airUsd leaves the backed reserves; it stays counted in
-        // airUsdSupply and is recorded as pos.lockedAmount on the NFT.
+        // airUsdSupply and is recorded as lockedAmountAtOpen on the NFT.
         backedAirUsd -= airUsdOut;
         // Still this contract's USDC, but now owed to the trader — track it so
         // the reserve invariant keeps covering it.
@@ -925,7 +1071,7 @@ contract EXNIHILOPool is ReentrancyGuard {
             airUsdOut,
             usdcNotional,
             totalFee,
-            block.timestamp + currentPositionDuration()
+            fundingIndexShort
         );
 
 
@@ -950,16 +1096,19 @@ contract EXNIHILOPool is ReentrancyGuard {
      *
      * @param nftId      Position NFT token ID.
      * @param minUsdcOut Slippage guard on USDC profit.
+     * @param to         Where the profit is sent. Pass a different address if
+     *                   the holder wallet itself cannot receive USDC.
      */
-    function closeShort(uint256 nftId, uint256 minUsdcOut) external nonReentrant {
+    function closeShort(uint256 nftId, uint256 minUsdcOut, address to) external nonReentrant {
         address holder = positionNFT.ownerOf(nftId);
         if (holder != msg.sender) revert OnlyPositionHolder();
+        if (to == address(0)) revert ZeroAddress();
 
         Position memory pos = positionNFT.getPosition(nftId);
         if (pos.pool != address(this)) revert PositionNotFromThisPool();
         if (pos.isLong) revert PositionNotShort();
 
-        _settle(nftId, pos, holder, minUsdcOut, false);
+        _settle(nftId, pos, holder, to, minUsdcOut, false);
     }
 
     // =========================================================================
@@ -1011,7 +1160,7 @@ contract EXNIHILOPool is ReentrancyGuard {
      *         outstanding — otherwise the pool's airToken supply accounting
      *         would be corrupted.
      */
-    function removeLiquidity() external nonReentrant onlyLpHolder {
+    function removeLiquidity() external nonReentrant onlyLpHolder reserveMutation {
         if (openPositionCount != 0) revert OpenPositionsExist();
         if (backedAirToken == 0 && backedAirUsd == 0) revert ZeroLiquidity();
 
@@ -1036,7 +1185,7 @@ contract EXNIHILOPool is ReentrancyGuard {
 
     /**
      * @notice Claim all accrued LP fees. Fees are pull payments — they accrue
-     *         on every position open/renewal and are withdrawn here.
+     *         on every position open and are withdrawn here.
      *         Sends the full accumulated amount to `to` — pass a different
      *         address if the holder wallet itself cannot receive USDC
      *         (e.g. blacklisted).
@@ -1073,8 +1222,9 @@ contract EXNIHILOPool is ReentrancyGuard {
     }
 
     /**
-     * @notice Withdraw USDC payouts credited to the caller by third-party
-     *         settlements (expired-position closes). Sends the full amount
+     * @notice Withdraw USDC payouts credited to the caller by sweepDust, when
+     *         it cleared a position of theirs that still had a residual claim.
+     *         Sends the full amount
      *         to `to` — pass a different address if the caller wallet itself
      *         cannot receive USDC (e.g. blacklisted).
      */
@@ -1091,267 +1241,59 @@ contract EXNIHILOPool is ReentrancyGuard {
     }
 
     // =========================================================================
-    // POSITION RENEWAL & EXPIRY
+    // DUST SWEEP
     // =========================================================================
 
     /**
-     * @notice Renew a position by paying the dynamic renewal fee, extending the
-     *         deadline by one currentPositionDuration() from the current deadline (or
-     *         from now if the position has already expired).
-     *         Only the position holder may renew — this prevents third parties
-     *         from indefinitely extending positions to grief the LP's exit.
+     * @notice Clear a position whose collateral has decayed to dust. Callable by
+     *         anyone.
      *
-     *         Because the extension starts from the existing deadline, renewals
-     *         stack, and RENEW_HORIZON caps how far past now the result may
-     *         land. Short-dated positions can therefore renew repeatedly while
-     *         one already on the 30-day ceiling gets a single renewal and must
-     *         then run down before it can be extended again. Quote the outcome
-     *         with quoteRenewDeadline rather than reproducing the rule.
+     *         Positions do not expire. Funding shrinks them geometrically
+     *         instead — collateral, debt and notional together — which
+     *         approaches zero without ever arriving. By the time a position is
+     *         dust its debt is dust too, so it no longer distorts the curves;
+     *         what it still does is hold a slot in openPositionCount, and
+     *         removeLiquidity cannot unblock while any slot is taken.
      *
-     *         The fee reprices the position at today's state (see _renewFees):
-     *         base fee on current mark value plus the position's slice of the
-     *         OI-integral impact fee at current open interest and reserves.
+     *         Only reachable once effective collateral has fallen below
+     *         SWEEP_DUST_BPS of what the position opened with, so the holder's
+     *         claim is worth less than the gas to collect it. Any claim that does
+     *         somehow survive is still paid — as a pull payment, credited to the
+     *         holder — so the sweep can never be used to take value.
      *
-     * @param nftId   Position NFT to renew.
-     * @param maxFee  Guard against fee movement between quote and execution
-     *                (the fee depends on live reserves, PnL, and OI).
+     *         Unpaid, deliberately. The party with the motive is the LP, whose
+     *         withdrawal a dead position blocks, and a bounty carved out of the
+     *         settlement flow could exceed the payout it was carved from.
+     *
+     * @param nftId Position NFT to sweep.
      */
-    function renewPosition(uint256 nftId, uint256 maxFee) external nonReentrant {
-        if (positionNFT.ownerOf(nftId) != msg.sender) revert OnlyPositionHolder();
-
+    function sweepDust(uint256 nftId) external nonReentrant {
         Position memory pos = positionNFT.getPosition(nftId);
         if (pos.pool != address(this)) revert PositionNotFromThisPool();
 
-        (uint256 totalFee, uint256 protocolFee, uint256 lpFee,) = _renewFees(pos);
-        if (totalFee > maxFee) revert RenewalFeeExceedsMax();
+        // Accrue before measuring: the position may only have become dust in the
+        // seconds since the last mutation, and refusing a sweep on a stale index
+        // would make the caller trade first to make their own call succeed.
+        _accrueFunding();
 
-        uint256 newDeadline = _renewDeadline(pos.deadline);
-
-        // Absolute bound, measured from now rather than from the position's own
-        // history, so no sequence of renewals can walk a deadline outwards. See
-        // RENEW_HORIZON. Checked before closeDate because it always applies —
-        // closeDate is zero on a pool that is not closing.
-        if (newDeadline > block.timestamp + RENEW_HORIZON) revert RenewalExceedsHorizon();
-
-        // If pool is closing, the new deadline must not exceed closeDate.
-        if (closeDate != 0 && newDeadline > closeDate) revert RenewalExceedsCloseDate();
-
-        // INTERACTIONS
-        _transferIn(underlyingUsdc, msg.sender, totalFee);
-        _accrueProtocolFee(protocolFee);
-        _accrueLpFee(lpFee);
-        positionNFT.applyRenewal(nftId, pos.lockedAmount, pos.airUsdMinted, totalFee, newDeadline);
-
-        emit PositionRenewed(nftId, msg.sender, totalFee, newDeadline, false);
-    }
-
-    /**
-     * @notice Settle an expired position. Callable by anyone.
-     *
-     *         Callers are unpaid: cleanup is funded by the incentives the
-     *         parties already have — the LP earns the renewal fee on an
-     *         auto-renew and gets its capital back on a close, and the holder
-     *         collects their own payout. A bounty carved from the settlement
-     *         flow could exceed the payout it was carved from and hand a
-     *         keeper the holder's entire profit, which is worse than a
-     *         position that simply waits.
-     *
-     *         If the holder opted into auto-renewal (PositionNFT.setAutoRenew)
-     *         and the position's own equity covers the dynamic renewal fee with
-     *         the RENEW_MARGIN_BPS margin — and the fee is within the holder's
-     *         cap and the new deadline within closeDate — the position is
-     *         renewed instead of closed, with the fee charged against its
-     *         equity:
-     *
-     *           Long  — synthetic debt (airUsdMinted) grows by the fee. The
-     *                   USDC leaves backedAirUsd now and is recouped at close
-     *                   through the equally-reduced surplus.
-     *           Short — locked airUsd collateral shrinks by the fee.
-     *
-     *         A winning position therefore sustains itself; a position that
-     *         cannot pay is settled exactly like closePositionAfterDeadline
-     *         (profit credited as pull payment, or collateral returned to LP).
-     *
-     * @param nftId      Position NFT to settle.
-     * @param minPayout  Slippage guard on the holder's credited payout when the
-     *                   close path runs (0 = accept any outcome).
-     */
-    function settleExpired(uint256 nftId, uint256 minPayout) external nonReentrant {
-        Position memory pos = positionNFT.getPosition(nftId);
-        if (pos.pool != address(this)) revert PositionNotFromThisPool();
-        if (block.timestamp < pos.deadline) revert PositionNotExpired();
+        // Measured against the position's OWN opening collateral, not against
+        // any live price. A claim-based test could be dodged the other way —
+        // push the mark down for one block and sweep a position that is not
+        // dust at all — whereas collateral only moves with funding, which no
+        // caller controls.
+        uint256 live = effectiveLocked(pos);
+        if (live * BPS_DENOM > pos.lockedAmountAtOpen * SWEEP_DUST_BPS) {
+            revert PositionNotDust();
+        }
 
         address holder = positionNFT.ownerOf(nftId);
-        // Guards both outcomes: the renew/close decision below and, on the close
-        // path, the surplus _settle pays out from the same live reserves.
-        _assertSettlementUnguarded(holder);
-
-        if (_tryAutoRenew(nftId, pos)) return;
-
-        _settle(nftId, pos, holder, minPayout, true);
+        _settle(nftId, pos, holder, holder, 0, true);
     }
 
-    /**
-     * @dev Checks whether the keeper-driven auto-renewal can execute for an
-     *      expired position: holder opted in, dynamic fee within the holder's
-     *      cap, equity covers the fee by RENEW_MARGIN_BPS of notional, new
-     *      deadline within closeDate.
-     *
-     *      The margin is the second half of the settlement guard. Both the
-     *      equity test and the fee are priced from live reserves, so without it
-     *      a position sitting at surplus ≈ totalFee flips outcome on an
-     *      arbitrarily small nudge — cheap enough to stay under
-     *      SETTLE_GUARD_BPS and slip past the block guard. Requiring the test to
-     *      clear by RENEW_MARGIN_BPS of the position's MARK means any flip needs
-     *      a swap large enough to arm that guard; see SETTLE_GUARD_BPS for why
-     *      the mark, and not the notional, is the right base.
-     *
-     *      Deliberately strict rather than tolerant: renewing on a surplus that
-     *      does not actually cover the fee would have _tryAutoRenew charge the
-     *      shortfall to backedAirUsd, i.e. the LP advancing real USDC against
-     *      equity the position does not have. The cost of strictness is that a
-     *      position whose surplus lands inside the margin closes instead of
-     *      renewing — it could only have funded a renewal that left it with
-     *      near-zero equity anyway, and it is paid its surplus on the close.
-     */
-    function _autoRenewQuote(uint256 nftId, Position memory pos)
-        internal
-        view
-        returns (bool ok, uint256 totalFee, uint256 protocolFee, uint256 lpFee)
-    {
-        (bool enabled, uint256 maxFee) = positionNFT.getAutoRenew(nftId);
-        if (!enabled) return (false, 0, 0, 0);
-
-        uint256 surplus;
-        (totalFee, protocolFee, lpFee, surplus) = _renewFees(pos);
-        if (totalFee > maxFee) return (false, 0, 0, 0);
-
-        uint256 n = pos.isLong ? pos.airUsdMinted : pos.usdcIn;
-        uint256 margin = ((n + surplus) * RENEW_MARGIN_BPS) / BPS_DENOM;
-        if (surplus < totalFee + margin) return (false, 0, 0, 0);
-
-        // Expired ⇒ the new deadline extends from now.
-        if (closeDate != 0 && block.timestamp + currentPositionDuration() > closeDate) {
-            return (false, 0, 0, 0);
-        }
-        ok = true;
-    }
-
-    /**
-     * @dev Execute the auto-renewal if possible. Returns false (no state
-     *      change) when any condition fails, letting the caller fall through
-     *      to the close path.
-     */
-    function _tryAutoRenew(uint256 nftId, Position memory pos) internal reserveMutation returns (bool) {
-        (bool ok, uint256 totalFee, uint256 protocolFee, uint256 lpFee) =
-            _autoRenewQuote(nftId, pos);
-        if (!ok) return false;
-
-        uint256 cost = totalFee;
-        // Extends from now, not from the old deadline — the auto path only runs
-        // on an already-expired position, and it does not stack. That is why it
-        // needs no RENEW_HORIZON check: currentPositionDuration() is capped at
-        // DURATION_MAX and the horizon is twice that, so this can never reach it.
-        uint256 newDeadline = block.timestamp + currentPositionDuration();
-
-        // ── EFFECTS — charge the position's own equity ───────────────────────
-        if (pos.isLong) {
-            // The fee leaves the backed reserves now; the position's debt
-            // grows by the same amount, so the surplus paid from backedAirUsd
-            // at close shrinks equally — the LP is made whole over the cycle.
-            // airUsdSupply is net unchanged: −cost (USDC leaving reserve
-            // accounting) +cost (new synthetic debt).
-            backedAirUsd     -= cost;
-            longOpenInterest += cost; // OI tracks airUsdMinted; keep in sync for _settle
-            positionNFT.applyRenewal(
-                nftId, pos.lockedAmount, pos.airUsdMinted + cost, totalFee, newDeadline
-            );
-        } else {
-            // The fee comes out of the locked airUsd collateral, which
-            // leaves pool accounting (it was counted in airUsdSupply only).
-            airUsdSupply         -= cost;
-            totalShortCollateral -= cost; // lockedAmount shrinks by the same cost
-            positionNFT.applyRenewal(
-                nftId, pos.lockedAmount - cost, pos.airUsdMinted, totalFee, newDeadline
-            );
-        }
-        _accrueProtocolFee(protocolFee);
-        _accrueLpFee(lpFee);
-
-        emit PositionRenewed(nftId, msg.sender, totalFee, newDeadline, true);
-        return true;
-    }
-
-    /**
-     * @notice Close an expired position. Callable by anyone after the deadline.
-     *
-     *         If the position is in profit, the profit (minus the 1 % close
-     *         fee) is CREDITED to the holder's claimable balance — pull
-     *         payment, withdrawable via claimPayout(). No push transfer means
-     *         no recipient can ever block cleanup.
-     *
-     *         If the position is underwater, the locked collateral returns to the
-     *         LP's backed reserves and the synthetic debt is cancelled. No payment
-     *         to anyone — the position is simply cleaned up.
-     *
-     * @param nftId      Position NFT to close.
-     * @param minPayout  Slippage guard on the holder's credited payout (profitable
-     *                   branch). Pass 0 to accept any outcome (including underwater
-     *                   liquidation with zero payout).
-     */
-    function closePositionAfterDeadline(uint256 nftId, uint256 minPayout) external nonReentrant {
-        Position memory pos = positionNFT.getPosition(nftId);
-        if (pos.pool != address(this)) revert PositionNotFromThisPool();
-        if (block.timestamp < pos.deadline) revert PositionNotExpired();
-
-        address holder = positionNFT.ownerOf(nftId);
-        _assertSettlementUnguarded(holder);
-
-        // A position whose holder opted into auto-renewal (and whose equity can
-        // fund it) must not be closeable through this path — otherwise anyone
-        // could bypass the opt-in and kill the position. settleExpired() will
-        // renew it instead. Same predicate as the renew branch, so there is no
-        // band where this path refuses and settleExpired closes anyway.
-        (bool renewable,,,) = _autoRenewQuote(nftId, pos);
-        if (renewable) revert AutoRenewActive();
-
-        _settle(nftId, pos, holder, minPayout, true);
-    }
 
     // =========================================================================
     // VIEWS
     // =========================================================================
-
-    /**
-     * @notice First block at which a third party may settle an expired position.
-     *         0 means unguarded now. Keepers should poll this rather than
-     *         discovering the window through a reverted settleExpired.
-     *         The position holder is never blocked (see
-     *         _assertSettlementUnguarded), so this does not apply to them.
-     */
-    function settlementGuardedUntilBlock() external view returns (uint256) {
-        // Mirrors _assertSettlementUnguarded's wind-down exemption, so a keeper
-        // polling this is never told to wait for a window that will not be
-        // enforced.
-        if (closeDate != 0) return 0;
-        if (lastLargeSwapBlock == 0) return 0;
-        uint256 until = lastLargeSwapBlock + SETTLE_GUARD_BLOCKS;
-        return block.number < until ? until : 0;
-    }
-
-    /**
-     * @notice Relative move, in bps, that either settlement price must make
-     *         within one block to arm the guard.
-     *
-     * @dev    Replaces the former settlementGuardArmingSize(), which reported a
-     *         single swap's USDC size. Arming is no longer a property of one
-     *         call: it is the net displacement of backedAirUsd / airTokenSupply
-     *         or backedAirToken / airUsdSupply since the block opened, from any
-     *         reserve-mutating path. There is no longer a "size that arms".
-     */
-    function settlementGuardBps() external pure returns (uint256) {
-        return SETTLE_GUARD_BPS;
-    }
 
     /**
      * @notice Current AMM spot price: USDC per whole token (divide by 1e6 for USD).
@@ -1411,7 +1353,11 @@ contract EXNIHILOPool is ReentrancyGuard {
             uint256 longPrice_,
             uint256 shortPrice_,
             uint256 lpFeesLifetime,
-            uint256 protocolFeesLifetime
+            uint256 protocolFeesLifetime,
+            uint256 fundingIndexLong_,
+            uint256 fundingIndexShort_,
+            uint256 fundingRateLong_,
+            uint256 fundingRateShort_
         )
     {
         backedAirToken_      = backedAirToken;
@@ -1420,6 +1366,16 @@ contract EXNIHILOPool is ReentrancyGuard {
         shortPrice_          = _shortPrice();
         lpFeesLifetime       = lpFeesAccumulated + lpFeesPaidTotal;
         protocolFeesLifetime = protocolFeesAccumulated + protocolFeesPaidTotal;
+
+        // Projected, not stored. Funding accrues continuously but is only
+        // written on a reserve mutation, so the stored index is stale by however
+        // long the pool has been quiet — and an indexer diffing stored indices
+        // would attribute a quiet week's funding to whichever trade happened to
+        // end it.
+        (fundingIndexLong_,,)  = _projectFunding(true);
+        (fundingIndexShort_,,) = _projectFunding(false);
+        fundingRateLong_  = backedAirUsd == 0 ? 0 : _ratePerSecond(_projectedOpenInterest(true), block.timestamp);
+        fundingRateShort_ = backedAirUsd == 0 ? 0 : _ratePerSecond(_projectedOpenInterest(false), block.timestamp);
     }
 
     /**
@@ -1433,69 +1389,6 @@ contract EXNIHILOPool is ReentrancyGuard {
         if (elapsed >= CAP_RAMP_DURATION) return CAP_MAX_BPS;
         return CAP_START_BPS
              + ((CAP_MAX_BPS - CAP_START_BPS) * elapsed) / CAP_RAMP_DURATION;
-    }
-
-    /**
-     * @notice Lifetime a position opened right now would receive, in seconds.
-     *
-     *         Stepped by market age rather than smoothly interpolated: the four
-     *         steps are the product, and a reader can tell at a glance what they
-     *         will get. Non-decreasing, which closePool relies on.
-     *
-     *           age < 1 hour    →  1 hour
-     *           age < 8 hours   →  8 hours
-     *           age < 24 hours  →  24 hours
-     *           age < 7 days    →  7 days
-     *           age >= 7 days   →  30 days  (the ceiling)
-     */
-    function currentPositionDuration() public view returns (uint256) {
-        uint256 age = block.timestamp - createdAt;
-        if (age < DURATION_AGE_1) return DURATION_AGE_1;
-        if (age < DURATION_AGE_2) return DURATION_AGE_2;
-        if (age < DURATION_AGE_3) return DURATION_AGE_3;
-        if (age < DURATION_AGE_4) return DURATION_AGE_4;
-        return DURATION_MAX;
-    }
-
-    /**
-     * @dev Deadline a renewal would write for a position currently expiring at
-     *      `currentDeadline`. Extends from that deadline, or from now once it
-     *      has passed, so an expired position is never punished for the delay.
-     *
-     *      Single source of truth for renewPosition and quoteRenewDeadline, so
-     *      the executed deadline and the quoted one cannot drift.
-     */
-    function _renewDeadline(uint256 currentDeadline) internal view returns (uint256) {
-        uint256 base = currentDeadline > block.timestamp ? currentDeadline : block.timestamp;
-        return base + currentPositionDuration();
-    }
-
-    /**
-     * @notice The deadline renewPosition(nftId, ...) would write right now, and
-     *         whether the call would be accepted.
-     *
-     *         `allowed == false` means renewPosition reverts: the position is
-     *         already extended as far as RENEW_HORIZON permits, or the pool is
-     *         closing and the extension would outlive closeDate. `newDeadline`
-     *         is reported either way, so a frontend can show how far the
-     *         position would have to run down first.
-     *
-     *         Frontends and keepers must quote here rather than replicating the
-     *         rule — this is its single source of truth alongside the executing
-     *         path.
-     */
-    function quoteRenewDeadline(uint256 nftId)
-        external
-        view
-        returns (uint256 newDeadline, bool allowed)
-    {
-        Position memory pos = positionNFT.getPosition(nftId);
-        if (pos.pool != address(this)) revert PositionNotFromThisPool();
-
-        newDeadline = _renewDeadline(pos.deadline);
-        allowed =
-            newDeadline <= block.timestamp + RENEW_HORIZON &&
-            (closeDate == 0 || newDeadline <= closeDate);
     }
 
     /**
@@ -1521,19 +1414,9 @@ contract EXNIHILOPool is ReentrancyGuard {
      *         frontends must quote here instead of replicating the formula.
      */
     function quoteOpenFee(uint256 notional, bool isLong) external view returns (uint256 totalFee) {
-        (totalFee,,) = _openFees(notional, isLong ? longOpenInterest : shortOpenInterest);
-    }
-
-    /**
-     * @notice Total USDC fee charged to renew position `nftId` right now.
-     *         Dynamic — repriced at current mark value, OI, and reserves (see
-     *         _renewFees). This is the single source of truth for the fee —
-     *         frontends must quote here instead of replicating the formula.
-     */
-    function quoteRenewFee(uint256 nftId) external view returns (uint256 totalFee) {
-        Position memory pos = positionNFT.getPosition(nftId);
-        if (pos.pool != address(this)) revert PositionNotFromThisPool();
-        (totalFee,,,) = _renewFees(pos);
+        // Projected open interest, because the open this quotes accrues funding
+        // first and prices its impact fee off what is left.
+        (totalFee,,) = _openFees(notional, _projectedOpenInterest(isLong));
     }
 
     /**
@@ -1588,7 +1471,7 @@ contract EXNIHILOPool is ReentrancyGuard {
      * @dev Estimated shortfall for a position `_priceClose` refuses to price.
      *      Display-only: it deliberately extrapolates past the point the
      *      settlement math stops, so it must never feed settlement — a position
-     *      in this state stays uncloseable and still expires worthless.
+     *      in this state stays uncloseable, and a sweep pays it nothing.
      *
      *      Short: the debt costs more airUsd than the collateral can buy. The
      *      proportional cost is extrapolated from the partial fill the curve
@@ -1597,152 +1480,55 @@ contract EXNIHILOPool is ReentrancyGuard {
      *      realised, so the entire synthetic debt is the shortfall.
      */
     function _quoteShortfall(Position memory pos) internal view returns (uint256) {
-        if (pos.isLong) return pos.airUsdMinted;
-        if (airUsdSupply < pos.lockedAmount) return pos.lockedAmount;
+        (uint256 locked, uint256 debt,) = _live(pos);
+        if (pos.isLong) return debt;
+        if (airUsdSupply < locked) return locked;
 
         uint256 totalBuyable = _cpAmountOut(
-            pos.lockedAmount,
-            airUsdSupply - pos.lockedAmount,
+            locked,
+            airUsdSupply - locked,
             backedAirToken
         );
-        if (totalBuyable == 0) return pos.lockedAmount;
+        if (totalBuyable == 0) return locked;
 
         uint256 cost =
-            (pos.lockedAmount * pos.airTokenMinted + totalBuyable - 1) / totalBuyable;
-        return cost > pos.lockedAmount ? cost - pos.lockedAmount : 0;
+            (locked * debt + totalBuyable - 1) / totalBuyable;
+        return cost > locked ? cost - locked : 0;
     }
 
     // =========================================================================
-    // INTERNAL — expiry settlement guard
+    // INTERNAL — close-price ring
     // =========================================================================
 
     /**
-     * @dev Record the reserves this block opened with, once per block, before
-     *      any mutation. Paired with _armSettlementGuard by the reserveMutation
-     *      modifiers so the snapshot and the check can never drift apart.
+     * @dev Record the reserves and funding indices this block opened with, once
+     *      per block, before any mutation.
+     *
+     *      Paired with _accrueFunding by the reserveMutation modifier and
+     *      ordered after it, so the indices written here are the ones the
+     *      reserves written here correspond to. Consumed only by
+     *      _priceCloseClamped.
      */
-    function _guardSnapshot() internal {
+    function _priceRingSnapshot() internal {
         // At most one entry per block: the first mutation of a block records
         // what that block opened with, and every later mutation in the same
         // block is part of what the entry is there to measure.
-        if (guardRing[guardRingHead].blockNumber == block.number) return;
+        if (priceRing[priceRingHead].blockNumber == block.number) return;
 
-        uint256 next = guardRingHead + 1;
-        if (next == SETTLE_GUARD_BLOCKS) next = 0;
+        uint256 next = priceRingHead + 1;
+        if (next == CLAMP_BLOCKS) next = 0;
 
-        guardRing[next] = GuardSnapshot({
-            blockNumber: block.number,
-            timestamp:   block.timestamp,
-            backedUsd:   backedAirUsd,
-            tokenSupply: airTokenSupply,
-            backedToken: backedAirToken,
-            usdSupply:   airUsdSupply
+        priceRing[next] = PriceSnapshot({
+            blockNumber:  block.number,
+            timestamp:    block.timestamp,
+            backedUsd:    backedAirUsd,
+            tokenSupply:  airTokenSupply,
+            backedToken:  backedAirToken,
+            usdSupply:    airUsdSupply,
+            fundingLong:  fundingIndexLong,
+            fundingShort: fundingIndexShort
         });
-        guardRingHead = next;
-    }
-
-    /**
-     * @dev Arm the settlement guard when either settlement price has moved by
-     *      SETTLE_GUARD_BPS or more since this block opened.
-     *
-     *      Measures NET DISPLACEMENT OF THE PRICE, not the size of one call.
-     *      The previous version compared a single swap's USDC leg against live
-     *      depth, which failed two ways:
-     *
-     *        1. No aggregation. A sequence of individually sub-threshold swaps
-     *           never armed it, however far they moved the price together, and
-     *           the whole sequence plus a settlement fits in one block.
-     *        2. Only swaps consulted it. openShort writes both terms a LONG's
-     *           _priceClose reads, and openLong both a short's — at up to
-     *           CAP_MAX_BPS (20 %) of depth, twenty times the threshold a swap
-     *           arms at. Neither armed the guard at any size. The exclusion was
-     *           justified on the open fee being a real cost, but LP_FEE_BPS is
-     *           400 of the 500 bps base fee and the impact fee is wholly LP —
-     *           so for an LP attacking its own pool's holders, which is the
-     *           actor with both the access and the motive, ~80 % of that fee
-     *           comes straight back.
-     *
-     *      Both ratios are checked because the two sides settle against
-     *      different pairs: a long against backedAirUsd / airTokenSupply, a
-     *      short against backedAirToken / airUsdSupply. See _priceClose.
-     *
-     *      Arming latches for the block. A move that is reverted later in the
-     *      same block still arms, deliberately: the 5-block window exists so a
-     *      manipulator cannot settle from a price they set in an earlier block,
-     *      and recomputing downward would hand that back.
-     */
-    function _armSettlementGuard() internal {
-        // The newest entry is this block's open: _guardSnapshot runs at the top
-        // of the same modifier, before the mutation this is measuring.
-        GuardSnapshot storage open = guardRing[guardRingHead];
-        if (
-            _priceMoved(open.backedUsd,   open.tokenSupply, backedAirUsd,   airTokenSupply)
-            || _priceMoved(open.backedToken, open.usdSupply, backedAirToken, airUsdSupply)
-        ) {
-            lastLargeSwapBlock = block.number;
-        }
-    }
-
-    /**
-     * @dev True when the ratio num/den has moved at least SETTLE_GUARD_BPS away
-     *      from open/openDen, relative to the opening value.
-     *
-     *      |R₁ − R₀| / R₀ ≥ bps, cross-multiplied so there is no division:
-     *      |curNum·openDen − openNum·curDen| · BPS_DENOM ≥ openNum·curDen·bps.
-     *
-     *      A zero on either opening term means there is no baseline to compare
-     *      against (a pool before its first addLiquidity), which is not a move.
-     */
-    function _priceMoved(
-        uint256 openNum,
-        uint256 openDen,
-        uint256 curNum,
-        uint256 curDen
-    ) private pure returns (bool) {
-        if (openNum == 0 || openDen == 0 || curDen == 0) return false;
-        uint256 a = curNum * openDen;
-        uint256 b = openNum * curDen;
-        uint256 delta = a > b ? a - b : b - a;
-        return delta * BPS_DENOM >= openNum * curDen * SETTLE_GUARD_BPS;
-    }
-
-    /**
-     * @dev Reject third-party settlement of an expired position while the guard
-     *      is armed. The position holder is exempt: they are choosing to settle
-     *      at the current price exactly as closeLong / closeShort lets them, and
-     *      exempting them means an armed guard can never trap a holder in a
-     *      position. `lastLargeSwapBlock == 0` (never armed) is not a live
-     *      window — without that check a chain whose height is still below
-     *      SETTLE_GUARD_BLOCKS would report every pool as guarded.
-     */
-    function _assertSettlementUnguarded(address holder) internal view {
-        if (msg.sender == holder) return;
-
-        // A pool that is winding down is never guarded against third-party
-        // settlement.
-        //
-        // Arming is relative to depth, so in a thin enough market an ORDINARY
-        // trade moves the price by SETTLE_GUARD_BPS and the guard is armed
-        // essentially all the time (audit NM-R2-005). Combined with
-        // removeLiquidity's openPositionCount == 0 requirement that turns one
-        // abandoned expired position into a permanent lock on the LP's
-        // principal: the holder can always close, but nobody can make them, and
-        // no third party is allowed to clean up on their behalf.
-        //
-        // Little is given up. _priceCloseClamped prices every settlement,
-        // third-party ones included, against the worst open in the same window
-        // this guard covers — so the manipulation the lockout exists to prevent
-        // is already answered as a price. The guard is the blunter, second copy
-        // of that protection, and it is the copy whose failure mode is a
-        // permanently stranded LP. closePool is irreversible and blocks new
-        // positions, so this cannot be switched on to open a window: it is a
-        // one-way move into wind-down.
-        if (closeDate != 0) return;
-
-        if (lastLargeSwapBlock == 0) return;
-        if (block.number < lastLargeSwapBlock + SETTLE_GUARD_BLOCKS) {
-            revert SettlementGuardActive();
-        }
+        priceRingHead = next;
     }
 
     // =========================================================================
@@ -1816,12 +1602,13 @@ contract EXNIHILOPool is ReentrancyGuard {
     }
 
     // =========================================================================
-    // INTERNAL — settlement (single path for voluntary and expiry closes)
+    // INTERNAL — settlement (single path for voluntary closes and dust sweeps)
     // =========================================================================
 
     /**
-     * @dev Single source of truth for close pricing — used by closeLong,
-     *      closeShort, closePositionAfterDeadline, and quoteClose.
+     * @dev Single source of truth for close pricing — reached through
+     *      _priceCloseClamped by every close path: closeLong, closeShort and
+     *      sweepDust (all via _settle), and quoteClose.
      *
      *      Long:  values the locked airToken through SWAP-3
      *             (reserveIn = airTokenSupply − locked, reserveOut = backedAirUsd)
@@ -1845,16 +1632,22 @@ contract EXNIHILOPool is ReentrancyGuard {
         view
         returns (bool priceable, uint256 surplus, uint256 deficit, uint256 restore)
     {
-        return _priceCloseAt(pos, airTokenSupply, backedAirUsd, airUsdSupply, backedAirToken);
+        (uint256 locked, uint256 debt,) = _live(pos);
+        return _priceCloseAt(
+            pos.isLong, locked, debt, airTokenSupply, backedAirUsd, airUsdSupply, backedAirToken
+        );
     }
 
     /**
-     * @dev _priceClose against an arbitrary reserve state instead of the live
-     *      one. Pure, so the caller decides which state a given path is
-     *      entitled to price against — see _priceCloseSettlement.
+     * @dev _priceClose against an arbitrary reserve state and position size
+     *      instead of the live ones. Pure, so the caller decides which state a
+     *      given path is entitled to price against — see _priceCloseSettlement.
+     *      `locked` and `debt` must describe the position at the same index.
      */
     function _priceCloseAt(
-        Position memory pos,
+        bool isLong,
+        uint256 locked,
+        uint256 debt,
         uint256 tokenSupply,
         uint256 backedUsd,
         uint256 usdSupply,
@@ -1864,34 +1657,34 @@ contract EXNIHILOPool is ReentrancyGuard {
         pure
         returns (bool priceable, uint256 surplus, uint256 deficit, uint256 restore)
     {
-        if (pos.isLong) {
-            if (tokenSupply <= pos.lockedAmount) return (false, 0, 0, 0);
+        if (isLong) {
+            if (tokenSupply <= locked) return (false, 0, 0, 0);
             uint256 airUsdOut = _cpAmountOut(
-                pos.lockedAmount,
-                tokenSupply - pos.lockedAmount,
+                locked,
+                tokenSupply - locked,
                 backedUsd
             );
-            if (airUsdOut >= pos.airUsdMinted) {
-                return (true, airUsdOut - pos.airUsdMinted, 0, 0);
+            if (airUsdOut >= debt) {
+                return (true, airUsdOut - debt, 0, 0);
             }
-            return (true, 0, pos.airUsdMinted - airUsdOut, 0);
+            return (true, 0, debt - airUsdOut, 0);
         }
 
         // Short: locked airUsd is out of circulation — subtract it from the
         // SWAP-2 reserve, mirroring the long side's supply subtraction.
-        if (usdSupply < pos.lockedAmount) return (false, 0, 0, 0);
+        if (usdSupply < locked) return (false, 0, 0, 0);
         uint256 totalBuyable = _cpAmountOut(
-            pos.lockedAmount,
-            usdSupply - pos.lockedAmount,
+            locked,
+            usdSupply - locked,
             backedToken
         );
-        if (totalBuyable == 0 || totalBuyable < pos.airTokenMinted) return (false, 0, 0, 0);
+        if (totalBuyable == 0 || totalBuyable < debt) return (false, 0, 0, 0);
         uint256 cost =
-            (pos.lockedAmount * pos.airTokenMinted + totalBuyable - 1) / totalBuyable;
-        if (pos.lockedAmount >= cost) {
-            return (true, pos.lockedAmount - cost, 0, cost);
+            (locked * debt + totalBuyable - 1) / totalBuyable;
+        if (locked >= cost) {
+            return (true, locked - cost, 0, cost);
         }
-        return (true, 0, cost - pos.lockedAmount, cost);
+        return (true, 0, cost - locked, cost);
     }
 
     /**
@@ -1914,18 +1707,18 @@ contract EXNIHILOPool is ReentrancyGuard {
      *      Gating the close on lastLargeSwapBlock would hand the LP a free
      *      hostage lever: arming costs the LP nothing, because the swap fee is
      *      retained in the reserves it owns (see _swapTokenToUsdc), so it could
-     *      re-arm every SETTLE_GUARD_BLOCKS and hold every holder in position
+     *      re-arm every CLAMP_BLOCKS and hold every holder in position
      *      indefinitely. Here the holder can always close. They simply cannot
      *      close at a price they moved inside the window.
      *
      *      Clamping to ONE block's open — the first version of this fix — closed
      *      the atomic variant and left pump-in-N / settle-in-N+1 paying, because
      *      block N+1 opens on the pumped reserves. Widening the reference to
-     *      every open still inside SETTLE_GUARD_BLOCKS closes that too: the
+     *      every open still inside CLAMP_BLOCKS closes that too: the
      *      pre-pump open is still in the ring, and rolling it out takes a fresh
      *      entry per block, so the attacker has to hold the displaced price for
      *      the whole window with arbitrage open against them the entire time.
-     *      That is the same assumption SETTLE_GUARD_BLOCKS already rests on for
+     *      That is the same assumption CLAMP_BLOCKS already rests on for
      *      third parties, now applied to the holder as a price instead of a
      *      lockout.
      *
@@ -1939,7 +1732,7 @@ contract EXNIHILOPool is ReentrancyGuard {
      *
      *      Entries age out by block number rather than by ring position, so a
      *      pool that stops trading is not frozen against a stale reference: once
-     *      every entry is SETTLE_GUARD_BLOCKS old the clamp is a no-op and
+     *      every entry is CLAMP_BLOCKS old the clamp is a no-op and
      *      pricing is live again.
      *
      *      Only ever moves the outcome against the holder, never for it.
@@ -1959,14 +1752,14 @@ contract EXNIHILOPool is ReentrancyGuard {
 
         // Bounded by a compile-time constant, and every iteration is a pure
         // valuation of the same position — no external calls, no state writes.
-        for (uint256 i = 0; i < SETTLE_GUARD_BLOCKS; i++) {
-            GuardSnapshot storage e = guardRing[i];
+        for (uint256 i = 0; i < CLAMP_BLOCKS; i++) {
+            PriceSnapshot storage e = priceRing[i];
             uint256 at = e.blockNumber;
 
             // Slot never written (a pool younger than the ring), or an open old
             // enough that a manipulator would have had to hold it through the
             // whole window to put it here.
-            if (at == 0 || at + SETTLE_GUARD_BLOCKS <= asOfBlock) continue;
+            if (at == 0 || at + CLAMP_BLOCKS <= asOfBlock) continue;
 
             // Never reach back past the position's own open. A snapshot is
             // taken before its block's first mutation, so one whose timestamp
@@ -1981,17 +1774,30 @@ contract EXNIHILOPool is ReentrancyGuard {
             // underwater by its own opening fee anyway.
             if (e.timestamp <= pos.openedAt) continue;
 
-            (bool p, uint256 s, uint256 d, uint256 r) =
-                _priceCloseAt(pos, e.tokenSupply, e.backedUsd, e.usdSupply, e.backedToken);
+            // The position as it stood at that snapshot — collateral and debt
+            // both — not as it stands now. Funding shrinks it between blocks, so
+            // pricing today's size against an older block's reserves would value
+            // a position that never existed.
+            (uint256 lockedThen, uint256 debtThen,) =
+                _liveAt(pos, pos.isLong ? e.fundingLong : e.fundingShort);
+            (bool p, uint256 s, uint256 d, uint256 r) = _priceCloseAt(
+                pos.isLong,
+                lockedThen,
+                debtThen,
+                e.tokenSupply,
+                e.backedUsd,
+                e.usdSupply,
+                e.backedToken
+            );
 
             // Underwater at any open in the window outranks any surplus the
             // window produced, and takes that valuation's restore with it.
             if (!p || d > 0) return (p, 0, d, r);
 
-            // surplus and restore must come from the SAME valuation:
-            // _priceCloseAt keeps restore + surplus == lockedAmount on the short
-            // side, and _settle relies on that identity to leave the reserves
-            // consistent.
+            // surplus and restore come from the SAME valuation, so the pair a
+            // caller receives is internally consistent. _settle does not take
+            // restore from here, though: this valuation's restore + surplus is
+            // the collateral as it stood at the snapshot, not as it stands now.
             if (s < surplus) {
                 surplus = s;
                 restore = r;
@@ -2013,93 +1819,671 @@ contract EXNIHILOPool is ReentrancyGuard {
     }
 
     /**
-     * @dev Shared settlement for voluntary and expired-position closes.
+     * @dev Shared settlement for voluntary closes and dust sweeps.
      *
-     *      Voluntary (viaExpiry = false): caller is the verified holder;
-     *      reverts if the position is underwater; pays the holder directly
-     *      (they are msg.sender and chose to receive).
+     *      Voluntary (isSweep = false): caller is the verified holder;
+     *      reverts if the position is underwater; pays `payTo` directly (the
+     *      holder is msg.sender and chose both the moment and the recipient).
      *
-     *      Expiry (viaExpiry = true): callable by anyone; a profitable
-     *      position CREDITS the holder's claimable balance (pull payment —
-     *      no recipient can block cleanup); an underwater position returns
-     *      its collateral to the LP reserves and cancels the synthetic debt.
+     *      Sweep (isSweep = true): callable by anyone, but only for a position
+     *      whose collateral has decayed to dust; a residual claim CREDITS the
+     *      holder's claimable balance (pull payment — no recipient can block
+     *      cleanup); an underwater position returns its collateral to the LP
+     *      reserves and cancels the synthetic debt.
      *
      *      State changes on profitable settlement:
      *        Long:  backedAirToken += locked; backedAirUsd −= surplus;
      *               airUsdSupply −= debt + surplus
-     *        Short: backedAirUsd += buyback cost; airTokenSupply −= debt;
+     *        Short: backedAirUsd += locked − surplus; airTokenSupply −= debt;
      *               airUsdSupply −= surplus
      */
     function _settle(
         uint256 nftId,
         Position memory pos,
         address holder,
+        address payTo,
         uint256 minPayout,
-        bool viaExpiry
-    ) internal reserveMutationUnarmed {
+        bool isSweep
+    ) internal reserveMutation {
         // Priced against the block open where that is worse for the holder, so
         // a settler cannot move their own payout in the same transaction they
         // collect it. See _priceCloseSettlement (audit finding H-2).
-        (bool priceable, uint256 surplus, uint256 deficit, uint256 restore) =
+        (bool priceable, uint256 surplus, uint256 deficit,) =
             _priceCloseSettlement(pos);
         bool underwater = !priceable || deficit > 0;
 
-        if (!viaExpiry && underwater) revert PositionUnderwater();
+        if (!isSweep && underwater) revert PositionUnderwater();
+
+        // What this position actually still has after every second of funding
+        // charged since it opened — collateral, debt and notional alike.
+        // reserveMutation has already accrued to this block, so these are final
+        // rather than projections, and the same figures _priceCloseSettlement
+        // just priced against.
+        (uint256 locked, uint256 debt, uint256 notional) = _live(pos);
 
         // ── EFFECTS ───────────────────────────────────────────────────────────
         openPositionCount--;
         if (pos.isLong) {
-            longOpenInterest -= pos.airUsdMinted;
+            longOpenInterest -= debt; // a long's notional IS its debt
         } else {
-            shortOpenInterest -= pos.usdcIn;
+            shortOpenInterest -= notional;
+            totalShortDebt    -= debt;
         }
 
         if (underwater) {
-            // Expiry only: return collateral to LP, cancel synthetic debt.
+            // Sweep only: return collateral to LP, cancel synthetic debt.
             if (pos.isLong) {
-                backedAirToken += pos.lockedAmount;
-                totalLongCollateral -= pos.lockedAmount;
-                airUsdSupply   -= pos.airUsdMinted;
+                backedAirToken += locked;
+                totalLongCollateral -= locked;
+                airUsdSupply   -= debt;
             } else {
-                backedAirUsd   += pos.lockedAmount;
-                airTokenSupply -= pos.airTokenMinted;
-                totalShortCollateral -= pos.lockedAmount;
+                backedAirUsd   += locked;
+                airTokenSupply -= debt;
+                totalShortCollateral -= locked;
             }
+            _flushResidue();
 
             // ── INTERACTIONS ──────────────────────────────────────────────────
             positionNFT.release(nftId);
-            emit PositionClosedAfterDeadline(nftId, msg.sender, 0);
+            emit PositionSwept(nftId, msg.sender, 0);
         } else {
             uint256 closeFee = (surplus * CLOSE_FEE_BPS) / BPS_DENOM;
             uint256 netSurplus = surplus - closeFee;
             if (netSurplus < minPayout) revert InsufficientOutput();
 
             if (pos.isLong) {
-                backedAirToken += pos.lockedAmount;
-                totalLongCollateral -= pos.lockedAmount;
+                backedAirToken += locked;
+                totalLongCollateral -= locked;
                 backedAirUsd  -= surplus;
-                airUsdSupply  -= pos.airUsdMinted + surplus;
+                airUsdSupply  -= debt + surplus;
             } else {
-                backedAirUsd   += restore;
-                airTokenSupply -= pos.airTokenMinted;
+                // Everything the collateral does not pay out returns to the LP.
+                // Derived from `locked` rather than taken from the valuation:
+                // the clamp may have priced this close against an older block,
+                // when funding had taken less, and that valuation's buyback cost
+                // plus surplus adds up to the collateral as it stood THEN.
+                // Crediting it here would pay out more USDC than the position
+                // still has. surplus <= locked always: the live valuation pays at
+                // most the collateral, and the clamp only ever lowers it.
+                backedAirUsd   += locked - surplus;
+                airTokenSupply -= debt;
                 airUsdSupply   -= surplus;
-                // restore + surplus == lockedAmount exactly (see _priceClose):
-                // the buyback cost returns to the LP, the surplus is paid out.
-                totalShortCollateral -= pos.lockedAmount;
+                totalShortCollateral -= locked;
             }
+            _flushResidue();
             _accrueProtocolFee(closeFee);
 
             // ── INTERACTIONS ──────────────────────────────────────────────────
             positionNFT.release(nftId);
-            if (viaExpiry) {
+            if (isSweep) {
                 _creditPayout(holder, netSurplus);
-                emit PositionClosedAfterDeadline(nftId, msg.sender, netSurplus);
+                emit PositionSwept(nftId, msg.sender, netSurplus);
             } else {
-                underlyingUsdc.safeTransfer(holder, netSurplus);
+                // Pushed, not credited: the holder chose this moment and this
+                // recipient, so a transfer that reverts can only inconvenience
+                // them. `payTo` is separate from `holder` precisely so that a
+                // holder whose own wallet cannot receive USDC still has an exit
+                // — without it, removing the expiry path would have stranded
+                // them, since a blacklisted address could previously wait for a
+                // third party to settle and credit the payout instead.
+                underlyingUsdc.safeTransfer(payTo, netSurplus);
                 emit PositionClosed(nftId, holder, netSurplus);
             }
         }
 
+    }
+
+    // =========================================================================
+    // FUNDING
+    // =========================================================================
+
+    /**
+     * @notice Charge funding to both sides up to the current block timestamp.
+     *
+     *         Called automatically at the top of every reserve mutation, so no
+     *         one ever has to call it. It is exposed because a pool that has not
+     *         traded for a long time carries unaccrued funding that the LP is
+     *         owed and the holders have not yet paid, and anyone should be able
+     *         to realise that without having to trade to do it.
+     */
+    function pokeFunding() external nonReentrant reserveMutation {}
+
+    /**
+     * @dev Charge funding to both sides: move the released collateral into the
+     *      matching backed reserve, and burn the debt and open interest that
+     *      collateral was locked against.
+     *
+     *      Runs FIRST in reserveMutation, ahead of the price-ring snapshot, for
+     *      two reasons. The snapshot has to record reserves and funding indices
+     *      that describe the same instant, and every rate input — both open
+     *      interest figures and backedAirUsd — is about to be changed by the
+     *      call this modifier wraps. Accruing first means the interval just
+     *      charged was one over which the rate genuinely was constant, which is
+     *      what lets a single _rpow stand in for the integral.
+     *
+     *      The clock advances under exactly two conditions, and the distinction
+     *      matters:
+     *
+     *        released != 0            the charge landed; time is paid for.
+     *        nothing to charge        no collateral on that side, or no depth to
+     *                                 measure utilization against. There is no
+     *                                 debt to carry, and NOT advancing here would
+     *                                 make the first position opened into a long
+     *                                 idle pool retroactively liable for the
+     *                                 whole idle period.
+     *
+     *      When neither holds — collateral exists but the release rounded to
+     *      zero — the clock stays put and the index does not move, so the
+     *      elapsed time is carried into the next accrual rather than forgiven.
+     *      The index and the aggregate must move together or they drift apart,
+     *      and the aggregate is what settlement subtracts from.
+     */
+    function _accrueFunding() internal {
+        (uint256 idxL, uint256 factorL, uint256 elapsedL) = _projectFunding(true);
+        if (factorL != RAY) {
+            uint256 relColl = _released(totalLongCollateral, factorL);
+            // A long's notional is its airUsd debt, so one release covers both
+            // the open interest and the debt burned out of airUsdSupply.
+            uint256 relDebt = _released(longOpenInterest, factorL);
+            fundingIndexLong     = idxL;
+            totalLongCollateral -= relColl;
+            backedAirToken      += relColl;
+            longOpenInterest    -= relDebt;
+            airUsdSupply        -= relDebt;
+            lastFundingLong      = block.timestamp;
+            emit FundingAccrued(true, relColl, relDebt, idxL, elapsedL);
+        } else if (elapsedL != 0 && (totalLongCollateral == 0 || backedAirUsd == 0)) {
+            lastFundingLong = block.timestamp;
+        }
+
+        (uint256 idxS, uint256 factorS, uint256 elapsedS) = _projectFunding(false);
+        if (factorS != RAY) {
+            uint256 relColl = _released(totalShortCollateral, factorS);
+            uint256 relDebt = _released(totalShortDebt, factorS);
+            fundingIndexShort     = idxS;
+            totalShortCollateral -= relColl;
+            backedAirUsd         += relColl;
+            totalShortDebt       -= relDebt;
+            airTokenSupply       -= relDebt;
+            shortOpenInterest    -= _released(shortOpenInterest, factorS);
+            lastFundingShort      = block.timestamp;
+            emit FundingAccrued(false, relColl, relDebt, idxS, elapsedS);
+        } else if (elapsedS != 0 && (totalShortCollateral == 0 || backedAirUsd == 0)) {
+            lastFundingShort = block.timestamp;
+        }
+    }
+
+    /**
+     * @dev What _accrueFunding would do to one side right now, without doing it.
+     *
+     *      The single source of truth for both the executing path and every view
+     *      that has to show a position net of funding it has not been charged
+     *      yet. A quote that read the stored index directly would be optimistic
+     *      by however long the pool has sat idle, and the holder would discover
+     *      the difference only on execution.
+     *
+     * @return newIndex The side's funding index after the accrual. Equal to the
+     *                  stored one when nothing is charged.
+     * @return factor   The fraction of every aggregate on the side KEPT over the
+     *                  interval, in RAY. Exactly RAY when nothing is charged,
+     *                  which is what callers test for.
+     * @return elapsed  Seconds since this side was last charged.
+     */
+    function _projectFunding(bool isLong)
+        internal
+        view
+        returns (uint256 newIndex, uint256 factor, uint256 elapsed)
+    {
+        uint256 last   = isLong ? lastFundingLong     : lastFundingShort;
+        uint256 locked = isLong ? totalLongCollateral : totalShortCollateral;
+        newIndex       = isLong ? fundingIndexLong    : fundingIndexShort;
+        factor         = RAY;
+
+        if (block.timestamp <= last) return (newIndex, RAY, 0);
+        elapsed = block.timestamp - last;
+
+        // No collateral to charge, or no depth to measure utilization against.
+        if (locked == 0 || backedAirUsd == 0) return (newIndex, RAY, elapsed);
+
+        // The window widens continuously, so the charge over the interval is an
+        // integral of a moving rate rather than a rate times a duration.
+        //
+        // The window term is handled by evaluating at the interval MIDPOINT,
+        // which is correct to second order and costs one addition — the window
+        // moves by one second per second, so over any interval it is very nearly
+        // linear.
+        //
+        // The wind-down term cannot be handled that way and must not be. It
+        // rises GEOMETRICALLY, so a midpoint evaluation of a month-long interval
+        // undercharges it several-fold, and the size of the error depends on how
+        // often the pool happened to be touched — which hands a holder a lever:
+        // keep the pool quiet and the wind-down barely bites. _weightedElapsed
+        // integrates it exactly instead, so the charge for a stretch of time is
+        // the same however many pieces it is accrued in.
+        uint256 midpoint = last + elapsed / 2;
+        uint256 window   = _fundingWindowAt(midpoint);
+        uint256 oi       = isLong ? longOpenInterest : shortOpenInterest;
+        uint256 rate     = _ratePerSecond(oi, midpoint);
+        if (rate == 0) return (newIndex, RAY, elapsed);
+
+        uint256 f = _decayFactor(
+            rate, oi, window, _weightedElapsed(last, block.timestamp, window)
+        );
+
+        // Move the index only when the collateral aggregate moved. A release
+        // that rounds to nothing must not shrink the positions either, or the
+        // holders pay something the LP never receives.
+        if (_released(locked, f) == 0) return (newIndex, RAY, elapsed);
+        newIndex = (newIndex * f) / RAY;
+        factor   = f;
+    }
+
+    /**
+     * @dev The fraction of a side KEPT over `weighted` seconds, in RAY.
+     *
+     *      The rate has two terms, and only the base term is constant. The
+     *      utilization term is the side's own open interest over depth, and
+     *      funding shrinks that open interest as it goes, so a crowded side's
+     *      rate falls as its positions decay. Holding the opening rate for the
+     *      whole interval would overcharge a quiet crowded pool — overnight on a
+     *      young market, by an order of magnitude — and make the charge depend on
+     *      how often anyone happened to accrue.
+     *
+     *      With `a` the base rate and `b` the utilization term at the start of
+     *      the interval, utilization x follows dx/dt = −(a + b·x/x0)·x, which
+     *      solves in closed form:
+     *
+     *        q    = (1 − a)^t                      the base term alone
+     *        kept = a·q / (a + b·(1 − q))
+     *
+     *      That composes exactly — keeping kept(t1), then kept(t2) from the
+     *      shrunken utilization, is kept(t1 + t2) — so an interval accrued in one
+     *      step or in fifty charges the same. At or above FUNDING_UTIL_CAP_BPS
+     *      the rate does not start falling until utilization drops back under
+     *      the cap, and the closed form would undercharge that stretch; there
+     *      the full rate is held instead, which can only overcharge and is
+     *      corrected by the next accrual.
+     *
+     *      Left out, and second order: short funding raises backedAirUsd — the
+     *      utilization denominator — while the interval runs. Ignoring that holds
+     *      utilization slightly high, which again can only overcharge.
+     */
+    function _decayFactor(uint256 rate, uint256 oi, uint256 window, uint256 weighted)
+        internal
+        view
+        returns (uint256)
+    {
+        uint256 base = (FUNDING_BASE_BPS * RAY) / (BPS_DENOM * window);
+        if (rate <= base || (oi * BPS_DENOM) / backedAirUsd >= FUNDING_UTIL_CAP_BPS) {
+            return _rpow(RAY - rate, weighted);
+        }
+        uint256 q = _rpow(RAY - base, weighted);
+        return (base * q) / (base + ((rate - base) * (RAY - q)) / RAY);
+    }
+
+    /**
+     * @dev What decaying `amount` by `factor` releases.
+     *
+     *      Rounds the amount KEPT up, against _liveAt rounding what each
+     *      position keeps down. The two must be biased in opposite directions so
+     *      that every aggregate — collateral, debt, open interest — stays >= the
+     *      sum of the positions it stands for: settlement subtracts a position's
+     *      live figures from these aggregates, and the reverse bias would let the
+     *      last position out of a pool underflow them.
+     */
+    function _released(uint256 amount, uint256 factor) internal pure returns (uint256) {
+        uint256 kept = (amount * factor + RAY - 1) / RAY;
+        if (kept > amount) kept = amount; // factor <= RAY, so only rounding can do this
+        return amount - kept;
+    }
+
+    /// @dev One side's open interest net of funding not yet written — what an
+    ///      accrual in this block would leave. Views that price off open
+    ///      interest read this, so a quote matches the execution that accrues
+    ///      before it prices.
+    function _projectedOpenInterest(bool isLong) internal view returns (uint256) {
+        (, uint256 factor,) = _projectFunding(isLong);
+        uint256 oi = isLong ? longOpenInterest : shortOpenInterest;
+        return oi - _released(oi, factor);
+    }
+
+    /**
+     * @notice Funding rate for one side right now, in RAY per second.
+     *         Multiply by 86400 and divide by 1e25 for percent per day.
+     */
+    function fundingRatePerSecond(bool isLong) external view returns (uint256) {
+        if (backedAirUsd == 0) return 0;
+        uint256 rate = _ratePerSecond(_projectedOpenInterest(isLong), block.timestamp);
+        // Display figure, so the wind-down multiplier IS applied here: someone
+        // asking what a position is paying right now wants the rate it is
+        // actually paying. The accrual path applies the same multiplier through
+        // _weightedElapsed, where it can be integrated rather than sampled.
+        uint256 shift = _windDownShift(block.timestamp);
+        if (shift != 0) rate <<= shift;
+        uint256 ceiling = RAY / 2;
+        return rate > ceiling ? ceiling : rate;
+    }
+
+    /**
+     * @dev Per-second funding rate in RAY, for a side carrying `oi` of open
+     *      interest, as it stands at timestamp `atTs`.
+     *
+     *        perWindow = FUNDING_BASE_BPS + FUNDING_UTIL_BPS * min(util, cap)
+     *        rate      = perWindow / window(atTs), doubled once per
+     *                    WIND_DOWN_DOUBLING past closeDate
+     *
+     *      Caller must ensure backedAirUsd != 0.
+     */
+    function _ratePerSecond(uint256 oi, uint256 atTs) internal view returns (uint256) {
+        uint256 util = (oi * BPS_DENOM) / backedAirUsd;
+        if (util > FUNDING_UTIL_CAP_BPS) util = FUNDING_UTIL_CAP_BPS;
+
+        uint256 perWindow = FUNDING_BASE_BPS + (FUNDING_UTIL_BPS * util) / BPS_DENOM;
+
+        // BASE rate only — the wind-down multiplier is NOT applied here. It is
+        // carried by _weightedElapsed instead, which integrates it exactly. A
+        // rate returned pre-multiplied would then be held constant across an
+        // interval the multiplier doubles several times inside, which is the
+        // whole error _weightedElapsed exists to avoid.
+        //
+        // Bounded well below RAY by construction — at the utilization cap and the
+        // one-hour window floor the worst case is 90 % / 3600 s = 2.5e-4 — but the
+        // decay factor is RAY - rate and the invariant that it stays strictly
+        // positive is load-bearing enough to assert rather than infer.
+        uint256 rate    = (perWindow * RAY) / (BPS_DENOM * _fundingWindowAt(atTs));
+        uint256 ceiling = RAY / 2;
+        return rate > ceiling ? ceiling : rate;
+    }
+
+    /// @dev Ceiling on the integration walk in _weightedElapsed. The window
+    ///      doubles at most log2(30 days / 1 hour) ~ 10 times over the life of
+    ///      any market and the wind-down shift is capped at WIND_DOWN_MAX_SHIFT,
+    ///      so 32 pieces cannot be reached; it is a bound, not a budget.
+    uint256 private constant _MAX_INTEGRATION_STEPS = 32;
+
+    /**
+     * @dev Seconds between `from` and `to`, each weighted so that
+     *
+     *        decay = (RAY - rate(windowRef)) ^ weightedElapsed
+     *
+     *      is the compounded charge over the interval rather than an
+     *      approximation of it. Charging a stretch of time in one accrual or in
+     *      fifty then gives the same answer, which is what stops a holder paying
+     *      less by keeping the pool quiet — and, since pokeFunding is
+     *      permissionless, what stops the model depending on anyone calling it.
+     *
+     *      Each second carries two factors, and the reason they have to be
+     *      integrated TOGETHER is that they are correlated:
+     *
+     *        the wind-down multiplier   2^shift, doubling once per
+     *                                   WIND_DOWN_DOUBLING past closeDate
+     *        the window ratio           windowRef / window(t), because the rate
+     *                                   is inversely proportional to the window
+     *
+     *      Late seconds in a wind-down carry the largest multiplier AND the
+     *      widest window. Evaluating the rate once at the interval midpoint and
+     *      scaling it by the multiplier integral therefore overcharges by about
+     *      a factor of two over a month-long interval, by an amount that depends
+     *      on how often the pool happened to be touched.
+     *
+     *      The interval is split at every point where either factor changes
+     *      shape — each wind-down doubling, and each doubling of the window
+     *      itself — and integrated with Simpson's rule inside each piece. The
+     *      window is linear in time, so 1/window is convex, and a midpoint rule
+     *      on a piece spanning a full doubling undercharges it by 3.8 %; Simpson
+     *      on the same piece is within 0.2 %. Both bounds are compile-time: the
+     *      window doubles at most log2(30 days / 1 hour) ~ 10 times over the life
+     *      of any market, and the wind-down shift is capped at
+     *      WIND_DOWN_MAX_SHIFT, so the walk is bounded at _MAX_INTEGRATION_STEPS
+     *      pieces however long the pool has been left alone.
+     *
+     * @param windowRef The funding window the caller evaluated its rate at. With
+     *                  no wind-down and a single piece this cancels exactly and
+     *                  the result is the plain elapsed time.
+     */
+    function _weightedElapsed(uint256 from, uint256 to, uint256 windowRef)
+        internal
+        view
+        returns (uint256 weighted)
+    {
+        if (to <= from) return 0;
+
+        uint256 t = from;
+        for (uint256 i = 0; i < _MAX_INTEGRATION_STEPS && t < to; i++) {
+            uint256 next  = _nextIntegrationBoundary(t, to);
+            uint256 shift = _windDownShift(t);
+            weighted += _simpson(t, next, windowRef) << shift;
+            t = next;
+        }
+
+        // Unreachable given the bounds above, but a silently truncated integral
+        // would be a silent undercharge, so the remainder is charged flat at the
+        // rate in force where the walk stopped rather than dropped.
+        if (t < to) {
+            weighted += _simpson(t, to, windowRef) << _windDownShift(t);
+        }
+    }
+
+    /**
+     * @dev The next point at or before `to` where the funding rate changes
+     *      shape: a wind-down doubling, or a doubling of the window.
+     */
+    function _nextIntegrationBoundary(uint256 t, uint256 to) internal view returns (uint256) {
+        uint256 next = to;
+
+        // Next wind-down doubling.
+        if (closeDate != 0 && t >= closeDate) {
+            uint256 shift = (t - closeDate) / WIND_DOWN_DOUBLING;
+            if (shift < WIND_DOWN_MAX_SHIFT) {
+                uint256 stepEnd = closeDate + (shift + 1) * WIND_DOWN_DOUBLING;
+                if (stepEnd < next) next = stepEnd;
+            }
+        } else if (closeDate != 0 && closeDate < next) {
+            next = closeDate;
+        }
+
+        // Next doubling of the window. Once the window has reached its ceiling
+        // it stops moving and there are no further boundaries from this source.
+        uint256 w = _fundingWindowAt(t);
+        if (w < FUNDING_WINDOW_MAX) {
+            uint256 target = 2 * w;
+            if (target > FUNDING_WINDOW_MAX) target = FUNDING_WINDOW_MAX;
+            // window(t) = FUNDING_WINDOW_MIN + (t - createdAt), so the time at
+            // which it reaches `target` is direct.
+            uint256 at = createdAt + target - FUNDING_WINDOW_MIN;
+            if (at > t && at < next) next = at;
+        }
+
+        return next;
+    }
+
+    /**
+     * @dev Simpson's rule for the integral of windowRef / window(t) over
+     *      [a, b], i.e. the length of that interval re-expressed in units of the
+     *      reference window so it can be compounded at a single rate.
+     *
+     *        (b - a) / 6 * windowRef * (1/w(a) + 4/w(mid) + 1/w(b))
+     *
+     *      Kept as one fraction so the three reciprocals are never truncated
+     *      individually — at a 30-day window they would each floor to zero.
+     */
+    function _simpson(uint256 a, uint256 b, uint256 windowRef)
+        internal
+        view
+        returns (uint256)
+    {
+        if (b <= a) return 0;
+        uint256 wa = _fundingWindowAt(a);
+        uint256 wm = _fundingWindowAt((a + b) / 2);
+        uint256 wb = _fundingWindowAt(b);
+        uint256 num = (b - a) * windowRef * (wm * wb + 4 * wa * wb + wa * wm);
+        return num / (6 * wa * wm * wb);
+    }
+
+    /**
+     * @notice Length of the current funding window, in seconds. One hour at
+     *         market creation, widening by one second per second, capped at 30
+     *         days. See FUNDING_WINDOW_MIN.
+     */
+    function fundingWindow() external view returns (uint256) {
+        return _fundingWindowAt(block.timestamp);
+    }
+
+    function _fundingWindowAt(uint256 atTs) internal view returns (uint256) {
+        uint256 age = atTs > createdAt ? atTs - createdAt : 0;
+        uint256 w   = FUNDING_WINDOW_MIN + age;
+        return w > FUNDING_WINDOW_MAX ? FUNDING_WINDOW_MAX : w;
+    }
+
+    /**
+     * @notice How many times the funding rate is currently doubled by the
+     *         wind-down. 0 while the pool is open or inside the grace period.
+     */
+    function windDownShift() external view returns (uint256) {
+        return _windDownShift(block.timestamp);
+    }
+
+    function _windDownShift(uint256 atTs) internal view returns (uint256) {
+        if (closeDate == 0 || atTs <= closeDate) return 0;
+        uint256 shift = (atTs - closeDate) / WIND_DOWN_DOUBLING;
+        return shift > WIND_DOWN_MAX_SHIFT ? WIND_DOWN_MAX_SHIFT : shift;
+    }
+
+    /**
+     * @notice Collateral currently backing `pos`, net of all funding charged to
+     *         its side since it opened — including funding not yet accrued to
+     *         storage.
+     *
+     *         This, not `Position.lockedAmountAtOpen`, is the position's real
+     *         size. Every consumer must read it here.
+     */
+    function effectiveLockedOf(uint256 nftId) external view returns (uint256) {
+        Position memory pos = positionNFT.getPosition(nftId);
+        if (pos.pool != address(this)) revert PositionNotFromThisPool();
+        return effectiveLocked(pos);
+    }
+
+    /**
+     * @notice Fraction of its opening size that position `nftId` still has, in
+     *         bps — collateral, debt and notional alike, since funding shrinks
+     *         them together. 10000 = untouched, 0 = fully decayed.
+     *
+     *         The honest headline number for a UI: it is what the holder has
+     *         paid in funding since opening, expressed as the thing that
+     *         actually changed.
+     */
+    function remainingSizeBps(uint256 nftId) external view returns (uint256) {
+        Position memory pos = positionNFT.getPosition(nftId);
+        if (pos.pool != address(this)) revert PositionNotFromThisPool();
+        if (pos.lockedAmountAtOpen == 0) return 0;
+        return (effectiveLocked(pos) * BPS_DENOM) / pos.lockedAmountAtOpen;
+    }
+
+    /**
+     * @notice Everything funding shrinks about position `nftId`, as it stands
+     *         right now: collateral, synthetic debt (airUsd for a long, airToken
+     *         for a short) and USDC notional. All three decay by the same factor,
+     *         so the position keeps its break-even price and simply gets smaller.
+     *         Includes funding not yet accrued to storage.
+     */
+    function liveAmountsOf(uint256 nftId)
+        external
+        view
+        returns (uint256 locked, uint256 debt, uint256 notional)
+    {
+        Position memory pos = positionNFT.getPosition(nftId);
+        if (pos.pool != address(this)) revert PositionNotFromThisPool();
+        return _live(pos);
+    }
+
+    function effectiveLocked(Position memory pos) public view returns (uint256 locked) {
+        (locked,,) = _live(pos);
+    }
+
+    /// @dev `pos`'s live amounts at its side's projected funding index.
+    function _live(Position memory pos) internal view returns (uint256, uint256, uint256) {
+        (uint256 idx,,) = _projectFunding(pos.isLong);
+        return _liveAt(pos, idx);
+    }
+
+    /**
+     * @dev `pos`'s collateral, debt and notional as of a given funding index.
+     *      Each rounds DOWN, against _released rounding the aggregates' retained
+     *      amounts up; see there for why the two biases must oppose.
+     */
+    function _liveAt(Position memory pos, uint256 idx)
+        internal
+        pure
+        returns (uint256 locked, uint256 debt, uint256 notional)
+    {
+        uint256 debtAtOpen = pos.isLong ? pos.airUsdMinted : pos.airTokenMinted;
+        uint256 opened = pos.fundingIndexAtOpen;
+        // A position can never be at a HIGHER index than it opened at — the
+        // indices only fall — so this is belt and braces against a malformed
+        // position rather than a live branch.
+        if (opened == 0 || idx >= opened) {
+            return (pos.lockedAmountAtOpen, debtAtOpen, pos.usdcIn);
+        }
+        locked   = (pos.lockedAmountAtOpen * idx) / opened;
+        debt     = (debtAtOpen * idx) / opened;
+        notional = (pos.usdcIn * idx) / opened;
+    }
+
+    /**
+     * @dev x^n with x and the result in RAY, by binary exponentiation.
+     *
+     *      Compounds the per-second decay exactly over an arbitrary interval.
+     *      The obvious alternative — a linear `RAY - rate * elapsed` — is not
+     *      merely imprecise but unsafe: at the opening rate of 10 % per hour it
+     *      goes NEGATIVE after ten hours, so a pool nobody touched overnight
+     *      would zero every position on it. This cannot, because every
+     *      intermediate is a product of two values <= RAY.
+     *
+     *      Overflow: x <= RAY = 1e27, so x * x <= 1e54, far inside 2^256.
+     *      Cost is one squaring per bit of `n` — about 25 for a year.
+     */
+    function _rpow(uint256 x, uint256 n) internal pure returns (uint256 z) {
+        z = n % 2 != 0 ? x : RAY;
+        for (n /= 2; n != 0; n /= 2) {
+            x = (x * x) / RAY;
+            if (n % 2 != 0) z = (z * x) / RAY;
+        }
+    }
+
+    /**
+     * @dev Clear whatever the aggregates still carry once the last position has
+     *      left.
+     *
+     *      _released rounds each aggregate's retained amount up while _liveAt
+     *      rounds each position's down, so the aggregates run a few wei ahead of
+     *      the sum of their positions, and the gap grows by at most one wei per
+     *      accrual. The bias is deliberate and in the safe direction, but the
+     *      residue has to go somewhere. Collateral left behind would keep the
+     *      reserve invariant demanding funds against positions that no longer
+     *      exist, so it goes to the LP — where funding was sending it anyway.
+     *      Debt and open interest left behind belong to nobody, so they are
+     *      burned: the debt out of the supply counter it was minted into, which
+     *      keeps both supply identities exact.
+     */
+    function _flushResidue() internal {
+        if (openPositionCount != 0) return;
+        if (totalLongCollateral != 0) {
+            backedAirToken     += totalLongCollateral;
+            totalLongCollateral = 0;
+        }
+        if (totalShortCollateral != 0) {
+            backedAirUsd        += totalShortCollateral;
+            totalShortCollateral = 0;
+        }
+        if (longOpenInterest != 0) {
+            airUsdSupply    -= longOpenInterest;
+            longOpenInterest = 0;
+        }
+        if (totalShortDebt != 0) {
+            airTokenSupply -= totalShortDebt;
+            totalShortDebt  = 0;
+        }
+        shortOpenInterest = 0;
     }
 
     // =========================================================================
@@ -2175,56 +2559,6 @@ contract EXNIHILOPool is ReentrancyGuard {
             totalFee    = MIN_POSITION_FEE;
             protocolFee = (MIN_POSITION_FEE * PROTOCOL_FEE_BPS) / (PROTOCOL_FEE_BPS + LP_FEE_BPS);
             lpFee       = MIN_POSITION_FEE - protocolFee;
-        }
-    }
-
-    /**
-     * @dev Dynamic renewal fee: renewal re-buys the position's optionality and
-     *      its open-interest slot at TODAY's prices instead of entry prices.
-     *
-     *        mark      = N + surplus       (current gross value, floored at N)
-     *        baseFee   = _baseFees(mark)   (5 % of mark, 4/1 LP/protocol split)
-     *        impactFee = IMPACT_FEE_BPS × N × (2×(OI−N) + N)
-     *                    ────────────────────────────────────  → LP
-     *                        2 × backedAirUsd × BPS_DENOM
-     *
-     *      where N is the position's original notional (its OI contribution)
-     *      and OI the current same-side open interest (which includes N). The
-     *      impact term is the position's own slice of the OI integral — what a
-     *      new entrant would pay for that slot at current crowding and depth —
-     *      not the full integral again, which would double-charge vs. opens.
-     *
-     *      The mark is floored at N (losers pay full size): a losing position's
-     *      synthetic debt stays full-size and keeps distorting SWAP-2/3 for all
-     *      traders, and the floor makes the fee manipulation-bounded below at
-     *      the flat fee — curve manipulation can suppress the surplus term to
-     *      zero but never below it.
-     *
-     * @return totalFee    Total USDC renewal fee (base + impact slice).
-     * @return protocolFee Protocol share of the base fee.
-     * @return lpFee       LP share of the base fee plus the full impact slice.
-     * @return surplus     The position's current profit (0 if underwater or
-     *                     unpriceable) — reused by the auto-renew equity check.
-     */
-    function _renewFees(Position memory pos)
-        internal
-        view
-        returns (uint256 totalFee, uint256 protocolFee, uint256 lpFee, uint256 surplus)
-    {
-        uint256 n = pos.isLong ? pos.airUsdMinted : pos.usdcIn;
-
-        (bool priceable, uint256 s,,) = _priceClose(pos);
-        surplus = priceable ? s : 0;
-
-        (totalFee, protocolFee, lpFee) = _baseFees(n + surplus);
-
-        if (backedAirUsd != 0) {
-            uint256 oi = pos.isLong ? longOpenInterest : shortOpenInterest;
-            uint256 offset = oi > n ? oi - n : 0;
-            uint256 impactFee = (IMPACT_FEE_BPS * n * (2 * offset + n))
-                              / (2 * backedAirUsd * BPS_DENOM);
-            lpFee    += impactFee;
-            totalFee += impactFee;
         }
     }
 
