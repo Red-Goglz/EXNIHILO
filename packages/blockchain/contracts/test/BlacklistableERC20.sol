@@ -3,12 +3,7 @@ pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
-/**
- * @title BlacklistableERC20
- * @notice MockERC20 with a blacklist — simulates USDC/USDT-style token
- *         blacklisting behaviour.  Transfers to or from a blacklisted
- *         address revert.  Test use only.
- */
+/// @notice Test-only USDC-style blacklist: transfers to or from a blacklisted address revert.
 contract BlacklistableERC20 is ERC20 {
     uint8 private immutable _dec;
     mapping(address => bool) public blacklisted;

@@ -1,44 +1,50 @@
 ---
-description: "Closing settles a position against the pool's curves and pays the surplus in USDC. How longs and shorts unwind, and the 1% fee on profit."
+description: "Closing settles a position against the pool's curves and pays the surplus in USDC. How longs and shorts unwind, the 1% fee on profit, the close-price clamp, and how decayed positions are swept."
 ---
 
 # Closing Positions
 
-A position is settled by **closing** it — the position's value is realized in USDC against the pool's curves.
+Only the holder can close, at any time — but only in profit. Closing settles the position
+against the pool's curves and pays the surplus in USDC.
 
-## Close
+```solidity
+closeLong(nftId, minUsdcOut, to)
+closeShort(nftId, minUsdcOut, to)
+```
 
-Closing fully settles your position and returns USDC. Only possible when in profit.
+`minUsdcOut` protects the payout from slippage. `to` receives it — a separate parameter so a
+holder whose wallet cannot receive USDC (a blacklisted one, say) can still exit.
 
-### Closing a Long
+## What happens
 
-1. The locked airToken collateral re-enters the pool's backed reserves
-2. It is valued through SWAP-3
-3. The synthetic airUsd debt (`airUsdMinted`) is cancelled
-4. Any surplus is your profit — paid to you in USDC
-5. A 1% fee on profit accrues to the protocol treasury
-6. The Position NFT is burned
+**Long:** the locked airToken is valued through SWAP-3 and returns to the pool's reserves, the
+airUsd debt is cancelled, and the surplus is paid out.
 
-### Closing a Short
+**Short:** the airToken debt is bought back through SWAP-2 with the locked airUsd, and what is
+left is paid out.
 
-1. The locked airUsd collateral is released
-2. The synthetic airToken debt is bought back through SWAP-2
-3. Remaining airUsd is your profit — paid to you in USDC
-4. A 1% fee on profit accrues to the protocol treasury
-5. The Position NFT is burned
+Either way 1% of the profit goes to the protocol and the NFT is burned. The formulas are in
+[P&L Calculation](/trading/pnl). Quote a close with `quoteClose(nftId)`, which returns
+`(ready, pnl)` net of the close fee.
 
-## Position expiry
+::: tip Closing right after a big move
+A close is priced against the worst of the last 5 block opens wherever that is worse than the
+live price. It stops a holder pumping the price and closing into their own move — and it means a
+close in the seconds after a sharp favourable move may pay the earlier price. `quoteClose`
+already accounts for it.
+:::
 
-Every position has a **deadline**. After the deadline, anyone can call `closePositionAfterDeadline(nftId, minPayout)`:
+## Underwater positions
 
-- **Profitable**: settled like a normal close, but the payout (minus the 1% fee) is **credited to your claimable balance** rather than pushed to your wallet — withdraw it any time with `claimPayout(to)`. This pull-payment design means no wallet condition (e.g. a USDC blacklist) can ever block position cleanup.
-- **Underwater**: collateral returns to the LP, synthetic debt is cancelled, no payout
+A position below break-even cannot be closed and is never liquidated. It stays open, shrinking
+with funding, and is yours again if the price recovers.
 
-To avoid expiry, call `renewPosition(nftId, maxFee)` before the deadline (or opt into auto-renewal via `PositionNFT.setAutoRenew`). The fee is dynamic — quote it with `quoteRenewFee(nftId)` — and extends the deadline by one position duration. See [Expiry & Renewal](/positions/expiry).
+## Dust sweeps
 
-## Who can do what?
-
-- **Close** — only the NFT owner (the trader), at any time while in profit
-- **closePositionAfterDeadline** — anyone, but only after the deadline
-- **renewPosition** — only the NFT owner (pay fee to extend deadline)
-- **claimPayout** — the credited holder, any time after an expiry settlement
+Once funding has taken all but **0.1%** of the collateral a position opened with, anyone may call
+`sweepDust(nftId)` to clear it so the LP can eventually withdraw. The threshold depends only on
+funding, never on price. If the sweep prices the position in profit, the payout is credited to
+the holder — withdraw it with `claimPayout(to)` — rather than sent, so nothing about the holder's
+wallet can block the sweep. That payout is not guaranteed: a caller can move the price first so
+the position prices underwater, and the holder then receives nothing. It is at most the dust that
+was left. See [Funding](/positions/funding#sweeping-a-decayed-position).

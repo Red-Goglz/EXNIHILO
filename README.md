@@ -1,112 +1,79 @@
 # EXNIHILO
 
-**Permissionless "buy now pay later" trading on Avalanche.** Create a market for any token, go long or short and receive a tradable NFT position. No liquidations. 
+**Long or short any ERC-20 on Avalanche. You pay a fee, not collateral — and that fee is the most you
+can lose.** Create a market for any token, open a position, and hold it as a transferable NFT. No
+liquidations, no expiry.
 
----
+Full documentation: [exnihilo.markets/docs](https://exnihilo.markets/docs) (source in `packages/docs`).
 
 ## Overview
 
-EXNIHILO is a Web3 app that lets anyone spin up a two-sided market for any ERC-20 token. Each market is an isolated pool with:
+Each market is an isolated pool with a single LP, who is the counterparty to every position in it:
 
-- **Swaps** — constant-product AMM between the token and a synthetic USDC
-- **Long positions** — leveraged exposure to token price appreciation
-- **Short positions** — leveraged exposure to token price decline
-- **LP** — provide liquidity and earn 3% of all position fees
+- **Swaps** — a constant-product AMM between the token and USDC
+- **Longs and shorts** — opened for a fee, settled against the pool's curves, capped by pool size
+- **Funding** — positions never expire; instead each side shrinks continuously, and the released
+  collateral goes to the LP
+- **LP income** — 4% of every open, the impact fee, funding and swap fees
 
-Positions are represented as ERC-721 NFTs (transferable) and settled against the pool's reserves.
-
-## Monorepo Structure
+## Monorepo structure
 
 ```
 packages/
-├── blockchain/   Solidity contracts + Hardhat tests + deploy scripts
-├── site/         React 19 frontend (Wagmi, Viem, React Router)
-└── abis/         Shared ABI exports consumed by the frontend
+├── blockchain/   Solidity contracts, Hardhat tests and scripts
+├── site/         React 19 app (wagmi / viem)
+├── indexer/      Ponder indexer and Hono API
+├── sdk/          @exnihilio/sdk — typed client
+├── abis/         @exnihilio/abis — shared ABIs
+├── arbbot/       Read-only arbitrage scanner
+└── docs/         VitePress documentation
 ```
 
 ## Contracts
 
 | Contract | Description |
 |---|---|
-| `EXNIHILOPool` | Core AMM — swaps, long/short open/close/realize/liquidate |
-| `EXNIHILOFactory` | Deploys pools, routes protocol fees to treasury |
-| `PositionNFT` | ERC-721 representing open long/short positions |
-| `LpNFT` | ERC-721 representing an LP's ownership of a pool |
-| `AirToken` | ERC-20 used for synthetic tokens and synthetic USD |
+| `EXNIHILOPool` | Swaps, positions, funding, liquidity and fees for one market |
+| `EXNIHILOFactory` | Creates and seeds markets; holds the emergency `closePool` role |
+| `EXNIHILORouter` | One USDC approval for opens and swaps on every pool |
+| `PoolDeployer` | Holds the pool bytecode for the factory |
+| `PositionNFT` / `LpNFT` | ERC-721 position records (on-chain SVG) and pool ownership |
+| `PreMarketFactory` / `PreMarket` | Launchpad: seed a token, auction the reserve, launch the market |
+| `LockedLpVault` | Holds a launched market's LP NFT and splits its fees |
 
-**Target network:** Avalanche (mainnet chainId 43114 / Fuji testnet chainId 43113)
+Solidity 0.8.24 (viaIR). No proxies, no owner, every pool parameter a constant.
+See [Architecture](packages/docs/protocol/architecture.md) and [Security](packages/docs/protocol/security.md).
 
-## Prerequisites
+## Getting started
 
-- Node.js 18+
-- npm 10+ (workspaces)
-
-## Installation
+Requires Node.js 18+ and npm 9+.
 
 ```bash
 npm install
-```
 
-## Blockchain Package
-
-### Setup
-
-```bash
-cp packages/blockchain/.env.example packages/blockchain/.env
-```
-
-Fill in `.env`:
-
-```env
-ACCOUNT_PRIVATE_KEY=   # deployer wallet private key (no 0x prefix)
-SNOWTRACE_API_KEY=     # from https://snowtrace.io/myapikey
-PROTOCOL_TREASURY=     # address that receives the 2% protocol fee
-DEFAULT_SWAP_FEE_BPS=100  # swap fee in bps (100 = 1%)
-
-# Optional RPC overrides
-# AVALANCHE_RPC_URL=https://api.avax.network/ext/bc/C/rpc
-# FUJI_RPC_URL=https://api.avax-test.network/ext/bc/C/rpc
-```
-
-### Testing
-
-```bash
+# Contracts
 cd packages/blockchain
+npx hardhat test                    # 630 tests
+REPORT_GAS=true npx hardhat test
+npx hardhat coverage
 
-npx hardhat test                    # all tests (~150 tests)
-REPORT_GAS=true npx hardhat test   # with gas usage report
-npx hardhat coverage               # full coverage report
-```
-
-### Local Development
-
-Start a local Hardhat node and deploy all contracts with seed data:
-
-```bash
-# Terminal 1
+# Local chain (writes packages/site/src/contracts/localAddresses.json)
 npx hardhat node
-
-# Terminal 2
 npx hardhat run scripts/deployLocal.ts --network localhost
+
+# From the repo root
+npm run dev                         # app — http://localhost:5000
+npm run dev:indexer                 # indexer — http://localhost:42069
+npm run dev -w packages/docs        # docs — http://localhost:5173
 ```
 
-The deploy script prints all contract addresses. Copy them into `packages/site/src/contracts/addresses.ts`.
+Copy each package's `.env.example` (`blockchain/.env`, `site/.env`, `indexer/.env.local`) before
+deploying or running against mainnet. Details: [Local Development](packages/docs/developers/local-dev.md).
 
-Local addresses after `deployLocal.ts`:
+## Mainnet deployment
 
-| Contract | Address |
-|---|---|
-| MockUSDC | `0x5FbDB2315678afecb367f032d93F642f64180aa3` |
-| EXNIHILOFactory | `0x95bD8D42f30351685e96C62EDdc0d0613bf9a87A` |
-| PositionNFT | `0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512` |
-| LpNFT | `0xef11D1c2aA48826D4c41e54ab82D1Ff5Ad8A64Ca` |
-
-Deployer `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266` (Hardhat signer[0]) receives 1,000,000 MockUSDC.
-
-### Avalanche Mainnet Deployment
-
-Live at factory `0xBe6Fb0e7b7d8EFD491FEbC436F737cE8B244F85a` (block 91,382,693).
-Full address list: [docs/protocol/addresses](packages/docs/protocol/addresses.md).
+The app supports Avalanche C-Chain mainnet only (`packages/site/src/lib/chains.ts`). Deployed
+addresses: [Contract Addresses](packages/docs/protocol/addresses.md).
 
 ```bash
 cd packages/blockchain
@@ -118,91 +85,18 @@ MAINNET_PROTOCOL_TREASURY=0x... \
   npx hardhat run scripts/deployMainnet.ts --network avalanche
 ```
 
-Deploys the protocol only — PositionNFT, PoolDeployer, LpNFT, EXNIHILOFactory
-and EXNIHILORouter against Circle's native USDC. No mocks, no faucet and **no
-markets**: market creation is permissionless, so pools are created by users.
+This deploys the protocol only, against Circle's native USDC — no mocks and no markets, since market
+creation is permissionless. `deployMainnet.ts` writes `mainnetAddresses.json`, which the site and the
+indexer both read. Contract verification goes through Routescan; see `hardhat.config.ts`.
 
-The factory's `usdc`, `protocolTreasury` and `defaultSwapFeeBps` are constructor
-immutables and can never be changed, so the script refuses to guess them.
-
-### Fuji Testnet Deployment
-
-```bash
-cd packages/blockchain
-npx hardhat run scripts/deployFuji.ts --network avalancheFujiTestnet
-```
-
-Deploys MockUSDC, PositionNFT, LpNFT, EXNIHILOFactory, and five test token markets (ARENA, NOCHILL, RGOGLZ, BANDS, WAVAX). Writes deployed addresses to `packages/site/src/contracts/fujiAddresses.json` and prints Snowtrace verify commands.
-
-## Site Package
-
-### Setup
-
-```bash
-cp packages/site/.env.example packages/site/.env
-```
-
-Fill in `.env`:
-
-```env
-VITE_WC_PROJECT_ID=   # WalletConnect project ID (https://cloud.walletconnect.com)
-```
-
-### Development
-
-```bash
-npm run dev -w packages/site
-```
-
-App runs at `http://localhost:5173`. Supports MetaMask, WalletConnect, and any EIP-6963 injected wallet.
-
-Configured chain: **Avalanche C-Chain mainnet** (chainId 43114) — the only network the app shows. Connect MetaMask to it; the app shows a chain switch prompt otherwise. To bring back Fuji or a local node, add an entry to `packages/site/src/lib/chains.ts` (that list drives the router, the wagmi config and the chain guard).
-
-### Production Build
-
-```bash
-npm run build -w packages/site
-```
-
-### Pages
-
-| Route | Description |
-|---|---|
-| `/` | Feed — swipe-style pool discovery |
-| `/markets` | All pools with live price and TVL |
-| `/markets/:poolAddr` | Trade page — swap, long/short, LP tabs |
-| `/portfolio` | Open positions for connected wallet |
-| `/create` | Create a new market |
-
-## AMM Math
-
-Three swap modes depending on position type:
-
-| Mode | Reserves | Used for |
-|---|---|---|
-| SWAP-1 | `backedAirToken × backedAirUsd` | Regular swaps |
-| SWAP-2 | `backedAirToken × airUsd.totalSupply()` | Open long |
-| SWAP-3 | `airToken.totalSupply() × backedAirUsd` | Open short |
-
-Spot price: `backedAirUsd / backedAirToken` (USDC per whole token).
-
-## Fee Structure
+## Fees
 
 | Fee | Amount | Destination |
 |---|---|---|
-| Open fee (base) | 5% of notional (min $0.05) | 3% LP claimable + 2% protocol treasury |
-| Open fee (impact) | Dynamic: `1500 × N × (2×OI+N) / (2 × pool × 10000)` | LP claimable |
-| Close fee | 1% of profit surplus | Protocol treasury |
-| Swap fee | 100 bps = 1% (immutable per pool) | LP reserves |
+| Open (base) | 5% of notional (min 0.05 USDC) | 4% LP, 1% protocol |
+| Open (impact) | `15% × N × (2·OI + N) / (2 · backedAirUsd)` | LP |
+| Funding | 10% + 20% × utilization per window (1 hour + market age, max 30 days) | LP, in reserves |
+| Swap | 1% | LP, in reserves |
+| Close | 1% of profit | Protocol |
 
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Contracts | Solidity 0.8.24, OpenZeppelin 5.4, Hardhat 2.22 |
-| Testing | Chai, Hardhat Network Helpers, TypeChain |
-| Frontend | React 19, TypeScript, Vite |
-| Web3 | Wagmi 2, Viem 2 |
-| Styling | Tailwind CSS 3.4 |
-| Routing | React Router 6 |
-| State | TanStack React Query 5 |
+Every rate is a contract constant. See [Fees](packages/docs/protocol/fees.md).

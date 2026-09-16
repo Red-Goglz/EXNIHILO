@@ -1,41 +1,37 @@
 ---
-description: "EXNIHILO uses a single-LP model. The LP NFT minted at market creation carries exclusive rights to add, withdraw and set caps — and is transferable."
+description: "Each pool has exactly one LP, identified by a transferable LP NFT. What the holder can do — add and withdraw liquidity, claim fees, close a market — and what nobody can change."
 ---
 
-# LP NFT & Ownership
+# Running a Pool
 
-EXNIHILO uses a single-LP model. Each pool has exactly one liquidity provider, identified by an LP NFT.
+Each pool has exactly one liquidity provider: whoever holds its **LP NFT**. The NFT is minted to
+the market creator along with the initial liquidity, and transferring it transfers every LP right
+at once — to sell a pool, move it to a multisig, or build on top of it.
 
-## How it works
+## What the LP can do
 
-When a market is created via the Factory:
-1. An LP NFT is minted to the market creator
-2. The NFT is linked to the new pool via `poolOf(tokenId)`
-3. Initial liquidity (underlying tokens + USDC) is seeded into the pool
+| Action | Call | Notes |
+|---|---|---|
+| Add liquidity | `addLiquidity(tokenAmount, usdcAmount)` | Must match the current reserve ratio (±0.01%), so the price does not move. Approve both tokens first |
+| Withdraw | `removeLiquidity()` | Everything, and only when no position is open |
+| Claim fees | `claimFees(to)` | The 4% open fee and impact fees — see [Fee Earnings](/lp/fees) |
+| Close the market | `closePool()` | Irreversible — see below |
 
-The LP NFT holder has exclusive authority over all LP operations.
+Only the NFT's direct owner passes the check; approved operators do not. Nothing else about a pool
+is configurable: the swap fee, position cap and funding rate are contract constants.
 
-## LP rights
+## Closing a market
 
-Whoever holds the LP NFT can:
-- **Add liquidity** — deposit more tokens + USDC
-- **Withdraw liquidity** — remove tokens + USDC when there is no open position (long or short)
-- **Claim fees** — withdraw accumulated LP fees (4% of position opens)
-- **Close a market** — no new positions or renewals. But trading remains open. 
+`closePool()` stops new positions immediately and starts a wind-down: after a 7-day grace period
+the funding rate doubles every day. Trading and closes continue and nothing is force-closed, but
+positions nobody closes decay into sweep range within about eleven days of the grace period
+ending. Once every position is closed or swept, `removeLiquidity()` works.
 
-## Transferring LP ownership
+The factory's emergency `deployer` role can also close any pool. Announce a closure before calling
+it — holders need the grace period to exit.
 
-The LP NFT is a standard ERC-721 token. Transferring it transfers all LP rights immediately. The new owner can perform all LP operations on the pool.
+## Why one LP
 
-This enables:
-- Selling a profitable pool
-- Delegating management to another wallet
-- Building composable LP protocols on top
-
-## One LP per pool
-
-This is a deliberate design choice:
-- **Simple fee accounting** — no pro-rata distribution needed
-- **Clear authority** — one entity controls pool parameters
-- **Full transferability** — LP rights are a single, tradeable asset
-- **No LP token fragmentation** — no impermanent loss calculations across multiple LPs
+No pro-rata share accounting, one clear owner, and pool rights that are a single tradeable asset.
+The cost is that the LP carries the pool's whole counterparty risk — read
+[You are the counterparty](/lp/fees#you-are-the-counterparty) before depositing.

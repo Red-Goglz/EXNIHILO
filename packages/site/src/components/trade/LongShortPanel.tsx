@@ -64,7 +64,7 @@ export default function LongShortPanel({
       { ...poolContract, functionName: "currentMaxPositionBps" },
       { ...poolContract, functionName: "createdAt" },
       { ...poolContract, functionName: "closeDate" },
-      { ...poolContract, functionName: "currentPositionDuration" },
+      { ...poolContract, functionName: "fundingWindow" },
     ],
   });
 
@@ -86,13 +86,10 @@ export default function LongShortPanel({
     backedAirUsd !== undefined &&
     (backedAirToken === 0n || backedAirUsd === 0n);
   const isMarketClosed = isClosed || isInactive;
-  // closeDate is (close trigger time + the duration in force WHEN closePool was
-  // called) — the moment the last position must have expired by. The trigger
-  // time is not recoverable from state: currentPositionDuration() steps up with
-  // market age, so subtracting today's value gives a different, earlier answer
-  // than the one that was baked in, and on an aged pool lands before the market
-  // existed. Show the wind-down date instead, which is the on-chain value and
-  // the one a trader needs.
+  // closeDate is when the wind-down grace period ends, not when the LP called
+  // closePool. Past it the funding rate doubles every day until every
+  // position has either been closed or decayed away. Show the on-chain value —
+  // it is the date that actually matters to someone holding.
 
   let previewOut: bigint | undefined;
   if (

@@ -223,31 +223,6 @@ export const positionNFTAbi = [
     "inputs": [
       {
         "indexed": true,
-        "internalType": "uint256",
-        "name": "tokenId",
-        "type": "uint256"
-      },
-      {
-        "indexed": false,
-        "internalType": "bool",
-        "name": "enabled",
-        "type": "bool"
-      },
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "maxFee",
-        "type": "uint256"
-      }
-    ],
-    "name": "AutoRenewSet",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": true,
         "internalType": "address",
         "name": "factory",
         "type": "address"
@@ -280,39 +255,6 @@ export const positionNFTAbi = [
     ],
     "name": "Transfer",
     "type": "event"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "uint256",
-        "name": "tokenId",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "newLockedAmount",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "newAirUsdMinted",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "addFeesPaid",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
-        "name": "newDeadline",
-        "type": "uint256"
-      }
-    ],
-    "name": "applyRenewal",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
   },
   {
     "inputs": [
@@ -391,30 +333,6 @@ export const positionNFTAbi = [
         "type": "uint256"
       }
     ],
-    "name": "getAutoRenew",
-    "outputs": [
-      {
-        "internalType": "bool",
-        "name": "enabled",
-        "type": "bool"
-      },
-      {
-        "internalType": "uint256",
-        "name": "maxFee",
-        "type": "uint256"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "uint256",
-        "name": "tokenId",
-        "type": "uint256"
-      }
-    ],
     "name": "getPosition",
     "outputs": [
       {
@@ -431,7 +349,7 @@ export const positionNFTAbi = [
           },
           {
             "internalType": "uint256",
-            "name": "lockedAmount",
+            "name": "lockedAmountAtOpen",
             "type": "uint256"
           },
           {
@@ -461,7 +379,7 @@ export const positionNFTAbi = [
           },
           {
             "internalType": "uint256",
-            "name": "deadline",
+            "name": "fundingIndexAtOpen",
             "type": "uint256"
           }
         ],
@@ -544,7 +462,7 @@ export const positionNFTAbi = [
       },
       {
         "internalType": "uint256",
-        "name": "deadline",
+        "name": "fundingIndexAtOpen",
         "type": "uint256"
       }
     ],
@@ -593,7 +511,7 @@ export const positionNFTAbi = [
       },
       {
         "internalType": "uint256",
-        "name": "deadline",
+        "name": "fundingIndexAtOpen",
         "type": "uint256"
       }
     ],
@@ -664,7 +582,7 @@ export const positionNFTAbi = [
           },
           {
             "internalType": "uint256",
-            "name": "lockedAmount",
+            "name": "lockedAmountAtOpen",
             "type": "uint256"
           },
           {
@@ -694,7 +612,7 @@ export const positionNFTAbi = [
           },
           {
             "internalType": "uint256",
-            "name": "deadline",
+            "name": "fundingIndexAtOpen",
             "type": "uint256"
           }
         ],
@@ -771,29 +689,6 @@ export const positionNFTAbi = [
       }
     ],
     "name": "setApprovalForAll",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "uint256",
-        "name": "tokenId",
-        "type": "uint256"
-      },
-      {
-        "internalType": "bool",
-        "name": "enabled",
-        "type": "bool"
-      },
-      {
-        "internalType": "uint256",
-        "name": "maxFee",
-        "type": "uint256"
-      }
-    ],
-    "name": "setAutoRenew",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

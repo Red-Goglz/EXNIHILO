@@ -16,7 +16,7 @@
 /** BPS_DENOM. */
 export const BPS_DENOM = 10_000n;
 
-/** LP_FEE_BPS (400) + PROTOCOL_FEE_BPS (100) — the base open/renew fee. */
+/** LP_FEE_BPS (400) + PROTOCOL_FEE_BPS (100) — the base open fee. */
 export const POSITION_FEE_BPS = 500n;
 
 /** PROTOCOL_FEE_BPS — the protocol's share of the base fee, 1 % of notional. */

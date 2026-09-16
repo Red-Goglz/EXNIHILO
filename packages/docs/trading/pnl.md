@@ -4,57 +4,44 @@ description: "How position P&L is computed from pool state alone with no oracles
 
 # P&L Calculation
 
-Position profit and loss is computed entirely from on-chain pool state — no oracles involved.
+P&L is computed from pool state alone — no oracles.
 
 ::: warning You receive the profit, not the position size
-The notional is never deposited — opening a position transfers only the fee
-(`_transferIn(underlyingUsdc, msg.sender, totalFee)` in `openLong`). So closing
-returns the **surplus only**. A $100 position that gains 50% pays out roughly
-$50, not $150. Your total outlay was the premium, and your total return is the
-surplus minus the 1% close fee.
+Opening transfers only the fee; the notional is synthetic. So closing returns the **surplus
+only**: a $100 position that gains 50% pays out roughly $50, not $150.
 :::
 
-## Long P&L
+`locked` and `debt` below are a position's live figures from `liveAmountsOf(nftId)`. Funding
+shrinks both by the same fraction, so the price you need to clear never moves — only the size
+behind it does.
 
-When closing a long, the locked airToken is valued back through SWAP-3. Note
-that the position's own locked amount is excluded from the reserve it trades
-against:
-
-```
-airUsdOut = cpAmountOut(lockedAmount, airTokenSupply - lockedAmount, backedAirUsd)
-surplus   = airUsdOut - airUsdMinted        // airUsdMinted == the notional
-payout    = surplus - 1% close fee
-```
-
-- If `surplus > 0` — profit. You receive `payout`.
-- If `surplus <= 0` — underwater. You cannot close the position at all; it can
-  only be held (renewed) or left to settle for nothing at the deadline.
-
-## Short P&L
-
-When closing a short, the synthetic airToken debt is bought back via SWAP-2:
+## Long
 
 ```
-totalBuyable = cpAmountOut(lockedAmount, airUsdSupply - lockedAmount, backedAirToken)
-cost         = ceil(lockedAmount * airTokenMinted / totalBuyable)
-surplus      = lockedAmount - cost
-payout       = surplus - 1% close fee
+airUsdOut = cpAmountOut(locked, airTokenSupply − locked, backedAirUsd)
+surplus   = airUsdOut − debt                 // debt == the live notional
+payout    = surplus − 1% close fee
 ```
 
-`cost` is what it takes to buy back the synthetic airToken debt; the remainder
-of the locked collateral is your profit. The division rounds **up**, in the
-pool's favour.
+The position's own collateral is excluded from the reserve it sells into.
 
-- If `surplus > 0` — the token price dropped, buying back the debt is cheap. Profit.
-- If `surplus <= 0` — the token price rose; you cannot close the position.
+## Short
 
-## Live P&L on your NFT
+```
+totalBuyable = cpAmountOut(locked, airUsdSupply − locked, backedAirToken)
+cost         = ceil(locked × debt / totalBuyable)
+surplus      = locked − cost
+payout       = surplus − 1% close fee
+```
 
-The PositionNFT contract computes P&L in real-time using calls to the pool. This data is rendered directly in the on-chain SVG metadata — no off-chain service needed.
+`cost` is the airUsd needed to buy back the airToken debt, rounded up in the pool's favour.
 
-## Important notes
+## Notes
 
-- P&L depends on pool reserves at the time of closing, not at the time of opening
-- Large positions relative to pool size will experience more slippage
-- The three-curve design means long and short P&L are not perfectly symmetric
-- Positions expire after the pool's position duration — renew before the deadline to keep trading. See [Expiry & Renewal](/positions/expiry)
+- `surplus ≤ 0` means underwater: the position cannot be closed.
+- The payout depends on reserves when you close, clamped as described in
+  [Closing Positions](/trading/closing-realizing).
+- Large positions relative to the pool lose more to slippage, and long and short P&L are not
+  perfectly symmetric.
+- `quoteClose(nftId)` returns exactly what a close would pay, and the NFT's artwork shows the same
+  number.

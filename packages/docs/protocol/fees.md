@@ -1,104 +1,96 @@
 ---
-description: "Every EXNIHILO fee in one table: the 5% open premium, the dynamic impact fee, renewal, swaps, and the 1% close fee on profit."
+description: "Every EXNIHILO cost in one place: the 5% open premium, the dynamic impact fee, continuous funding, the fixed 1% swap fee and the 1% close fee on profit."
 ---
 
-# Fee Structure
+# Fees
 
-All fees are deterministic, on-chain, and non-upgradeable.
+Every fee is a contract constant — identical on every market and changeable by no one.
 
-## Summary
-
-| Fee | Rate | Recipient | When |
+| Fee | Rate | Paid to | When |
 |---|---|---|---|
-| Position open (base) | 5% of USDC notional | 4% LP + 1% protocol | Every long/short open |
-| Position open (impact) | Dynamic — see formula below | LP | Every long/short open |
-| Position renewal | Dynamic — see formula below | 3/2 LP/protocol split; impact slice → LP | Every renewal |
-| Swap | Configurable (default 1%) | Pool (passive LP yield) | Every swap |
-| Position close | 1% of profit | Protocol | Profitable closes only |
-| Liquidity ops | 0% | — | Add / withdraw liquidity |
+| Open — base | 5% of notional (min 0.05 USDC) | 4% LP, 1% protocol | Every open |
+| Open — impact | Grows with size and open interest | LP | Every open |
+| Funding | 10% + 20% × utilization per window | LP, in reserves | Continuously while open |
+| Swap | 1% | LP, in reserves | Every swap |
+| Close | 1% of profit | Protocol | Profitable closes |
+| Liquidity | 0% | — | Add / withdraw |
 
-## Position open fee — 5% base + dynamic impact fee
+::: tip A premium, not a taker fee
+5% looks enormous next to a perp's 0.05% taker fee, but it is a different charge. A perp's fee sits
+on top of collateral you can lose entirely; EXNIHILO's open fee **replaces** collateral and is your
+whole downside. Compare it to an at-the-money option on a volatile token. See
+[Positions Are Options](/introduction/positions-are-options).
+:::
 
-**Base fee** split (both accrue as pull payments):
-- **4%** → `lpFeesAccumulated` (claimable by LP via `claimFees(to)`)
-- **1%** → `protocolFeesAccumulated` (claimable by treasury via `claimProtocolFees(to)`)
+## Open fee
 
-Minimum floor: **0.05 USDC** (split 4/5 LP, 1/5 protocol). Applies when 5% of notional would be less than 0.05 USDC.
+The base fee is 5% of notional: 4% to `lpFeesAccumulated` and 1% to `protocolFeesAccumulated`,
+both claimed later as pull payments. Below $1 of notional the 0.05 USDC floor applies instead,
+split the same 4:1.
 
-**Impact fee** (LP drain protection):
+The **impact fee** is added on top and goes entirely to the LP:
 
-```solidity
-impactFee = IMPACT_FEE_BPS * N * (2 * OI + N) / (2 * backedAirUsd * BPS_DENOM)
+```
+impactFee = 15% × N × (2 × OI + N) / (2 × backedAirUsd)
 ```
 
-Where `N` = notional, `OI` = same-side open interest, `backedAirUsd` = pool USDC reserves.
+`N` is the notional, `OI` the same side's open interest before this position, and `backedAirUsd`
+the pool's USDC. It is the integral of a marginal rate that rises with open interest, so it is
+**split-proof**: one $1,000 position pays exactly what ten $100 positions do.
 
-This is an **OI-integral formula**: the fee for each position equals the integral of a marginal rate that increases with cumulative open interest. Splitting a position into many smaller ones produces the exact same total fee. All impact fee revenue goes to the LP.
-
-**Examples:**
-
-| Pool size | Position | OI before | Impact fee | Total fee |
+| Pool USDC | Position | Same-side OI before | Impact fee | Total fee |
 |---|---|---|---|---|
 | $10,000 | $100 | $0 | $0.08 | $5.08 |
-| $1,000 | $500 | $0 | $18.75 | $43.75 |
-| $1,000 | $500 | $500 | $56.25 | $81.25 |
-| $100 | $100 | $0 | $7.50 | $12.50 |
+| $10,000 | $2,000 (the 20% cap) | $0 | $30.00 | $130.00 |
+| $10,000 | $2,000 | $2,000 | $90.00 | $190.00 |
 
-## Position renewal fee — dynamic
+Quote the exact figure with `quoteOpenFee(notional, isLong)`.
 
-Renewal re-buys the position's optionality and its open-interest slot at **today's** prices instead of entry prices:
+## Funding
+
+Positions never expire, so holding one is charged continuously — not as a payment, but by shrinking
+the position. Every second each position on a side loses the same small fraction of its collateral,
+debt and notional, and the released collateral lands in the LP's reserves:
 
 ```
-mark      = N + surplus                       // current gross value, floored at N
-baseFee   = 5% of mark                        // 4% LP + 1% protocol, 0.05 USDC floor
-impactFee = IMPACT_FEE_BPS × N × (2×(OI−N) + N)
-            ───────────────────────────────────  → LP
-                2 × backedAirUsd × BPS_DENOM
-
-renewalFee = baseFee + impactFee
+utilization   = sameSideOpenInterest / backedAirUsd      // capped at 4×
+ratePerWindow = 10% + 20% × utilization
+window(age)   = min(1 hour + market age, 30 days)
 ```
 
-Where `N` = the position's original notional (its open-interest contribution), `surplus` = its current profit (0 if underwater), `OI` = current same-side open interest.
-
-Properties:
-
-- **A fresh or flat position pays roughly the old flat 5%** — nothing changes for the common case.
-- **Winners pay for what they hold**: a position 2× in profit renews a 2× exposure and pays double. This is the crystallization pressure that keeps the LP compensated for deep-in-profit positions.
-- **Crowding is priced**: the impact term is the position's own slice of the OI integral, repriced at current open interest and pool depth. Renewing through a pre-event OI spike costs accordingly.
-- **Manipulation-bounded below**: the mark is floored at `N`, so wash-trading the curve to suppress a position's surplus can at best reduce the fee to the flat baseline, never under it.
-
-`quoteRenewFee(nftId)` is the single source of truth; `renewPosition(nftId, maxFee)` takes a fee cap as slippage protection since the fee moves with live state.
+A winner gives up that share of its profit; a flat or losing position pays nothing in cash and loses
+that share of its size. Break-even never moves. It is about 0.34% of a position a day on a mature
+market, far more on a new or crowded one, and 100% to the LP. Measured rates and the wind-down are
+on [Funding](/positions/funding).
 
 ## Swap fee
 
-A fixed 1% (`swapFeeBps`, a contract constant). Applied to all three AMM curves.
+A fixed 1% on every swap, measured on the spot value of the input and kept in the pool's reserves as
+LP yield. See [Swapping](/trading/swapping).
 
-It was a per-pool constructor parameter floored at this same 1%, and every pool
-ever deployed took the floor. Making it a constant removes the only setting that
-could have differed between markets — every EXNIHILO pool charges the same swap
-fee, and no deployment can produce one that does not.
+## Close fee
 
-The fee is computed on the spot value of the input, giving a true percentage-of-notional fee regardless of trade size. The fee stays in the pool, implicitly increasing the LP's reserves.
+1% of the surplus on a profitable close, to `protocolFeesAccumulated`. Nothing is charged on a
+position that cannot close.
 
-## Position close fee — 1% of profit
-
-Only charged on profitable closes:
-- If `pnl > 0`: `closeFee = pnl * 1%` → accrues to `protocolFeesAccumulated`
-- If `pnl ≤ 0`: no fee
+Sweeping a decayed position pays its caller nothing. A bounty would come out of the holder's payout
+and could exceed it; the LP, whose withdrawal a dead position blocks, already has the motive.
 
 ## Constants
 
 ```solidity
-LP_FEE_BPS          = 400   // 4%
-PROTOCOL_FEE_BPS    = 100   // 1%
-IMPACT_FEE_BPS      = 1500  // 15% impact scaling rate
-MIN_POSITION_FEE    = 50000 // 0.05 USDC
-CLOSE_FEE_BPS       = 100   // 1%
-SETTLE_GUARD_BPS    = 100   // 1% move of either settlement price in a block arms the guard
-SETTLE_GUARD_BLOCKS = 5     // blocks third-party settlement stays blocked
-RENEW_MARGIN_BPS    = 200   // auto-renew equity margin, 2% of mark
+LP_FEE_BPS          = 400      // 4%
+PROTOCOL_FEE_BPS    = 100      // 1%
+MIN_POSITION_FEE    = 50000    // 0.05 USDC
+IMPACT_FEE_BPS      = 1500     // 15%
+CLOSE_FEE_BPS       = 100      // 1% of profit
+swapFeeBps          = 100      // 1%
+FUNDING_BASE_BPS    = 1000     // 10% per window
+FUNDING_UTIL_BPS    = 2000     // + 20% × utilization per window
+FUNDING_WINDOW_MIN  = 1 hour
+FUNDING_WINDOW_MAX  = 30 days
+SWEEP_DUST_BPS      = 10       // sweepable below 0.1% of opening collateral
+WIND_DOWN_GRACE     = 7 days
+WIND_DOWN_DOUBLING  = 1 day
+CLAMP_BLOCKS        = 5        // block opens a close is priced against
 ```
-
-Settling an expired position pays its caller nothing. A bounty carved from the settlement flow can exceed the payout it is carved from — on a position whose surplus is smaller than the bounty, the caller takes all of it and the holder receives nothing. Cleanup instead runs on the incentives the parties already have: the LP earns the renewal fee on an auto-renew and frees its capital on a close, and the holder collects their own payout by closing before or after the deadline.
-
-These are hardcoded constants — not configurable after deployment.

@@ -1,52 +1,76 @@
 ---
-description: "EXNIHILO derives every price from its own constant-product curves, with no oracles. How spot price, the three curves and slippage are computed."
+description: "How EXNIHILO prices everything from its own curves with no oracles: the three constant-product curves, backed versus synthetic supply, and the reserve identities that keep positions solvent."
 ---
 
-# How Pricing Works
+# Pricing & Reserves
 
-EXNIHILO derives all prices from its own AMM curves. There are no oracles.
+EXNIHILO derives every price from the pool's own state. There are no oracles.
 
-## Spot price
+## Two units, four counters
 
-The spot price of the underlying token in USDC is:
+Each pool tracks two internal accounting units — **airToken** and **airUsd** — as plain counters.
+They are not tokens: nothing is minted, transferable or holdable.
 
-```
-spotPrice = backedAirUsd / backedAirToken
-```
+| Counter | Holds |
+|---|---|
+| `backedAirToken` / `backedAirUsd` | The tokens and USDC the pool holds for the LP |
+| `airTokenSupply` / `airUsdSupply` | Everything: the backed reserve, collateral locked in positions, and synthetic debt |
 
-This represents the raw USDC units per whole token. The frontend adjusts for decimals when displaying.
+## Three curves
 
-## Constant-product formula
+All three use `amountOut = amountIn × reserveOut / (reserveIn + amountIn)`, minus a 1% fee:
 
-All three AMM curves use the same formula:
-
-```
-amountOut = amountIn * reserveOut / (reserveIn + amountIn)
-```
-
-This is the standard Uniswap-style `x * y = k` model. Larger trades relative to reserves incur more slippage.
-
-## Three curves, three reserve pairs
-
-| Curve | reserveIn / reserveOut | Purpose |
+| Curve | Reserves | Used for |
 |---|---|---|
-| SWAP-1 | backedAirToken ↔ backedAirUsd | Normal swaps |
-| SWAP-2 | backedAirToken ↔ airUsdSupply | Long open / short close |
-| SWAP-3 | airTokenSupply ↔ backedAirUsd | Short open / long close |
+| **SWAP-1** | `backedAirToken` ↔ `backedAirUsd` | Swaps |
+| **SWAP-2** | `backedAirToken` ↔ `airUsdSupply` | Opening longs, closing shorts |
+| **SWAP-3** | `airTokenSupply` ↔ `backedAirUsd` | Opening shorts, closing longs |
 
-The key difference between curves is what counts as "reserves":
-- **SWAP-1** uses only backed reserves (real collateral)
-- **SWAP-2 / SWAP-3** use one backed reserve and one total supply counter (backed + synthetic)
+```
+spotPrice  = backedAirUsd / backedAirToken
+longPrice  = airUsdSupply / backedAirToken      // marginal long entry
+shortPrice = backedAirUsd / airTokenSupply      // marginal short entry
+```
 
-This means leveraged positions trade against a different curve than spot swaps, which is what creates the leveraged exposure.
+Swaps trade only the backed reserves; positions trade against one backed reserve and one supply
+counter. That difference is where the exposure comes from.
 
-## Price impact
+## Synthetic supply
 
-Price impact depends on trade size relative to reserves:
-- Small trades: minimal slippage
-- Large trades: significant slippage
-- The `minAmountOut` parameter on every operation protects against excessive slippage
+Opening a long mints synthetic airUsd into `airUsdSupply`, with no USDC behind it, and buys
+airToken with it through SWAP-2. Opening a short mints synthetic airToken into `airTokenSupply`
+and sells it through SWAP-3. The minted units are the position's debt: closing burns it, and
+funding shrinks it continuously. Nothing is borrowed, which is why nothing can be liquidated.
 
-## No oracle manipulation
+## How the counters move
 
-Since prices are derived entirely from the pool's own state, there is no oracle to manipulate. However, the pool price can diverge from external market prices — this creates arbitrage opportunities that help keep prices aligned.
+| Operation | backedAirToken | backedAirUsd | airTokenSupply | airUsdSupply |
+|---|---|---|---|---|
+| Add liquidity | ↑ | ↑ | ↑ | ↑ |
+| Withdraw liquidity | ↓ | ↓ | ↓ | ↓ |
+| Swap token → USDC | ↑ | ↓ | ↑ | ↓ |
+| Swap USDC → token | ↓ | ↑ | ↓ | ↑ |
+| Open long | ↓ collateral locked | — | — | ↑ debt |
+| Open short | — | ↓ collateral locked | ↑ debt | — |
+| Close long | ↑ collateral returns | ↓ profit paid | — | ↓ debt + profit |
+| Close short | — | ↑ collateral less profit | ↓ debt | ↓ profit |
+| Long funding | ↑ collateral released | — | — | ↓ debt |
+| Short funding | — | ↑ collateral released | ↓ debt | — |
+
+Two identities hold exactly at all times:
+
+```
+airTokenSupply == backedAirToken + totalLongCollateral  + totalShortDebt
+airUsdSupply   == backedAirUsd   + totalShortCollateral + longOpenInterest
+```
+
+`longOpenInterest` and `shortOpenInterest` are the live notional on each side — a long's notional
+is also its debt — and both shrink with funding. After every operation the pool also checks its
+real token balances against every obligation; see [Security](/protocol/security#reserve-invariant).
+
+## Price impact and arbitrage
+
+Larger trades relative to reserves move the price more, so swaps, opens and closes all take a
+minimum output. With no oracle there is nothing external to manipulate, but a pool's price can
+drift from other venues; arbitrage through SWAP-1 pulls it back, and that flow is ultimately what
+pays a winning position.

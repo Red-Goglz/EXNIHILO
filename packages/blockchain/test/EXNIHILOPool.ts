@@ -53,7 +53,7 @@ const INITIAL_USDC  = ethers.parseUnits("10000", 6); // 10,000 USDC (6 dec)
 const INITIAL_TOKEN  = ethers.parseEther("1000000");  // 1,000,000 token (18 dec)
 const TRADER_USDC   = ethers.parseUnits("1000", 6);  // 1,000 USDC per trader
 const TRADER_TOKEN   = ethers.parseEther("10000");    // 10,000 token per trader
-const SETTLE_GUARD_BLOCKS = 5;
+const CLAMP_BLOCKS = 5;
 const SWAP_FEE_BPS  = 100n;                          // 1 %
 const BPS_DENOM     = 10_000n;
 const LP_FEE_BPS    = 400n;                          // 4 %
@@ -468,7 +468,7 @@ describe("EXNIHILOPool", function () {
       const backedBefore = await pool.backedAirToken();
       const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
       const pos = await positionNFT.getPosition(nftId);
-      expect(await pool.backedAirToken()).to.equal(backedBefore - pos.lockedAmount);
+      expect(await pool.backedAirToken()).to.equal(backedBefore - pos.lockedAmountAtOpen);
     });
 
     it("increments openPositionCount", async function () {
@@ -522,30 +522,30 @@ describe("EXNIHILOPool", function () {
       await base.pool.connect(base.trader2).swap(pumpUsdc, 0n, false, base.trader2.address);
 
       // Settlement prices against the worst open in the last
-      // SETTLE_GUARD_BLOCKS blocks, so a close in the block straight after the
+      // CLAMP_BLOCKS blocks, so a close in the block straight after the
       // pump is priced at the pre-pump mark by design (audit finding H-2).
       // A real position outlives the window many times over.
-      await mine(SETTLE_GUARD_BLOCKS);
+      await mine(CLAMP_BLOCKS);
 
       return { ...base, nftId };
     }
 
     it("profitable close: NFT is burned", async function () {
       const { pool, positionNFT, trader1, nftId } = await loadFixture(withProfitableLongFixture);
-      await pool.connect(trader1).closeLong(nftId, 0n);
+      await pool.connect(trader1).closeLong(nftId, 0n, trader1.address);
       await expect(positionNFT.ownerOf(nftId)).to.be.reverted;
     });
 
     it("profitable close: openPositionCount decrements", async function () {
       const { pool, trader1, nftId } = await loadFixture(withProfitableLongFixture);
-      await pool.connect(trader1).closeLong(nftId, 0n);
+      await pool.connect(trader1).closeLong(nftId, 0n, trader1.address);
       expect(await pool.openPositionCount()).to.equal(0n);
     });
 
     it("profitable close: trader receives USDC surplus", async function () {
       const { pool, usdc, trader1, nftId } = await loadFixture(withProfitableLongFixture);
       const usdcBefore = await usdc.balanceOf(trader1.address);
-      await pool.connect(trader1).closeLong(nftId, 0n);
+      await pool.connect(trader1).closeLong(nftId, 0n, trader1.address);
       expect(await usdc.balanceOf(trader1.address)).to.be.gt(usdcBefore);
     });
 
@@ -561,20 +561,20 @@ describe("EXNIHILOPool", function () {
       await pool.connect(trader2).swap(dump, 0n, true, trader2.address);
 
       await expect(
-        pool.connect(trader1).closeLong(nftId, 0n)
+        pool.connect(trader1).closeLong(nftId, 0n, trader1.address)
       ).to.be.revertedWithCustomError(pool, "PositionUnderwater");
     });
 
     it("reverts when non-holder tries to close", async function () {
       const { pool, trader2, nftId } = await loadFixture(withProfitableLongFixture);
       await expect(
-        pool.connect(trader2).closeLong(nftId, 0n)
+        pool.connect(trader2).closeLong(nftId, 0n, trader2.address)
       ).to.be.revertedWithCustomError(pool, "OnlyPositionHolder");
     });
 
     it("emits PositionClosed event", async function () {
       const { pool, trader1, nftId } = await loadFixture(withProfitableLongFixture);
-      await expect(pool.connect(trader1).closeLong(nftId, 0n))
+      await expect(pool.connect(trader1).closeLong(nftId, 0n, trader1.address))
         .to.emit(pool, "PositionClosed");
     });
   });
@@ -617,7 +617,7 @@ describe("EXNIHILOPool", function () {
       const backedBefore = await pool.backedAirUsd();
       const nftId = await openShort(pool, trader1, ethers.parseUnits("100", 6));
       const pos = await positionNFT.getPosition(nftId);
-      expect(await pool.backedAirUsd()).to.equal(backedBefore - pos.lockedAmount);
+      expect(await pool.backedAirUsd()).to.equal(backedBefore - pos.lockedAmountAtOpen);
     });
 
     it("backedAirToken does NOT change on openShort", async function () {
@@ -683,7 +683,7 @@ describe("EXNIHILOPool", function () {
     it("freshly opened short is underwater (fees + slippage), regardless of decimals", async function () {
       const { pool, trader1, nftId } = await loadFixture(withShortFixture);
       await expect(
-        pool.connect(trader1).closeShort(nftId, 0n)
+        pool.connect(trader1).closeShort(nftId, 0n, trader1.address)
       ).to.be.revertedWithCustomError(pool, "PositionUnderwater");
     });
 
@@ -700,9 +700,9 @@ describe("EXNIHILOPool", function () {
       await baseToken.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
       await pool.connect(trader2).swap(dump, 0n, true, trader2.address);
       // Age the dump out of the settlement clamp window (H-2): quoteClose
-      // and the close itself both price against the last SETTLE_GUARD_BLOCKS
+      // and the close itself both price against the last CLAMP_BLOCKS
       // blocks, and this test is about the 18-dec short maths, not the guard.
-      await mine(SETTLE_GUARD_BLOCKS);
+      await mine(CLAMP_BLOCKS);
 
       // quoteClose agrees the position is now in profit.
       const [ready, pnl] = await pool.quoteClose(nftId);
@@ -711,12 +711,16 @@ describe("EXNIHILOPool", function () {
 
       // Close succeeds and pays the holder the quoted surplus.
       const usdcBefore = await usdc.balanceOf(trader1.address);
-      await expect(pool.connect(trader1).closeShort(nftId, 0n))
+      await expect(pool.connect(trader1).closeShort(nftId, 0n, trader1.address))
         .to.emit(pool, "PositionClosed");
       const received = (await usdc.balanceOf(trader1.address)) - usdcBefore;
 
       expect(received).to.be.gt(0n);
-      expect(received).to.equal(pnl); // settlement matches the quote exactly
+      // Settlement tracks the quote, short by the funding charged in the block
+      // between quoting and closing. Never above it: funding only ever shrinks
+      // the collateral the payout is priced from.
+      expect(received).to.be.lte(pnl);
+      expect(received).to.be.closeTo(pnl, pnl / 10_000n + 1n);
       await expect(positionNFT.ownerOf(nftId)).to.be.reverted; // NFT burned
       expect(await pool.openPositionCount()).to.equal(0n);
     });
@@ -733,7 +737,7 @@ describe("EXNIHILOPool", function () {
       await pool.connect(trader2).swap(pumpUsdc, 0n, false, trader2.address);
 
       await expect(
-        pool.connect(trader1).closeShort(nftId, 0n)
+        pool.connect(trader1).closeShort(nftId, 0n, trader1.address)
       ).to.be.revertedWithCustomError(pool, "PositionUnderwater");
     });
 
@@ -749,7 +753,7 @@ describe("EXNIHILOPool", function () {
       await pool.connect(trader2).swap(pumpUsdc, 0n, false, trader2.address);
 
       await expect(
-        pool.connect(trader1).closeShort(nftId, 0n)
+        pool.connect(trader1).closeShort(nftId, 0n, trader1.address)
       ).to.be.revertedWithCustomError(pool, "PositionUnderwater");
     });
 
@@ -757,7 +761,7 @@ describe("EXNIHILOPool", function () {
       // The OnlyPositionHolder check precedes the underwater check.
       const { pool, trader2, nftId } = await loadFixture(withShortFixture);
       await expect(
-        pool.connect(trader2).closeShort(nftId, 0n)
+        pool.connect(trader2).closeShort(nftId, 0n, trader2.address)
       ).to.be.revertedWithCustomError(pool, "OnlyPositionHolder");
     });
 
@@ -1051,16 +1055,16 @@ describe("EXNIHILOPool", function () {
       // Step 2: pump — $9,999 USDC → PEPE
       await pool.connect(trader1).swap(SWAP_IN_USDC, 0n, false, trader1.address);
       // Hold the pump through the settlement clamp window. Settlement prices
-      // against the worst open in the last SETTLE_GUARD_BLOCKS blocks, so the
+      // against the worst open in the last CLAMP_BLOCKS blocks, so the
       // close is refused outright inside it (audit finding H-2) — holding the
       // displaced price for the whole window, exposed to arbitrage, is the
       // only shape in which this sequence can still be attempted at all.
       // Mining moves no reserves, so every figure below is unchanged.
-      await mine(SETTLE_GUARD_BLOCKS);
+      await mine(CLAMP_BLOCKS);
       const tokenReceived = (await baseToken.balanceOf(trader1.address)) - tokenBefore;
 
       // Step 3: close long (collects profit from the price increase)
-      await pool.connect(trader1).closeLong(nftId, 0n);
+      await pool.connect(trader1).closeLong(nftId, 0n, trader1.address);
 
       // Step 4: dump — sell all received PEPE back to USDC
       await pool.connect(trader1).swap(tokenReceived, 0n, true, trader1.address);
@@ -1105,17 +1109,17 @@ describe("EXNIHILOPool", function () {
       // The contract must produce the fee-reduced amount
       const nftId = await openLong(pool, trader1, LONG_NOTIONAL);
       const pos   = await positionNFT.getPosition(nftId);
-      expect(pos.lockedAmount).to.equal(lockedWithFee);
+      expect(pos.lockedAmountAtOpen).to.equal(lockedWithFee);
 
       // Pump the price so the long is in-the-money
       await pool.connect(trader1).swap(SWAP_IN_USDC, 0n, false, trader1.address);
       // Hold the pump through the settlement clamp window. Settlement prices
-      // against the worst open in the last SETTLE_GUARD_BLOCKS blocks, so the
+      // against the worst open in the last CLAMP_BLOCKS blocks, so the
       // close is refused outright inside it (audit finding H-2) — holding the
       // displaced price for the whole window, exposed to arbitrage, is the
       // only shape in which this sequence can still be attempted at all.
       // Mining moves no reserves, so every figure below is unchanged.
-      await mine(SETTLE_GUARD_BLOCKS);
+      await mine(CLAMP_BLOCKS);
 
       // ── SWAP-3 fee verification ──────────────────────────────────────────
       // After one open position + one USDC→PEPE swap:
@@ -1124,18 +1128,23 @@ describe("EXNIHILOPool", function () {
       const reserveIn  = await pool.backedAirToken();
       const reserveOut = await pool.backedAirUsd();
 
-      const airUsdWithFee    = cpOut(pos.lockedAmount, reserveIn, reserveOut);      // 100 bps
-      const airUsdWithoutFee = cpOut(pos.lockedAmount, reserveIn, reserveOut, 0n);  //   0 bps
+      // The LIVE collateral and debt, not the opening figures: funding has been
+      // shrinking both since the position was minted, and the contract prices
+      // the close against what is actually left.
+      const [liveLocked, liveDebt] = await pool.liveAmountsOf(nftId);
+      const airUsdWithFee    = cpOut(liveLocked, reserveIn, reserveOut);      // 100 bps
+      const airUsdWithoutFee = cpOut(liveLocked, reserveIn, reserveOut, 0n);  //   0 bps
       expect(airUsdWithFee).to.be.lt(airUsdWithoutFee);
 
       // The contract returns the surplus minus the 1% close fee to the holder.
       const usdcBefore = await usdc.balanceOf(trader1.address);
-      await pool.connect(trader1).closeLong(nftId, 0n);
+      await pool.connect(trader1).closeLong(nftId, 0n, trader1.address);
       const actualProfit   = (await usdc.balanceOf(trader1.address)) - usdcBefore;
-      const grossSurplus   = airUsdWithFee - pos.airUsdMinted;
+      const grossSurplus   = airUsdWithFee - liveDebt;
       const closeFee       = (grossSurplus * 100n) / 10_000n; // CLOSE_FEE_BPS = 100
       const expectedProfit = grossSurplus - closeFee;
-      expect(actualProfit).to.equal(expectedProfit);
+      expect(actualProfit).to.be.lte(expectedProfit);
+      expect(actualProfit).to.be.closeTo(expectedProfit, expectedProfit / 10_000n + 1n);
     });
 
     it("step 1 — only the 5% fee is pulled from the trader (not the notional)", async function () {
@@ -1172,15 +1181,15 @@ describe("EXNIHILOPool", function () {
       const nftId = await openLong(pool, trader1, LONG_NOTIONAL);
       await pool.connect(trader1).swap(SWAP_IN_USDC, 0n, false, trader1.address);
       // Hold the pump through the settlement clamp window. Settlement prices
-      // against the worst open in the last SETTLE_GUARD_BLOCKS blocks, so the
+      // against the worst open in the last CLAMP_BLOCKS blocks, so the
       // close is refused outright inside it (audit finding H-2) — holding the
       // displaced price for the whole window, exposed to arbitrage, is the
       // only shape in which this sequence can still be attempted at all.
       // Mining moves no reserves, so every figure below is unchanged.
-      await mine(SETTLE_GUARD_BLOCKS);
+      await mine(CLAMP_BLOCKS);
 
       const usdcBeforeClose = await usdc.balanceOf(trader1.address);
-      await pool.connect(trader1).closeLong(nftId, 0n);
+      await pool.connect(trader1).closeLong(nftId, 0n, trader1.address);
       const profit = (await usdc.balanceOf(trader1.address)) - usdcBeforeClose;
 
       // Profit is positive (price roughly doubled) but small (~$28):
@@ -1197,15 +1206,15 @@ describe("EXNIHILOPool", function () {
       const nftId      = await openLong(pool, trader1, LONG_NOTIONAL);
       await pool.connect(trader1).swap(SWAP_IN_USDC, 0n, false, trader1.address);
       // Hold the pump through the settlement clamp window. Settlement prices
-      // against the worst open in the last SETTLE_GUARD_BLOCKS blocks, so the
+      // against the worst open in the last CLAMP_BLOCKS blocks, so the
       // close is refused outright inside it (audit finding H-2) — holding the
       // displaced price for the whole window, exposed to arbitrage, is the
       // only shape in which this sequence can still be attempted at all.
       // Mining moves no reserves, so every figure below is unchanged.
-      await mine(SETTLE_GUARD_BLOCKS);
+      await mine(CLAMP_BLOCKS);
       const tokenReceived = (await baseToken.balanceOf(trader1.address)) - tokenBefore;
 
-      await pool.connect(trader1).closeLong(nftId, 0n);
+      await pool.connect(trader1).closeLong(nftId, 0n, trader1.address);
 
       const usdcBeforeReswap = await usdc.balanceOf(trader1.address);
       await pool.connect(trader1).swap(tokenReceived, 0n, true, trader1.address);

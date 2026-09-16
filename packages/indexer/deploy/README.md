@@ -119,7 +119,7 @@ indexer.exnihilo.markets {
 - **RPC volume is 2 reads per position event**, not 9: `EXNIHILOPool.indexerState()`
   bundles the four fee accumulators and four price/reserve values into a single
   `eth_call`, leaving that plus `PositionNFT.getPosition`. Pool-only events
-  (renew, close, expire, pool close) cost 1. Measured: 25 reads for 10 positions
+  (close, sweep, pool close) cost 1. Measured: 25 reads for 10 positions
   across 5 pools, against 95 before bundling.
   Do not go back to reading the fields individually — and prefer extending
   `indexerState()` over adding a second read if the indexer needs more.

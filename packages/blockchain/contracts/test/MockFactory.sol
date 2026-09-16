@@ -1,12 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-/**
- * @dev Minimal factory stand-in for PositionNFT unit tests. Lets a test
- *      register arbitrary addresses as "pools" so mintLong/mintShort's
- *      registered-pool check can be satisfied without deploying the full
- *      factory + pool system.
- */
+/// @dev Test-only factory stand-in for PositionNFT: registers arbitrary addresses as pools.
 contract MockFactory {
     mapping(address => bool) public isPool;
 

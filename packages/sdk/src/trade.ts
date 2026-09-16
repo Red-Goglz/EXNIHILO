@@ -7,7 +7,7 @@ import { requireAccount, requireWallet, type Ctx } from "./client.js";
 //
 // Every quote proxies to the pool. Fee maths is never reimplemented here: the
 // base fee has a floor, the impact fee depends on live open interest and
-// reserves, and the renewal fee reprices against the position's current mark.
+// reserves, and funding reprices against live open interest and depth.
 // A client-side copy would drift the moment any of those move.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -24,51 +24,6 @@ export async function quoteOpenFee(
     functionName: "quoteOpenFee",
     args: [notional, isLong],
   }) as Promise<bigint>;
-}
-
-/** Total USDC fee to renew `tokenId` right now. Repriced at current mark. */
-export async function quoteRenewFee(
-  ctx: Ctx,
-  pool: Address,
-  tokenId: bigint
-): Promise<bigint> {
-  return ctx.publicClient.readContract({
-    address: pool,
-    abi: exnihiloPoolAbi,
-    functionName: "quoteRenewFee",
-    args: [tokenId],
-  }) as Promise<bigint>;
-}
-
-export interface RenewDeadlineQuote {
-  /** The deadline a renewal would write, reported whether or not it is allowed. */
-  deadline: bigint;
-  /**
-   * False when renewPosition would revert. Renewals extend from the existing
-   * deadline rather than from now, so they stack, and the pool refuses one that
-   * would land more than 60 days out (RenewalExceedsHorizon) or past a closing
-   * pool's closeDate (RenewalExceedsCloseDate).
-   */
-  allowed: boolean;
-}
-
-/**
- * Whether `tokenId` can be renewed right now, and the deadline a renewal would
- * write. Quote this rather than reproducing the rule — the pool owns it.
- */
-export async function quoteRenewDeadline(
-  ctx: Ctx,
-  pool: Address,
-  tokenId: bigint
-): Promise<RenewDeadlineQuote> {
-  const [deadline, allowed] = (await ctx.publicClient.readContract({
-    address: pool,
-    abi: exnihiloPoolAbi,
-    functionName: "quoteRenewDeadline",
-    args: [tokenId],
-  })) as readonly [bigint, boolean];
-
-  return { deadline, allowed };
 }
 
 export interface CloseQuote {
@@ -170,7 +125,7 @@ export async function preflightOpen(
 // Trading
 //
 // Opens route through EXNIHILORouter so a user approves USDC once rather than
-// per pool. Closes and renewals are holder-gated and go straight to the pool.
+// per pool. Closes are holder-gated and go straight to the pool.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface OpenArgs {
@@ -214,13 +169,18 @@ export async function openShort(ctx: Ctx, args: OpenArgs): Promise<Hash> {
 /**
  * Close a position. Only the holder may call this, and only against the pool
  * that issued it. `isLong` picks the entry point; read it from `getPosition`.
+ *
+ * @param to Where the profit is sent. Defaults to the caller. Pass something
+ *           else when the holder's own wallet cannot receive USDC — there is no
+ *           expiry path to fall back on, so this is the holder's only escape.
  */
 export async function closePosition(
   ctx: Ctx,
   pool: Address,
   tokenId: bigint,
   isLong: boolean,
-  minUsdcOut = 0n
+  minUsdcOut = 0n,
+  to?: Address
 ): Promise<Hash> {
   const wallet = requireWallet(ctx, "closePosition");
   const account = requireAccount(ctx, "closePosition");
@@ -229,40 +189,7 @@ export async function closePosition(
     address: pool,
     abi: exnihiloPoolAbi,
     functionName: isLong ? "closeLong" : "closeShort",
-    args: [tokenId, minUsdcOut],
-    account,
-    chain: wallet.chain,
-  });
-}
-
-/**
- * Extend a position past its deadline. Holder only — third parties cannot renew
- * on someone's behalf, which is what stops an outsider extending a position
- * indefinitely to block the LP.
- *
- * Reverts `RenewalExceedsHorizon` when the extension would land more than 60
- * days out. Renewals extend from the existing deadline, so they stack: a
- * position on the 30-day maximum gets one renewal and must then run down.
- * Check with {@link quoteRenewDeadline} before offering the action.
- *
- * @param maxFee Guard against fee movement between quote and execution. The
- *               renewal fee depends on live reserves, PnL and open interest, so
- *               it genuinely moves; quote it immediately before sending.
- */
-export async function renewPosition(
-  ctx: Ctx,
-  pool: Address,
-  tokenId: bigint,
-  maxFee: bigint
-): Promise<Hash> {
-  const wallet = requireWallet(ctx, "renewPosition");
-  const account = requireAccount(ctx, "renewPosition");
-
-  return wallet.writeContract({
-    address: pool,
-    abi: exnihiloPoolAbi,
-    functionName: "renewPosition",
-    args: [tokenId, maxFee],
+    args: [tokenId, minUsdcOut, to ?? account],
     account,
     chain: wallet.chain,
   });
@@ -290,9 +217,9 @@ export async function swap(
 }
 
 /**
- * Withdraw USDC credited by a third-party settlement of your expired position.
- * Payouts are pull, not push, so a settlement never fails because a recipient
- * cannot receive USDC.
+ * Withdraw USDC credited to you when `sweepDust` cleared a position of yours
+ * that still had a residual claim. Payouts are pull, not push, so a sweep never
+ * fails because a recipient cannot receive USDC.
  */
 export async function claimPayout(ctx: Ctx, pool: Address, to: Address): Promise<Hash> {
   const wallet = requireWallet(ctx, "claimPayout");

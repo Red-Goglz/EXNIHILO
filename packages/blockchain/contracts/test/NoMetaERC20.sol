@@ -3,18 +3,11 @@ pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-/**
- * @title NoMetaERC20
- * @notice A bare-minimum ERC-20 that does NOT implement `symbol()` or `decimals()`.
- *         Used in tests to exercise the `_safeSymbol` / `_safeDecimals` catch branches
- *         in EXNIHILOFactory, which fall back to "TOKEN" / 18 when the call reverts.
- */
+/// @notice Test-only ERC-20 without symbol() or decimals(), for metadata fallback paths.
 contract NoMetaERC20 {
     mapping(address => uint256) private _balances;
     mapping(address => mapping(address => uint256)) private _allowances;
     uint256 private _totalSupply;
-
-    // ── IERC20 ────────────────────────────────────────────────────────────────
 
     function totalSupply() external view returns (uint256) { return _totalSupply; }
 
@@ -44,7 +37,6 @@ contract NoMetaERC20 {
         return true;
     }
 
-    /// @notice Mint tokens — test use only.
     function mint(address to, uint256 amount) external {
         _balances[to] += amount;
         _totalSupply += amount;

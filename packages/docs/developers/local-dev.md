@@ -1,179 +1,90 @@
 ---
-description: "Clone, install and run EXNIHILO locally — Hardhat contract tests with gas reporting and coverage, a local node, and deploying the contracts."
+description: "Clone, install and run EXNIHILO locally — contract tests, a local Hardhat node, the frontend, the indexer and the docs."
 ---
 
 # Local Development
 
-## Prerequisites
-
-- Node.js 18+
-- npm 9+
-
-## Setup
+Requires Node.js 18+ and npm 9+.
 
 ```bash
 git clone https://github.com/Red-Goglz/EXNIHILO.git
-cd exnihilo
+cd EXNIHILO
 npm install
 ```
 
-## Running smart contract tests
+## Contracts
 
 ```bash
 cd packages/blockchain
-
-# Run all tests
-npx hardhat test
-
-# Run with gas reporting
-REPORT_GAS=true npx hardhat test
-
-# Run specific test file
-npx hardhat test test/EXNIHILOPool.ts
-npx hardhat test test/Coverage.ts
-
-# Coverage report
+npx hardhat test                        # the full suite
+npx hardhat test test/Funding.ts        # one file
+REPORT_GAS=true npx hardhat test        # with gas reporting
 npx hardhat coverage
 ```
 
-## Local blockchain + deployment
+For a local chain, run `npx hardhat node`, then in a second terminal
+`npx hardhat run scripts/deployLocal.ts --network localhost`. It writes the addresses to
+`packages/site/src/contracts/localAddresses.json` — see
+[Contract Addresses](/protocol/addresses#local-hardhat-node-chain-id-31337).
 
-Terminal 1 — start local Hardhat node:
+`npx hardhat run scripts/fundingExamples.ts` prints measured funding tables against a throwaway
+market. Dry-run any mainnet script against a fork before spending:
+`FORK_AVALANCHE=1 DRY_RUN=1 npx hardhat run scripts/deployMainnet.ts`.
 
-```bash
-cd packages/blockchain
-npx hardhat node
-```
+`packages/blockchain/.env` needs `ACCOUNT_PRIVATE_KEY` to deploy. The treasury comes from
+`PROTOCOL_TREASURY` (testnet scripts fall back to the deployer), and `deployMainnet.ts` requires
+`MAINNET_PROTOCOL_TREASURY` explicitly.
 
-Terminal 2 — deploy contracts:
-
-```bash
-cd packages/blockchain
-npx hardhat run scripts/deployLocal.ts --network localhost
-```
-
-This deploys all contracts and outputs addresses. The deploy script uses nonce prediction to wire LpNFT ↔ Factory without bytecode patching.
-
-## Running the frontend
+## Frontend
 
 ```bash
-npm run dev -w packages/site
+npm run dev          # from the repo root — http://localhost:5000
 ```
 
-Opens at `http://localhost:5000`. The frontend connects to the local Hardhat node by default when chain ID 31337 is configured in your wallet.
+The app supports Avalanche mainnet only: `packages/site/src/lib/chains.ts` drives the router,
+wallet config and chain guard. To point it at a local node, add a chain entry there and matching
+addresses in `packages/site/src/contracts/addresses.ts`.
 
-## Running the indexer
-
-Price charts, LP APR and the analytics page are served by the indexer, not read
-from chain. Without it the app still trades fine, but those are empty.
-
-It needs Postgres:
+`packages/site/.env`:
 
 ```bash
-docker run -d --name exnihilo-pg -p 5432:5432 \
-  -e POSTGRES_USER=exnihilo -e POSTGRES_PASSWORD=exnihilo \
-  -e POSTGRES_DB=exnihilo_indexer \
-  -v exnihilo-pgdata:/var/lib/postgresql/data \
-  --restart unless-stopped postgres:16-alpine
+VITE_WC_PROJECT_ID=          # WalletConnect project id; injected wallets work without it
+VITE_INDEXER_URL_AVALANCHE=  # e.g. https://indexer.exnihilo.markets
+VITE_RPC_AVALANCHE=          # optional; overrides the public RPC
+VITE_FORMO_WRITE_KEY=        # optional analytics key — origin-locked; leave unset locally
 ```
 
-Copy `packages/indexer/.env.example` to `.env.local` and point it at the local
-chain (the defaults target Avalanche mainnet), using the addresses
-`deployLocal.ts` wrote to
-`packages/site/src/contracts/localAddresses.json`:
+## Indexer
+
+Price charts, LP APR and analytics come from the indexer; trading works without it.
 
 ```bash
-PONDER_CHAIN_ID=31337
-PONDER_START_BLOCK=0
-PONDER_RPC_URL_31337=http://127.0.0.1:8545
-PONDER_FACTORY_ADDRESS=0x98eDDadCfde04dC22a0e62119617e74a6Bc77313
-PONDER_POSITION_NFT_ADDRESS=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
-PONDER_LP_NFT_ADDRESS=0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
-DATABASE_URL=postgresql://exnihilo:exnihilo@127.0.0.1:5432/exnihilo_indexer
+npm run dev:indexer  # from the repo root — http://localhost:42069
 ```
 
-Then:
+Configuration, including following a local node, is on [Indexer](./indexer).
+
+## Docs
 
 ```bash
-npm run dev:indexer
+npm run dev -w packages/docs     # http://localhost:5173
 ```
 
-Serves on `http://localhost:42069`. Point the frontend at it with
-`VITE_INDEXER_URL_LOCAL` in `packages/site/.env`.
-
-One instance indexes one chain — see [Indexer](./indexer) for running mainnet
-and local side by side, and for the storage, RPC-budget and schema-migration
-notes.
-
-## Running the docs
-
-```bash
-npm run dev -w packages/docs
-```
-
-Opens at `http://localhost:5173`.
-
-## Project structure
+## Repository layout
 
 ```
 packages/
-├── blockchain/         # Solidity contracts + Hardhat
-│   ├── contracts/      # EXNIHILOPool, Factory, NFTs, Router, Faucet
-│   ├── test/           # 414 tests
-│   └── scripts/        # Deploy scripts (local, Fuji)
-├── site/               # React 19 frontend
-│   └── src/
-│       ├── pages/      # Landing, Feed, Markets, Pool, Portfolio, Create, Analytics
-│       ├── components/ # Trade panels, wallet, shared
-│       ├── hooks/      # Chain, position, fee-quote, indexer hooks
-│       ├── lib/        # AMM math, formatters, chain registry, indexer client
-│       └── contracts/  # Address config
-├── indexer/            # Ponder event indexer + Hono API
-│   ├── src/            # Event handlers, chain config, HTTP routes
-│   └── deploy/         # VPS provisioning + systemd unit
-├── abis/               # Typed ABI exports (shared by site and indexer)
-└── docs/               # VitePress documentation (this site)
+├── blockchain/   Solidity contracts, Hardhat tests and scripts
+├── site/         React 19 app (wagmi / viem)
+├── indexer/      Ponder indexer and Hono API
+├── sdk/          @exnihilio/sdk — typed client
+├── abis/         @exnihilio/abis — shared ABIs
+├── arbbot/       Arbitrage bot between pools and other venues
+└── docs/         This site
 ```
-
-## Environment variables
-
-**`packages/blockchain/.env`** (copy from `.env.example`):
-
-```
-ACCOUNT_PRIVATE_KEY=    # For testnet deployments
-FUJI_RPC_URL=           # Optional: custom Fuji RPC
-SNOWTRACE_API_KEY=      # Optional: contract verification
-PROTOCOL_TREASURY=      # Optional: defaults to the deployer
-```
-
-**`packages/site/.env`**:
-
-```
-VITE_WC_PROJECT_ID=          # WalletConnect project id
-VITE_INDEXER_URL_LOCAL=      # e.g. http://localhost:42069
-VITE_INDEXER_URL_AVALANCHE=  # Mainnet indexer (prod: https://indexer.exnihilo.markets)
-VITE_RPC_AVALANCHE=          # Optional: overrides the public Avalanche RPC
-VITE_FORMO_WRITE_KEY=        # Formo analytics; unset disables it
-```
-
-A chain with no indexer URL is simply never queried — the UI shows an
-"unavailable" state rather than failing requests.
-
-`VITE_FORMO_WRITE_KEY` is client-side by design — it ships in the bundle, so it
-is not a secret. But Formo **origin-locks** it: a key issued for one domain is
-rejected on another, and the failure is silent because every call site uses
-`analytics?.track(...)`. If events stop arriving after a domain move, check this
-first. Leave it unset locally so development traffic is not recorded.
-
-**`packages/indexer/.env.local`** — see [Indexer](./indexer).
 
 ## After changing contracts
 
-Nothing is upgradeable, so a contract change means a redeploy, and a redeploy
-means new addresses. Update all of these or the app will silently read an
-abandoned deployment:
-
-1. `packages/site/src/contracts/addresses.ts`
-2. `packages/indexer/src/chain.ts` — addresses **and** `START_BLOCK`
-3. `packages/abis/*.ts` if any ABI changed
-4. [Contract Addresses](/protocol/addresses)
+Nothing is upgradeable, so a contract change means a redeploy with new addresses. Follow
+[After a redeploy](/protocol/addresses#after-a-redeploy), and regenerate `packages/abis` if an
+interface changed — otherwise the app silently reads an abandoned deployment.

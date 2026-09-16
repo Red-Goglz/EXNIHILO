@@ -16,6 +16,9 @@ function dayTimestamp(ts: bigint): bigint {
   return (ts / 86400n) * 86400n;
 }
 
+/** Fixed-point base of the funding indices. Mirrors EXNIHILOPool.RAY. */
+const RAY = 10n ** 27n;
+
 // ── Pool state ──────────────────────────────────────────────────────────────
 
 interface PoolState {
@@ -25,6 +28,18 @@ interface PoolState {
   shortPrice: bigint;
   lpLifetime: bigint;
   protocolLifetime: bigint;
+  /**
+   * Funding indices as PROJECTED to the current block, not as last written to
+   * storage. The pool accrues funding lazily — the stored index is stale by
+   * however long the pool has been quiet — so a consumer diffing stored indices
+   * would attribute a quiet week's funding to whichever trade happened to end
+   * it. `indexerState` projects for exactly this reason.
+   */
+  fundingIndexLong: bigint;
+  fundingIndexShort: bigint;
+  /** Per-second funding rate in RAY, including any wind-down multiplier. */
+  fundingRateLong: bigint;
+  fundingRateShort: bigint;
 }
 
 /**
@@ -47,13 +62,20 @@ async function readPoolState(
     shortPrice,
     lpLifetime,
     protocolLifetime,
+    fundingIndexLong,
+    fundingIndexShort,
+    fundingRateLong,
+    fundingRateShort,
   ] = (await context.client.readContract({
     abi: exnihiloPoolAbi,
     address: pool,
     functionName: "indexerState",
-  })) as [bigint, bigint, bigint, bigint, bigint, bigint];
+  })) as [bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint];
 
-  return { backedAirToken, backedAirUsd, longPrice, shortPrice, lpLifetime, protocolLifetime };
+  return {
+    backedAirToken, backedAirUsd, longPrice, shortPrice, lpLifetime, protocolLifetime,
+    fundingIndexLong, fundingIndexShort, fundingRateLong, fundingRateShort,
+  };
 }
 
 // ── Fee accrual ─────────────────────────────────────────────────────────────
@@ -70,11 +92,16 @@ interface FeeDelta {
  * Turns the pool's lifetime fee accrual into the change since the last event
  * indexed for that pool.
  *
- * The split is deliberately NOT derived from the 3%/2% bps constants: the pool
- * routes the whole impact fee to LPs (`_openFees` / `_renewFees`) and takes a
- * separate close fee on surplus for the protocol, so the ratio moves with
- * crowding and depth. Reading the accumulators is exact for every fee path,
- * including ones added later.
+ * The split is deliberately NOT derived from the 4%/1% bps constants: the pool
+ * routes the whole impact fee to LPs (`_openFees`) and takes a separate close
+ * fee on surplus for the protocol, so the ratio moves with crowding and depth.
+ * Reading the accumulators is exact for every fee path, including ones added
+ * later.
+ *
+ * Funding is NOT in here and must not be looked for here. It never becomes a
+ * claimable fee — the released collateral moves straight into the backed
+ * reserves — so it touches neither accumulator. The FundingAccrued handler is
+ * the only record of it.
  *
  * `accumulated + paidTotal` is monotonic — collecting fees zeroes the former
  * and adds the same amount to the latter — so the delta is never negative.
@@ -110,7 +137,11 @@ async function snapshotPrices(
   eventType: string,
   state: PoolState,
 ) {
-  const { backedAirToken, backedAirUsd, longPrice: longPriceVal, shortPrice: shortPriceVal } = state;
+  const {
+    backedAirToken, backedAirUsd,
+    longPrice: longPriceVal, shortPrice: shortPriceVal,
+    fundingIndexLong, fundingIndexShort,
+  } = state;
 
   const spotPrice = backedAirToken > 0n
     ? (backedAirUsd * 10n ** 18n) / backedAirToken
@@ -126,6 +157,8 @@ async function snapshotPrices(
     spotPrice,
     longPrice: longPriceVal,
     shortPrice: shortPriceVal,
+    fundingIndexLong,
+    fundingIndexShort,
     eventType,
   });
 }
@@ -144,6 +177,7 @@ async function updatePoolMetrics(
     closeCount?: number;
     totalPayout?: bigint;
   } = {},
+  state?: PoolState,
 ) {
   await context.db
     .insert(poolMetrics)
@@ -158,6 +192,17 @@ async function updatePoolMetrics(
       shortCount: updates.shortCount ?? 0,
       closeCount: updates.closeCount ?? 0,
       totalPayout: updates.totalPayout ?? 0n,
+      // Index columns are absolute too — the pool's current value, not a sum.
+      // The released totals below ARE sums, and are written only by the
+      // FundingAccrued handler, which is the only place that knows the delta.
+      fundingIndexLong: state?.fundingIndexLong ?? RAY,
+      fundingIndexShort: state?.fundingIndexShort ?? RAY,
+      fundingReleasedLong: 0n,
+      fundingReleasedShort: 0n,
+      fundingDebtCancelledLong: 0n,
+      fundingDebtCancelledShort: 0n,
+      fundingRateLong: state?.fundingRateLong ?? 0n,
+      fundingRateShort: state?.fundingRateShort ?? 0n,
       lastUpdated: timestamp,
     })
     .onConflictDoUpdate((row: any) => ({
@@ -169,6 +214,10 @@ async function updatePoolMetrics(
       shortCount: row.shortCount + (updates.shortCount ?? 0),
       closeCount: row.closeCount + (updates.closeCount ?? 0),
       totalPayout: row.totalPayout + (updates.totalPayout ?? 0n),
+      fundingIndexLong: state?.fundingIndexLong ?? row.fundingIndexLong,
+      fundingIndexShort: state?.fundingIndexShort ?? row.fundingIndexShort,
+      fundingRateLong: state?.fundingRateLong ?? row.fundingRateLong,
+      fundingRateShort: state?.fundingRateShort ?? row.fundingRateShort,
       lastUpdated: timestamp,
     }));
 }
@@ -379,13 +428,13 @@ ponder.on("EXNIHILOPool:PositionOpened", async ({ event, context }) => {
       pool,
       holder,
       isLong,
-      lockedAmount: posData.lockedAmount,
+      lockedAmountAtOpen: posData.lockedAmountAtOpen,
       usdcIn: posData.usdcIn,
       airUsdMinted: posData.airUsdMinted,
       airTokenMinted: posData.airTokenMinted,
       feesPaid: posData.feesPaid,
       openedAt: posData.openedAt,
-      deadline: posData.deadline,
+      fundingIndexAtOpen: posData.fundingIndexAtOpen,
       status: "open",
       payout: 0n,
       closedAt: 0n,
@@ -399,7 +448,7 @@ ponder.on("EXNIHILOPool:PositionOpened", async ({ event, context }) => {
     positionVolume: volume,
     longCount: isLong ? 1 : 0,
     shortCount: isLong ? 0 : 1,
-  });
+  }, state);
 
   await updateProtocolMetrics(context, ts, {
     positionVolume: volume,
@@ -424,46 +473,60 @@ ponder.on("EXNIHILOPool:PositionOpened", async ({ event, context }) => {
   });
 });
 
-// ── Pool: position renewed (holder or keeper via auto-renew) ───────────────
+// ── Pool: funding accrued ───────────────────────────────────────────────────
+//
+// Replaces PositionRenewed. Renewals were discrete, per-position, and paid a
+// fee; funding is continuous, charged to a whole side at once, and pays no fee
+// at all — the released collateral moves straight into the backed reserves and
+// the debt it was locked against is burned.
+//
+// That is why this handler touches neither the fee columns nor trackUser: there
+// is no payer and no fee. What it does record is the only thing that
+// distinguishes reserve growth caused by funding from reserve growth caused by
+// trading, which LP yield attribution depends on.
+//
+// It fires on essentially every pool mutation, so it deliberately does NOT
+// write a price snapshot: the event that caused the mutation writes one
+// already, and a standalone pokeFunding moves the price by a trickle.
 
-ponder.on("EXNIHILOPool:PositionRenewed", async ({ event, context }) => {
+ponder.on("EXNIHILOPool:FundingAccrued", async ({ event, context }) => {
   const pool = event.log.address;
   const ts = BigInt(event.block.timestamp);
-  const { nftId, caller, feePaid, newDeadline, autoRenewed } = event.args;
+  const { isLong, released, debtCancelled, newIndex } = event.args;
 
-  const existing = await context.db.find(position, { nftId });
-
-  // A manual renew is paid by msg.sender (`_transferIn(..., msg.sender, ...)`),
-  // but an auto-renew is funded from the position's own equity — the caller is
-  // unpaid. Charging the caller would misattribute the fee.
-  const payer = (autoRenewed ? existing?.holder : caller) ?? caller;
-
-  const state = await readPoolState(context, pool);
-  const fees = await syncFees(context, pool, state);
-
-  if (existing) {
-    await context.db.update(position, { nftId }).set((row: any) => ({
-      deadline: newDeadline,
-      feesPaid: row.feesPaid + feePaid,
+  await context.db
+    .insert(poolMetrics)
+    .values({
+      address: pool,
+      positionVolume: 0n,
+      totalFees: 0n,
+      lpFees: 0n,
+      protocolFees: 0n,
+      longCount: 0,
+      shortCount: 0,
+      closeCount: 0,
+      totalPayout: 0n,
+      fundingIndexLong: isLong ? newIndex : RAY,
+      fundingIndexShort: isLong ? RAY : newIndex,
+      fundingReleasedLong: isLong ? released : 0n,
+      fundingReleasedShort: isLong ? 0n : released,
+      fundingDebtCancelledLong: isLong ? debtCancelled : 0n,
+      fundingDebtCancelledShort: isLong ? 0n : debtCancelled,
+      fundingRateLong: 0n,
+      fundingRateShort: 0n,
+      lastUpdated: ts,
+    })
+    .onConflictDoUpdate((row: any) => ({
+      fundingIndexLong: isLong ? newIndex : row.fundingIndexLong,
+      fundingIndexShort: isLong ? row.fundingIndexShort : newIndex,
+      // Separate columns because they are in different units — airToken on the
+      // long side, airUsd on the short. Summing them is always a bug.
+      fundingReleasedLong: row.fundingReleasedLong + (isLong ? released : 0n),
+      fundingReleasedShort: row.fundingReleasedShort + (isLong ? 0n : released),
+      fundingDebtCancelledLong: row.fundingDebtCancelledLong + (isLong ? debtCancelled : 0n),
+      fundingDebtCancelledShort: row.fundingDebtCancelledShort + (isLong ? 0n : debtCancelled),
+      lastUpdated: ts,
     }));
-  }
-
-  await snapshotPrices(context, pool, event, "positionRenewed", state);
-
-  await updatePoolMetrics(context, pool, ts, fees);
-
-  await updateProtocolMetrics(context, ts, {
-    fees: fees.totalDelta,
-    lpFees: fees.lpDelta,
-    protocolFees: fees.protocolDelta,
-  });
-
-  await trackUser(context, payer, ts, { feesPaid: feePaid });
-
-  await updateDaily(context, pool, ts, payer, {
-    fees: fees.totalDelta,
-    lpFees: fees.lpDelta,
-  });
 });
 
 // ── Pool: position closed (by holder) ───────────────────────────────────────
@@ -489,7 +552,7 @@ ponder.on("EXNIHILOPool:PositionClosed", async ({ event, context }) => {
   await updatePoolMetrics(context, pool, ts, fees, {
     closeCount: 1,
     totalPayout: payout,
-  });
+  }, state);
 
   await updateProtocolMetrics(context, ts, {
     closes: 1,
@@ -508,20 +571,20 @@ ponder.on("EXNIHILOPool:PositionClosed", async ({ event, context }) => {
   });
 });
 
-// ── Pool: position closed after deadline (by anyone) ────────────────────────
+// ── Pool: dust position swept (by anyone) ───────────────────────────────────
 
-ponder.on("EXNIHILOPool:PositionClosedAfterDeadline", async ({ event, context }) => {
+ponder.on("EXNIHILOPool:PositionSwept", async ({ event, context }) => {
   const pool = event.log.address;
   const ts = BigInt(event.block.timestamp);
   const { nftId, caller, payout } = event.args;
 
   const existing = await context.db.find(position, { nftId });
 
-  // `caller` is whoever triggered expiry — usually a keeper bot. The payout is
-  // credited to the position holder (`_creditPayout(holder, ...)`), so the
-  // economics belong to the holder, not the caller. Keepers are intentionally
-  // not tracked as users here: they would otherwise inflate the user counts
-  // and absorb other people's payouts.
+  // `caller` is whoever cleared the husk — in practice the LP, whose own curve
+  // a dead position degrades. Any residual payout is credited to the holder
+  // (`_creditPayout(holder, ...)`), so the economics belong to them, not the
+  // caller. Sweepers are intentionally not tracked as users here: they would
+  // otherwise inflate the user counts and absorb other people's payouts.
   const beneficiary = existing?.holder ?? caller;
 
   const state = await readPoolState(context, pool);
@@ -529,18 +592,18 @@ ponder.on("EXNIHILOPool:PositionClosedAfterDeadline", async ({ event, context })
 
   if (existing) {
     await context.db.update(position, { nftId }).set({
-      status: "expired",
+      status: "swept",
       payout,
       closedAt: ts,
     });
   }
 
-  await snapshotPrices(context, pool, event, "positionExpired", state);
+  await snapshotPrices(context, pool, event, "positionSwept", state);
 
   await updatePoolMetrics(context, pool, ts, fees, {
     closeCount: 1,
     totalPayout: payout,
-  });
+  }, state);
 
   await updateProtocolMetrics(context, ts, {
     closes: 1,
@@ -569,7 +632,7 @@ ponder.on("EXNIHILOPool:PoolClosed", async ({ event, context }) => {
   const fees = await syncFees(context, pool, state);
 
   await snapshotPrices(context, pool, event, "poolClosed", state);
-  await updatePoolMetrics(context, pool, ts, fees);
+  await updatePoolMetrics(context, pool, ts, fees, {}, state);
   await updateProtocolMetrics(context, ts, {
     fees: fees.totalDelta,
     lpFees: fees.lpDelta,

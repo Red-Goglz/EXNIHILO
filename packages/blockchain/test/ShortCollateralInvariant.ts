@@ -3,12 +3,12 @@ import { ethers } from "hardhat";
 import { loadFixture, time, mine } from "@nomicfoundation/hardhat-network-helpers";
 import { EXNIHILOPool, PositionNFT, MockERC20 } from "../typechain-types";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
+import { windDownAndSweep } from "./helpers/winddown";
 
-// Mine past the expiry settlement guard window (EXNIHILOPool
-// SETTLE_GUARD_BLOCKS): these price moves are far above the 1 %-of-reserves
-// arming threshold, and the tests then jump days of wall time — hundreds of
-// thousands of Avalanche blocks — before a third party settles.
-const SETTLE_GUARD_BLOCKS = 5;
+// Mine past the close-price clamp window (EXNIHILOPool CLAMP_BLOCKS): a close
+// is priced against the worst block-open inside it, so a test that moves the
+// price and then closes waits it out first to price against the moved curve.
+const CLAMP_BLOCKS = 5;
 
 /**
  * Coverage for `totalShortCollateral` and the reserve invariant that now
@@ -41,6 +41,7 @@ async function slack(pool: EXNIHILOPool, usdc: MockERC20, poolAddress: string): 
 }
 
 async function sumOpenShortCollateral(
+  pool: EXNIHILOPool,
   positionNFT: PositionNFT,
   nftIds: bigint[],
 ): Promise<bigint> {
@@ -48,7 +49,9 @@ async function sumOpenShortCollateral(
   for (const id of nftIds) {
     try {
       const pos = await positionNFT.getPosition(id);
-      if (!pos.isLong) sum += pos.lockedAmount;
+      // effectiveLockedOf, not lockedAmountAtOpen: funding decays every open
+      // position continuously, and the registry stores only the opening figure.
+      if (!pos.isLong) sum += await pool.effectiveLockedOf(id);
     } catch {
       // released (burned) on settle — contributes nothing
     }
@@ -177,32 +180,37 @@ describe("Short collateral invariant", function () {
       ids.push(await openShortFor(pool, usdc, poolAddress, t, n));
       // Assert after every open, not just at the end — catches an increment
       // that is merely proportional rather than exact.
-      expect(await pool.totalShortCollateral()).to.equal(
-        await sumOpenShortCollateral(positionNFT, ids),
-      );
+      // At or above, never below. _projectFunding rounds the aggregate\'s
+      // retained collateral up and effectiveLocked rounds each position\'s down,
+      // so the aggregate carries a few wei of slack that _flushResidue
+      // returns to the LP once the book is empty. The reverse bias would let the
+      // last settle out of the pool underflow this counter.
+      const summed = await sumOpenShortCollateral(pool, positionNFT, ids);
+      expect(await pool.totalShortCollateral()).to.be.gte(summed);
+      expect(await pool.totalShortCollateral()).to.be.closeTo(summed, BigInt(ids.length) + 4n);
     }
   });
 
-  it("returns to zero once every short is settled", async function () {
-    const { pool, poolAddress, usdc, trader1, trader2 } = await loadFixture(fixture);
+  it("returns to zero once every short is retired", async function () {
+    const { pool, poolAddress, usdc, creator, trader1, trader2 } = await loadFixture(fixture);
 
     const a = await openShortFor(pool, usdc, poolAddress, trader1, 400n * 10n ** 6n);
     const b = await openShortFor(pool, usdc, poolAddress, trader2, 900n * 10n ** 6n);
     expect(await pool.totalShortCollateral()).to.be.gt(0n);
 
-    // Expire and settle both via the keeper path, which exercises the
-    // underwater and profitable branches of _settle without needing to
-    // engineer a specific price.
-    await time.increase(7 * 24 * 60 * 60 + 1);
-    await (await pool.connect(trader1).settleExpired(a, 0n)).wait();
-    await (await pool.connect(trader2).settleExpired(b, 0n)).wait();
+    // No expiry to settle at any more. A short that is never closed decays into
+    // the LP's reserves until the wind-down takes it below the sweep threshold.
+    await windDownAndSweep(pool, creator, [a, b]);
 
     expect(await pool.openPositionCount()).to.equal(0n);
+    // Exactly zero, not merely small: _flushResidue returns the
+    // rounding slack to the LP once the last position leaves, so a stranded
+    // remainder can never block removeLiquidity.
     expect(await pool.totalShortCollateral()).to.equal(0n);
   });
 
   it("keeps the reserve invariant EXACT (zero slack) across the lifecycle", async function () {
-    const { pool, poolAddress, usdc, trader1, trader2 } = await loadFixture(fixture);
+    const { pool, poolAddress, usdc, creator, trader1, trader2 } = await loadFixture(fixture);
 
     // A loose lower-bound invariant would show growing positive slack here.
     expect(await slack(pool, usdc, poolAddress), "fresh pool").to.equal(0n);
@@ -213,71 +221,92 @@ describe("Short collateral invariant", function () {
     const b = await openShortFor(pool, usdc, poolAddress, trader2, 1_500n * 10n ** 6n);
     expect(await slack(pool, usdc, poolAddress), "after second short").to.equal(0n);
 
-    await time.increase(7 * 24 * 60 * 60 + 1);
-    await (await pool.connect(trader1).settleExpired(a, 0n)).wait();
-    expect(await slack(pool, usdc, poolAddress), "after first settle").to.equal(0n);
+    // Funding moves airUsd out of totalShortCollateral and into backedAirUsd.
+    // Both are terms of the same liability sum, so the slack must not move at
+    // all — if funding ever created or destroyed USDC rather than relabelling
+    // it, this is where it would show.
+    await time.increase(10 * 24 * 60 * 60);
+    await (await pool.pokeFunding()).wait();
+    expect(await slack(pool, usdc, poolAddress), "after funding").to.equal(0n);
 
-    await (await pool.connect(trader2).settleExpired(b, 0n)).wait();
-    expect(await slack(pool, usdc, poolAddress), "after second settle").to.equal(0n);
+    await windDownAndSweep(pool, creator, [a, b]);
+    expect(await slack(pool, usdc, poolAddress), "after wind-down").to.equal(0n);
   });
 
-  it("tracks the reduction when auto-renew charges a short's collateral", async function () {
-    const { pool, poolAddress, positionNFT, usdc, baseToken, trader1, trader2 } =
-      await loadFixture(fixture);
+  it("tracks the reduction when funding charges a short's collateral", async function () {
+    // The direct successor to what used to be the auto-renew path: a fee
+    // charged against a short's own locked collateral. It is now continuous
+    // rather than triggered at expiry, but the accounting requirement is
+    // identical — the accumulator must fall by exactly what the positions lost.
+    const { pool, poolAddress, positionNFT, usdc, trader1 } = await loadFixture(fixture);
 
     const nftId = await openShortFor(pool, usdc, poolAddress, trader1, 800n * 10n ** 6n);
-    await (await positionNFT.connect(trader1).setAutoRenew(nftId, true, 500n * 10n ** 6n)).wait();
-
-    // Auto-renew only fires when the position can pay: _autoRenewQuote demands
-    // surplus >= totalFee + a 2%-of-mark margin. A short profits when the token
-    // gets cheaper to buy back, so push token INTO the pool to raise backedAirToken.
-    const dump = 40_000n * 10n ** 18n;
-    await (await baseToken.connect(trader2).approve(poolAddress, dump)).wait();
-    await (await pool.connect(trader2).swap(dump, 0n, true, trader2.address)).wait();
-    await mine(SETTLE_GUARD_BLOCKS);
-
-    const [renewable] = await pool.quoteClose(nftId).then(
-      (r) => [r.ready] as const,
-      () => [false] as const,
-    );
-    expect(renewable, "setup failed: short is not priceable after the dump").to.equal(true);
 
     const before = await pool.totalShortCollateral();
-    const lockedBefore = (await positionNFT.getPosition(nftId)).lockedAmount;
+    const lockedBefore = await pool.effectiveLockedOf(nftId);
 
-    await time.increase(7 * 24 * 60 * 60 + 1);
-    await (await pool.connect(trader2).settleExpired(nftId, 0n)).wait();
+    await time.increase(10 * 24 * 60 * 60);
+    await (await pool.pokeFunding()).wait();
 
-    // The position must still exist — i.e. auto-renew fired rather than settling.
-    // Asserted unconditionally so a silent fallthrough to settlement fails the
-    // test instead of passing it (an earlier if/else version masked exactly
-    // that, and let a broken accumulator through mutation testing).
-    expect(await pool.openPositionCount(), "auto-renew did not fire").to.equal(1n);
+    const lockedAfter = await pool.effectiveLockedOf(nftId);
+    expect(lockedAfter, "collateral should shrink").to.be.lt(lockedBefore);
 
-    const lockedAfter = (await positionNFT.getPosition(nftId)).lockedAmount;
-    expect(lockedAfter, "collateral should shrink by the fee").to.be.lt(lockedBefore);
+    // The position is still open — funding shrinks it, it does not settle it.
+    expect(await pool.openPositionCount()).to.equal(1n);
 
-    // The accumulator must fall by exactly what the position lost.
-    expect(before - (await pool.totalShortCollateral())).to.equal(lockedBefore - lockedAfter);
+    const accumulatorDrop = before - (await pool.totalShortCollateral());
+    const positionDrop = lockedBefore - lockedAfter;
+    expect(accumulatorDrop).to.be.lte(positionDrop);
+    expect(accumulatorDrop).to.be.closeTo(positionDrop, 4n);
   });
 
-  it("keeps the invariant exact through an auto-renew", async function () {
-    const { pool, poolAddress, positionNFT, usdc, baseToken, trader1, trader2 } =
-      await loadFixture(fixture);
+  it("keeps the invariant exact through a funding accrual on both sides", async function () {
+    const { pool, poolAddress, usdc, baseToken, trader1, trader2 } = await loadFixture(fixture);
 
-    const nftId = await openShortFor(pool, usdc, poolAddress, trader1, 800n * 10n ** 6n);
-    await (await positionNFT.connect(trader1).setAutoRenew(nftId, true, 500n * 10n ** 6n)).wait();
+    await openShortFor(pool, usdc, poolAddress, trader1, 800n * 10n ** 6n);
 
     const dump = 40_000n * 10n ** 18n;
     await (await baseToken.connect(trader2).approve(poolAddress, dump)).wait();
     await (await pool.connect(trader2).swap(dump, 0n, true, trader2.address)).wait();
-    await mine(SETTLE_GUARD_BLOCKS);
+    await mine(CLAMP_BLOCKS);
     expect(await slack(pool, usdc, poolAddress), "after dump").to.equal(0n);
 
-    await time.increase(7 * 24 * 60 * 60 + 1);
-    await (await pool.connect(trader2).settleExpired(nftId, 0n)).wait();
+    for (let i = 0; i < 5; i++) {
+      await time.increase(3 * 24 * 60 * 60);
+      await (await pool.pokeFunding()).wait();
+      expect(await slack(pool, usdc, poolAddress), `after accrual ${i}`).to.equal(0n);
+    }
+  });
 
-    expect(await pool.openPositionCount(), "auto-renew did not fire").to.equal(1n);
-    expect(await slack(pool, usdc, poolAddress), "after auto-renew").to.equal(0n);
+  it("keeps the invariant exact when the clamp prices a short close against an older block", async function () {
+    // The clamp can value a close against a block that opened a moment earlier,
+    // when funding had taken slightly less of the collateral. That valuation's
+    // buyback cost and surplus add up to the collateral as it stood THEN, so
+    // settlement must not credit both against the collateral as it stands NOW
+    // — it would pay out more USDC than the position still holds.
+    const { pool, poolAddress, usdc, baseToken, trader1, trader2 } = await loadFixture(fixture);
+    const id = await openShortFor(pool, usdc, poolAddress, trader1, 2_000n * 10n ** 6n);
+
+    // Put the short in profit and let that price age into every clamp entry.
+    const dump = 20_000n * 10n ** 18n;
+    await (await baseToken.connect(trader2).approve(poolAddress, dump * 2n)).wait();
+    await (await pool.connect(trader2).swap(dump, 0n, true, trader2.address)).wait();
+    await mine(CLAMP_BLOCKS);
+    await time.increase(3600);
+
+    // A second dump makes the live valuation better than this block's open, so
+    // the close in the next block is clamped to that open — whose collateral
+    // figure predates the next block's accrual.
+    await (await pool.connect(trader2).swap(dump, 0n, true, trader2.address)).wait();
+    const [ready, pnl] = await pool.quoteClose(id);
+    expect(ready).to.equal(true);
+    expect(pnl).to.be.gt(0n);
+
+    // Guarantee funding moves between the clamped block and the close. Blocks
+    // mined within the same wall-clock second can share a timestamp, and then
+    // there is no accrual between them for the mismatch to come from.
+    await time.setNextBlockTimestamp((await time.latest()) + 30);
+    await (await pool.connect(trader1).closeShort(id, 0n, trader1.address)).wait();
+    expect(await slack(pool, usdc, poolAddress)).to.equal(0n);
   });
 });

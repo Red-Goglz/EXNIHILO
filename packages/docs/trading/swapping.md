@@ -1,41 +1,25 @@
 ---
-description: "EXNIHILO pools double as ordinary AMM swap venues using the SWAP-1 curve. How swaps are priced and how the default 1% fee accrues to the LP."
+description: "EXNIHILO pools double as ordinary AMM swap venues on the SWAP-1 curve. How swaps are priced and how the fixed 1% fee accrues to the LP."
 ---
 
 # Swapping Tokens
 
-EXNIHILO pools also function as standard AMM swap venues.
-
-## How swaps work
-
-Swaps use **SWAP-1**, the simplest of the three curves:
+Every pool is also an ordinary token/USDC AMM. Swaps use **SWAP-1**, the backed reserves:
 
 ```
-x = backedAirToken
-y = backedAirUsd
-amountOut = amountIn * y / (x + amountIn)  (minus fee)
+rawOut = amountIn × reserveOut / (reserveIn + amountIn)
+fee    = amountIn × reserveOut / reserveIn × 1%          (rounded up)
+out    = rawOut − fee
 ```
 
-You can swap in either direction:
-- **Token → USDC**: Deposit tokens, receive USDC
-- **USDC → Token**: Deposit USDC, receive tokens
+- **Either direction** — `swap(amountIn, minAmountOut, tokenToUsdc, recipient)` on the pool, or
+  through the router.
+- **Fee** — a fixed 1%, identical on every market, measured on the spot value of the input and
+  kept in the pool's reserves as LP yield. Because it is measured against `reserveIn` rather than
+  `reserveIn + amountIn`, it grows with trade size: large price-moving swaps pay more, and a swap
+  so large the fee exceeds the output reverts.
+- **Slippage** — `minAmountOut` reverts the swap if the output falls short.
 
-## Swap fee
-
-A fixed 1% swap fee is applied to every swap. The fee stays in the pool as passive yield for the LP.
-
-The fee is computed on the *spot value* of the input:
-
-```
-fee = amountIn * reserveOut / reserveIn * feeBps / 10000
-```
-
-This ensures the fee is a true percentage of notional value, regardless of trade size.
-
-## Slippage protection
-
-Every swap accepts a `minAmountOut` parameter. If the output would be less than this value, the transaction reverts.
-
-## Internal accounting
-
-Under the hood, swaps update the pool's internal airToken / airUsd supply counters. You interact with the real tokens directly — no wrapper tokens exist.
+You trade the real token and USDC; airToken and airUsd are internal counters, not tokens. Swaps
+are also what keeps a pool's price in line with other venues — see
+[Pricing & Reserves](/markets/pricing).

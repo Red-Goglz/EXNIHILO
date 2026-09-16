@@ -33,7 +33,7 @@ import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 
 const INITIAL_USDC = ethers.parseUnits("10000", 6);
 const INITIAL_TOKEN = ethers.parseEther("1000000");
-const SETTLE_GUARD_BLOCKS = 5;
+const CLAMP_BLOCKS = 5;
 const SWAP_FEE_BPS = 100n;
 const BPS_DENOM    = 10_000n;
 
@@ -371,7 +371,7 @@ describe("Coverage — closeLong edge branches", function () {
     const shortNftId = await openShort(pool, trader1, ethers.parseUnits("100", 6));
 
     await expect(
-      pool.connect(trader1).closeLong(shortNftId, 0n)
+      pool.connect(trader1).closeLong(shortNftId, 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool, "PositionNotLong");
   });
 
@@ -407,7 +407,7 @@ describe("Coverage — closeLong edge branches", function () {
 
     // Try to close the NFT (which belongs to pool-0) via pool-2.
     await expect(
-      pool2.connect(trader1).closeLong(nftId, 0n)
+      pool2.connect(trader1).closeLong(nftId, 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool2, "PositionNotFromThisPool");
   });
 });
@@ -423,7 +423,7 @@ describe("Coverage — closeLong edge branches", function () {
     const shortNftId = await openShort(pool, trader1, ethers.parseUnits("100", 6));
 
     await expect(
-      pool.connect(trader1).closeLong(shortNftId, 0n)
+      pool.connect(trader1).closeLong(shortNftId, 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool, "PositionNotLong");
   });
 
@@ -453,7 +453,7 @@ describe("Coverage — closeLong edge branches", function () {
     const pool2 = await ethers.getContractAt("EXNIHILOPool", log2.args.pool as string) as EXNIHILOPool;
 
     await expect(
-      pool2.connect(trader1).closeLong(nftId, 0n)
+      pool2.connect(trader1).closeLong(nftId, 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool2, "PositionNotFromThisPool");
   });
 });
@@ -469,7 +469,7 @@ describe("Coverage — closeShort edge branches", function () {
     const longNftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
 
     await expect(
-      pool.connect(trader1).closeShort(longNftId, 0n)
+      pool.connect(trader1).closeShort(longNftId, 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool, "PositionNotShort");
   });
 
@@ -499,7 +499,7 @@ describe("Coverage — closeShort edge branches", function () {
     const pool2 = await ethers.getContractAt("EXNIHILOPool", log2.args.pool as string) as EXNIHILOPool;
 
     await expect(
-      pool2.connect(trader1).closeShort(shortNftId, 0n)
+      pool2.connect(trader1).closeShort(shortNftId, 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool2, "PositionNotFromThisPool");
   });
 
@@ -574,8 +574,8 @@ describe("Coverage — closeShort edge branches", function () {
     const dumpAmt = initToken6 * 50n; // 50x initial token supply — massive dump
     await pool.connect(trader2).swap(dumpAmt, 0n, true, trader2.address);
     // Age the move out of the settlement clamp window: settlement prices
-    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
-    await mine(SETTLE_GUARD_BLOCKS);
+    // against the worst open in the last CLAMP_BLOCKS blocks (H-2).
+    await mine(CLAMP_BLOCKS);
 
     // Verify the short is now profitable before calling closeShort.
     const backedToken   = await pool.backedAirToken();
@@ -584,12 +584,12 @@ describe("Coverage — closeShort edge branches", function () {
 
     // Verify profitable: cpOut(lockedAmount, airUsdSupply, backedToken) >= airTokenMinted.
     const airTokenMinted = pos.airTokenMinted;
-    const rawOut = (pos.lockedAmount * backedToken) / (airUsdSupply + pos.lockedAmount);
-    const fee    = (pos.lockedAmount * backedToken * SWAP_FEE_BPS) / (airUsdSupply * BPS_DENOM);
+    const rawOut = (pos.lockedAmountAtOpen * backedToken) / (airUsdSupply + pos.lockedAmountAtOpen);
+    const fee    = (pos.lockedAmountAtOpen * backedToken * SWAP_FEE_BPS) / (airUsdSupply * BPS_DENOM);
     const totalBuyable = rawOut > fee ? rawOut - fee : 0n;
     if (totalBuyable >= airTokenMinted) {
       const usdcBefore = await usdc.balanceOf(trader1.address);
-      await pool.connect(trader1).closeShort(shortNftId, 0n);
+      await pool.connect(trader1).closeShort(shortNftId, 0n, trader1.address);
       const usdcAfter  = await usdc.balanceOf(trader1.address);
 
       expect(usdcAfter).to.be.gt(usdcBefore, "holder should receive USDC surplus");
@@ -653,8 +653,8 @@ describe("Coverage — closeShort edge branches", function () {
     // Dump hard to collapse price.
     await pool.connect(trader2).swap(initToken6 * 50n, 0n, true, trader2.address);
     // Age the move out of the settlement clamp window: settlement prices
-    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
-    await mine(SETTLE_GUARD_BLOCKS);
+    // against the worst open in the last CLAMP_BLOCKS blocks (H-2).
+    await mine(CLAMP_BLOCKS);
 
     const backedToken   = await pool.backedAirToken();
     const airUsdSupply = await pool.airUsdSupply();
@@ -663,8 +663,8 @@ describe("Coverage — closeShort edge branches", function () {
     if (airTokenMinted < backedToken) {
       const rawCost = (airTokenMinted * airUsdSupply) / (backedToken - airTokenMinted);
       const cost    = (rawCost * BPS_DENOM) / (BPS_DENOM - SWAP_FEE_BPS);
-      if (cost < pos.lockedAmount) {
-        await expect(pool.connect(trader1).closeShort(shortNftId, 0n))
+      if (cost < pos.lockedAmountAtOpen) {
+        await expect(pool.connect(trader1).closeShort(shortNftId, 0n, trader1.address))
           .to.emit(pool, "PositionClosed");
         return;
       }
@@ -726,8 +726,8 @@ describe("Coverage — closeShort edge branches", function () {
 
     await pool.connect(trader2).swap(initToken6 * 50n, 0n, true, trader2.address);
     // Age the move out of the settlement clamp window: settlement prices
-    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
-    await mine(SETTLE_GUARD_BLOCKS);
+    // against the worst open in the last CLAMP_BLOCKS blocks (H-2).
+    await mine(CLAMP_BLOCKS);
 
     const backedToken   = await pool.backedAirToken();
     const airUsdSupply = await pool.airUsdSupply();
@@ -736,10 +736,10 @@ describe("Coverage — closeShort edge branches", function () {
     if (airTokenMinted < backedToken) {
       const rawCost = (airTokenMinted * airUsdSupply) / (backedToken - airTokenMinted);
       const cost    = (rawCost * BPS_DENOM) / (BPS_DENOM - SWAP_FEE_BPS);
-      if (cost < pos.lockedAmount) {
+      if (cost < pos.lockedAmountAtOpen) {
         // Position is profitable; now set minUsdcOut impossibly high.
         await expect(
-          pool.connect(trader1).closeShort(shortNftId, ethers.MaxUint256)
+          pool.connect(trader1).closeShort(shortNftId, ethers.MaxUint256, trader1.address)
         ).to.be.revertedWithCustomError(pool, "InsufficientOutput");
         return;
       }
@@ -1069,7 +1069,7 @@ describe("Coverage — closeShort PositionUnderwater when debt exceeds totalBuya
     // lockedAmount is tiny (6-dec) while airTokenMinted = backedAirToken (18-dec),
     // so totalBuyable << airTokenMinted → PositionUnderwater.
     await expect(
-      pool.connect(trader1).closeShort(shortNftId, 0n)
+      pool.connect(trader1).closeShort(shortNftId, 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool, "PositionUnderwater");
   });
 });
@@ -1282,22 +1282,22 @@ describe("Coverage — closeLong slippage guard", function () {
     await usdc.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
     await pool.connect(trader2).swap(pumpUsdc, 0n, false, trader2.address);
     // Age the move out of the settlement clamp window: settlement prices
-    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
-    await mine(SETTLE_GUARD_BLOCKS);
+    // against the worst open in the last CLAMP_BLOCKS blocks (H-2).
+    await mine(CLAMP_BLOCKS);
 
     // Verify position is profitable first.
     const pos = await (await ethers.getContractAt("PositionNFT", await pool.positionNFT())).getPosition(nftId);
     const airTokenSupply = await pool.airTokenSupply();
     const backedAirUsd  = await pool.backedAirUsd();
     // airUsdOut via SWAP-3: cpOut(lockedAmount, airTokenSupply-lockedAmount, backedAirUsd)
-    const amtInAfterFee = pos.lockedAmount * (BPS_DENOM - SWAP_FEE_BPS);
-    const reserveIn     = airTokenSupply - pos.lockedAmount;
+    const amtInAfterFee = pos.lockedAmountAtOpen * (BPS_DENOM - SWAP_FEE_BPS);
+    const reserveIn     = airTokenSupply - pos.lockedAmountAtOpen;
     const airUsdOut     = (amtInAfterFee * backedAirUsd) / (reserveIn * BPS_DENOM + amtInAfterFee);
     expect(airUsdOut).to.be.gt(pos.airUsdMinted, "long should be profitable after pump");
 
     // Now set minUsdcOut impossibly high.
     await expect(
-      pool.connect(trader1).closeLong(nftId, ethers.MaxUint256)
+      pool.connect(trader1).closeLong(nftId, ethers.MaxUint256, trader1.address)
     ).to.be.revertedWithCustomError(pool, "InsufficientOutput");
   });
 });
@@ -1388,20 +1388,20 @@ describe("Coverage — _cpAmountOut reserveIn = 0 when all airToken is locked", 
     const posNFTContract = await ethers.getContractAt("PositionNFT", await pool.positionNFT());
     const pos = await posNFTContract.getPosition(nftId);
 
-    // Force pool.airTokenSupply() = pos.lockedAmount (slot 0 = airTokenSupply).
-    const lockedHex = "0x" + pos.lockedAmount.toString(16).padStart(64, "0");
+    // Force pool.airTokenSupply() = pos.lockedAmountAtOpen (slot 0 = airTokenSupply).
+    const lockedHex = "0x" + pos.lockedAmountAtOpen.toString(16).padStart(64, "0");
     await ethers.provider.send("hardhat_setStorageAt", [
       poolAddr,
       "0x0", // slot 0 = airTokenSupply
       lockedHex,
     ]);
 
-    expect(await pool.airTokenSupply()).to.equal(pos.lockedAmount);
+    expect(await pool.airTokenSupply()).to.equal(pos.lockedAmountAtOpen);
 
     // Now closeLong: reserveIn = airTokenSupply - lockedAmount = 0 → _cpAmountOut returns 0
     // → airUsdOut = 0 < airUsdMinted → PositionUnderwater.
     await expect(
-      pool.connect(trader1).closeLong(nftId, 0n)
+      pool.connect(trader1).closeLong(nftId, 0n, trader1.address)
     ).to.be.revertedWithCustomError(pool, "PositionUnderwater");
   });
 });
@@ -1635,26 +1635,6 @@ describe("Coverage — ReentrancyGuard nonReentrant revert paths", function () {
     ).to.be.revertedWithCustomError(pool, "ReentrancyGuardReentrantCall");
   });
 
-  it("renewPosition() reverts with ReentrancyGuardReentrantCall when reentered via usdc.transferFrom", async function () {
-    // renewPosition pulls the renewal fee via usdc.safeTransferFrom — the
-    // remaining USDC-pull path besides the opens.
-    const { pool, reenUsdc, trader1, poolAddr } = await deployPoolWithReentrantUsdc();
-
-    // Open a long on this pool (uses reentrant usdc for fees — disable first).
-    await reenUsdc.disableReentrant();
-    const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
-
-    // Re-enter swap during renewPosition's usdc.safeTransferFrom fee pull.
-    const reentrantCall = pool.interface.encodeFunctionData("swap", [
-      ethers.parseEther("100"), 0n, true, trader1.address
-    ]);
-    await reenUsdc.setReentrantCall(poolAddr, reentrantCall);
-
-    await expect(
-      pool.connect(trader1).renewPosition(nftId, ethers.MaxUint256)
-    ).to.be.revertedWithCustomError(pool, "ReentrancyGuardReentrantCall");
-  });
-
   it("claimFees() reverts with ReentrancyGuardReentrantCall (via USDC transfer to LP holder on re-enter)", async function () {
     // claimFees calls usdc.safeTransfer(msg.sender, amount). This is `transfer`
     // not `transferFrom`, so our ReentrantToken hook doesn't fire.
@@ -1867,19 +1847,9 @@ describe("Coverage — FeeOnTransferNotSupported guard in _transferIn", function
     ).to.be.revertedWithCustomError(pool, "FeeOnTransferNotSupported");
   });
 
-  // ── renewPosition: _transferIn(underlyingUsdc, holder, totalFee) ──────────
-
-  it("renewPosition reverts FeeOnTransferNotSupported when USDC has transfer fee", async function () {
-    const { pool, fotUsdc, trader1 } = await deployPoolWithFeeOnTransferUsdc();
-
-    // Open the long while fee is still disabled.
-    const nftId = await openLong(pool, trader1, ethers.parseUnits("100", 6));
-
-    await fotUsdc.enableFee();
-    await expect(
-      pool.connect(trader1).renewPosition(nftId, ethers.MaxUint256)
-    ).to.be.revertedWithCustomError(pool, "FeeOnTransferNotSupported");
-  });
+  // The open fee is the only USDC the pool pulls from a trader now that
+  // renewals are gone, so the openLong / openShort cases above are the whole of
+  // the position-side fee-on-transfer surface.
 
 });
 
@@ -2092,7 +2062,9 @@ describe("Coverage — PositionNFT.tokenURI", function () {
     expect(traits).to.include("Market");
     expect(traits).to.include("Position Size (USDC)");
     expect(traits).to.include("Opened");
-    expect(traits).to.include("Deadline");
+    // Positions no longer expire; what a holder needs to see instead is how
+    // much of the position funding has taken so far.
+    expect(traits).to.include("Size Remaining %");
     expect(traits).to.include("Est. PnL (USDC)");
     expect(traits).to.include("Return on Premium %");
     const side = json.attributes.find((a: any) => a.trait_type === "Side");
@@ -2118,8 +2090,8 @@ describe("Coverage — PositionNFT.tokenURI", function () {
     await fix.usdc.mint(fix.trader2.address, ethers.parseUnits("5000", 6));
     await fix.pool.connect(fix.trader2).swap(ethers.parseUnits("5000", 6), 0n, false, fix.trader2.address);
     // Age the move out of the settlement clamp window: settlement prices
-    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
-    await mine(SETTLE_GUARD_BLOCKS);
+    // against the worst open in the last CLAMP_BLOCKS blocks (H-2).
+    await mine(CLAMP_BLOCKS);
     const svg = decodeSvg(await fix.positionNFT.tokenURI(nftId));
     expect(svg).to.include("+$");
   });
@@ -2143,8 +2115,8 @@ describe("Coverage — PositionNFT.tokenURI", function () {
     await fix.baseToken.mint(fix.trader2.address, dump);
     await fix.pool.connect(fix.trader2).swap(dump, 0n, true, fix.trader2.address);
     // Age the move out of the settlement clamp window: settlement prices
-    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
-    await mine(SETTLE_GUARD_BLOCKS);
+    // against the worst open in the last CLAMP_BLOCKS blocks (H-2).
+    await mine(CLAMP_BLOCKS);
     const svg = decodeSvg(await fix.positionNFT.tokenURI(nftId));
     expect(svg).to.include("+$");
   });
@@ -2168,8 +2140,8 @@ describe("Coverage — PositionNFT.tokenURI", function () {
     await fix.usdc.mint(fix.trader2.address, ethers.parseUnits("5000", 6));
     await fix.pool.connect(fix.trader2).swap(ethers.parseUnits("5000", 6), 0n, false, fix.trader2.address);
     // Age the move out of the settlement clamp window: settlement prices
-    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
-    await mine(SETTLE_GUARD_BLOCKS);
+    // against the worst open in the last CLAMP_BLOCKS blocks (H-2).
+    await mine(CLAMP_BLOCKS);
 
     const [ready, pnl] = await fix.pool.quoteClose(nftId);
     expect(ready, "an unbuyable debt must stay unsettleable").to.equal(false);
@@ -2253,8 +2225,8 @@ describe("Coverage — PositionNFT.tokenURI", function () {
     await fix.baseToken.mint(fix.trader2.address, dump);
     await fix.pool.connect(fix.trader2).swap(dump, 0n, true, fix.trader2.address);
     // Age the move out of the settlement clamp window: settlement prices
-    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
-    await mine(SETTLE_GUARD_BLOCKS);
+    // against the worst open in the last CLAMP_BLOCKS blocks (H-2).
+    await mine(CLAMP_BLOCKS);
 
     const [, quoted] = await fix.pool.quoteClose(nftId);
     expect(quoted, "shortfall must exceed the premium for this to be meaningful")
@@ -2322,18 +2294,27 @@ describe("Coverage — PositionNFT.tokenURI", function () {
     await ethers.provider.send("hardhat_setStorageAt", [
       fix.poolAddress,
       ethers.toBeHex(slot),
-      ethers.toBeHex(pos.lockedAmount, 32), // supply == locked triggers `<=`
+      // Below the position's LIVE collateral, not equal to its opening figure.
+      // Funding shrinks the live amount every second, so an override pinned to
+      // the opening value stops satisfying `tokenSupply <= locked` as soon as any
+      // time passes — and the blocks mined below guarantee it does. A margin
+      // exercises the same branch without racing the decay.
+      ethers.toBeHex((await fix.pool.effectiveLockedOf(nftId)) * 9n / 10n, 32),
     ]);
 
     // A raw storage write is not a reserve mutation, so it records no guard
     // snapshot — the ring still describes the priceable state this position was
     // in beforehand, and the clamp would price against that. Age those entries
     // out so the quote sees the state the override actually created.
-    await mine(SETTLE_GUARD_BLOCKS);
+    await mine(CLAMP_BLOCKS);
 
     const [ready, pnl] = await fix.pool.quoteClose(nftId);
     expect(ready, "an unpriceable long must stay unsettleable").to.equal(false);
-    expect(pnl, "shortfall = the full synthetic debt").to.equal(-pos.airUsdMinted);
+    // The full synthetic debt as it stands now — funding shrinks it with the
+    // collateral, so the opening figure is no longer the debt.
+    const [, liveDebt] = await fix.pool.liveAmountsOf(nftId);
+    expect(pos.airUsdMinted).to.be.gte(liveDebt);
+    expect(pnl, "shortfall = the full synthetic debt").to.equal(-liveDebt);
 
     const svg = decodeSvg(await fix.positionNFT.tokenURI(nftId));
     expect(svg).to.not.include("N/A");
@@ -2349,10 +2330,6 @@ describe("Coverage — PositionNFT.tokenURI", function () {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Coverage — renewPosition MIN_POSITION_FEE branch
-// ═══════════════════════════════════════════════════════════════════════════════
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // Coverage — _longIsUnderwater edge: airTokenSupply < lockedAmount
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -2364,20 +2341,21 @@ describe("Coverage — long underwater when token price crashes", function () {
     await fix.baseToken.mint(fix.trader2.address, dump);
     await fix.pool.connect(fix.trader2).swap(dump, 0n, true, fix.trader2.address);
     await expect(
-      fix.pool.connect(fix.trader1).closeLong(nftId, 0n)
+      fix.pool.connect(fix.trader1).closeLong(nftId, 0n, fix.trader1.address)
     ).to.be.revertedWithCustomError(fix.pool, "PositionUnderwater");
   });
 });
 
-describe("Coverage — renewPosition min-fee branch", function () {
+describe("Coverage — open fee min-fee branch", function () {
   it("uses MIN_POSITION_FEE when 5% of notional rounds below the floor", async function () {
     const fix = await loadFixture(deployPoolFixture);
-    // Open a tiny long so notional is very small (1 USDC = 1e6)
-    // 5% of 1e5 = 5000, well below MIN_POSITION_FEE (50_000)
-    const nftId = await openLong(fix.pool, fix.trader1, 100_000n); // 0.1 USDC
-    // Approve enough for renewal fee
+    // 5 % of 0.1 USDC is 5000, well below MIN_POSITION_FEE (50_000). The floor
+    // used to be reachable through renewals as well; the open fee is now the
+    // only path to it.
+    const tiny = 100_000n; // 0.1 USDC
+    expect(await fix.pool.quoteOpenFee(tiny, true)).to.be.gte(50_000n);
     await fix.usdc.connect(fix.trader1).approve(fix.poolAddress, ethers.MaxUint256);
-    await fix.pool.connect(fix.trader1).renewPosition(nftId, ethers.MaxUint256);
+    await fix.pool.connect(fix.trader1).openLong(tiny, 0n, fix.trader1.address);
   });
 });
 
@@ -2447,9 +2425,9 @@ describe("Coverage — Router empty-pool guard", function () {
 
 describe("Regression — N-1: closeShort SWAP-2 reserve symmetry", function () {
   /**
-   * The short close formula MUST subtract pos.lockedAmount from
+   * The short close formula MUST subtract pos.lockedAmountAtOpen from
    * airUsdToken.totalSupply() before computing totalBuyable, mirroring
-   * how closeLong subtracts pos.lockedAmount from airToken.totalSupply().
+   * how closeLong subtracts pos.lockedAmountAtOpen from airToken.totalSupply().
    *
    * This test verifies that a short that should be profitable IS profitable
    * and returns a non-trivial payout. Before the fix, the inflated
@@ -2465,14 +2443,14 @@ describe("Regression — N-1: closeShort SWAP-2 reserve symmetry", function () {
     await fix.baseToken.mint(fix.trader2.address, dump);
     await fix.pool.connect(fix.trader2).swap(dump, 0n, true, fix.trader2.address);
     // Age the move out of the settlement clamp window: settlement prices
-    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
-    await mine(SETTLE_GUARD_BLOCKS);
+    // against the worst open in the last CLAMP_BLOCKS blocks (H-2).
+    await mine(CLAMP_BLOCKS);
 
     // Record balances before close
     const usdcBefore = await fix.usdc.balanceOf(fix.trader1.address);
 
     // Close the short — should succeed and pay a non-trivial amount
-    await fix.pool.connect(fix.trader1).closeShort(nftId, 0n);
+    await fix.pool.connect(fix.trader1).closeShort(nftId, 0n, fix.trader1.address);
 
     const usdcAfter = await fix.usdc.balanceOf(fix.trader1.address);
     const profit = usdcAfter - usdcBefore;
@@ -2492,15 +2470,15 @@ describe("Regression — N-1: closeShort SWAP-2 reserve symmetry", function () {
     await fix.usdc.mint(fix.trader3.address, ethers.parseUnits("3000", 6));
     await fix.pool.connect(fix.trader3).swap(ethers.parseUnits("3000", 6), 0n, false, fix.trader3.address);
     // Age the move out of the settlement clamp window: settlement prices
-    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
-    await mine(SETTLE_GUARD_BLOCKS);
+    // against the worst open in the last CLAMP_BLOCKS blocks (H-2).
+    await mine(CLAMP_BLOCKS);
 
     // Long should be closeable (profitable) — verify by closing
-    await expect(fix.pool.connect(fix.trader1).closeLong(longId, 0n)).to.not.be.reverted;
+    await expect(fix.pool.connect(fix.trader1).closeLong(longId, 0n, fix.trader1.address)).to.not.be.reverted;
 
     // Short should be underwater — verify by attempting close
     await expect(
-      fix.pool.connect(fix.trader2).closeShort(shortId, 0n)
+      fix.pool.connect(fix.trader2).closeShort(shortId, 0n, fix.trader2.address)
     ).to.be.revertedWithCustomError(fix.pool, "PositionUnderwater");
 
     // Now dump to reverse — push price back down
@@ -2508,11 +2486,11 @@ describe("Regression — N-1: closeShort SWAP-2 reserve symmetry", function () {
     await fix.baseToken.mint(fix.trader3.address, dump);
     await fix.pool.connect(fix.trader3).swap(dump, 0n, true, fix.trader3.address);
     // Age the move out of the settlement clamp window: settlement prices
-    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
-    await mine(SETTLE_GUARD_BLOCKS);
+    // against the worst open in the last CLAMP_BLOCKS blocks (H-2).
+    await mine(CLAMP_BLOCKS);
 
     // Now short should be profitable — verify by closing
-    await expect(fix.pool.connect(fix.trader2).closeShort(shortId, 0n)).to.not.be.reverted;
+    await expect(fix.pool.connect(fix.trader2).closeShort(shortId, 0n, fix.trader2.address)).to.not.be.reverted;
   });
 
   it("short underwater state reflects through close attempts", async function () {
@@ -2524,7 +2502,7 @@ describe("Regression — N-1: closeShort SWAP-2 reserve symmetry", function () {
     await fix.pool.connect(fix.trader2).swap(ethers.parseUnits("2000", 6), 0n, false, fix.trader2.address);
 
     await expect(
-      fix.pool.connect(fix.trader1).closeShort(nftId, 0n)
+      fix.pool.connect(fix.trader1).closeShort(nftId, 0n, fix.trader1.address)
     ).to.be.revertedWithCustomError(fix.pool, "PositionUnderwater");
 
     // Dump massively to make it profitable
@@ -2532,84 +2510,10 @@ describe("Regression — N-1: closeShort SWAP-2 reserve symmetry", function () {
     await fix.baseToken.mint(fix.trader3.address, dump);
     await fix.pool.connect(fix.trader3).swap(dump, 0n, true, fix.trader3.address);
     // Age the move out of the settlement clamp window: settlement prices
-    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
-    await mine(SETTLE_GUARD_BLOCKS);
+    // against the worst open in the last CLAMP_BLOCKS blocks (H-2).
+    await mine(CLAMP_BLOCKS);
 
-    await expect(fix.pool.connect(fix.trader1).closeShort(nftId, 0n)).to.not.be.reverted;
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Regression — N-2: renewPosition must use usdcIn (notional) for shorts
-// ═══════════════════════════════════════════════════════════════════════════════
-
-describe("Regression — N-2: renewPosition fee uses notional for shorts", function () {
-  it("short renewal fee is based on usdcIn (notional), not lockedAmount", async function () {
-    const fix = await loadFixture(deployPoolFixture);
-
-    const notional = ethers.parseUnits("500", 6);
-    const shortId = await openShort(fix.pool, fix.trader1, notional);
-
-    // Read the position to get both usdcIn and lockedAmount
-    const pos = await fix.positionNFT.getPosition(shortId);
-    // usdcIn (notional) should be >= lockedAmount (post-slippage)
-    expect(pos.usdcIn).to.be.gte(pos.lockedAmount);
-    // They should differ (AMM slippage + fee means lockedAmount < notional)
-    expect(pos.usdcIn).to.be.gt(pos.lockedAmount);
-
-    // Compute expected renewal fee from NOTIONAL (usdcIn), not lockedAmount:
-    // base fee on mark (= usdcIn, surplus is 0 on a fresh position) plus the
-    // position's OI impact slice (it is the only short → offset 0).
-    const BPS_DENOM = 10_000n;
-    const LP_FEE_BPS = 400n;
-    const PROTO_FEE_BPS = 100n;
-    const IMPACT_FEE_BPS = 1500n;
-    const backed = await fix.pool.backedAirUsd();
-    const expectedFee = (pos.usdcIn * PROTO_FEE_BPS) / BPS_DENOM
-                      + (pos.usdcIn * LP_FEE_BPS) / BPS_DENOM
-                      + (IMPACT_FEE_BPS * pos.usdcIn * pos.usdcIn) / (2n * backed * BPS_DENOM);
-
-    // Fund trader and approve
-    await fix.usdc.mint(fix.trader1.address, expectedFee * 2n);
-    await fix.usdc.connect(fix.trader1).approve(fix.poolAddress, ethers.MaxUint256);
-
-    const usdcBefore = await fix.usdc.balanceOf(fix.trader1.address);
-
-    // Renew
-    await fix.pool.connect(fix.trader1).renewPosition(shortId, expectedFee);
-
-    const usdcAfter = await fix.usdc.balanceOf(fix.trader1.address);
-    const feePaid = usdcBefore - usdcAfter;
-
-    // Fee should be based on usdcIn, not lockedAmount
-    expect(feePaid).to.equal(expectedFee);
-  });
-
-  it("long and short with same notional pay equal renewal fees", async function () {
-    const fix = await loadFixture(deployPoolFixture);
-
-    const notional = ethers.parseUnits("200", 6);
-    const longId  = await openLong(fix.pool, fix.trader1, notional);
-    const shortId = await openShort(fix.pool, fix.trader2, notional);
-
-    // Fund and approve both traders
-    const ample = ethers.parseUnits("100", 6);
-    await fix.usdc.mint(fix.trader1.address, ample);
-    await fix.usdc.mint(fix.trader2.address, ample);
-    await fix.usdc.connect(fix.trader1).approve(fix.poolAddress, ethers.MaxUint256);
-    await fix.usdc.connect(fix.trader2).approve(fix.poolAddress, ethers.MaxUint256);
-
-    const longBefore  = await fix.usdc.balanceOf(fix.trader1.address);
-    const shortBefore = await fix.usdc.balanceOf(fix.trader2.address);
-
-    await fix.pool.connect(fix.trader1).renewPosition(longId, ethers.MaxUint256);
-    await fix.pool.connect(fix.trader2).renewPosition(shortId, ethers.MaxUint256);
-
-    const longFee  = longBefore  - (await fix.usdc.balanceOf(fix.trader1.address));
-    const shortFee = shortBefore - (await fix.usdc.balanceOf(fix.trader2.address));
-
-    // Same notional → same renewal fee
-    expect(longFee).to.equal(shortFee);
+    await expect(fix.pool.connect(fix.trader1).closeShort(nftId, 0n, fix.trader1.address)).to.not.be.reverted;
   });
 });
 
@@ -2654,10 +2558,10 @@ describe("Regression — N2-L3: PositionClosed event payout", function () {
     await fix.usdc.mint(fix.trader2.address, ethers.parseUnits("3000", 6));
     await fix.pool.connect(fix.trader2).swap(ethers.parseUnits("3000", 6), 0n, false, fix.trader2.address);
     // Age the move out of the settlement clamp window: settlement prices
-    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
-    await mine(SETTLE_GUARD_BLOCKS);
+    // against the worst open in the last CLAMP_BLOCKS blocks (H-2).
+    await mine(CLAMP_BLOCKS);
 
-    const tx = await fix.pool.connect(fix.trader1).closeLong(nftId, 0n);
+    const tx = await fix.pool.connect(fix.trader1).closeLong(nftId, 0n, fix.trader1.address);
     const receipt = await tx.wait();
     const log = receipt!.logs
       .map((l) => { try { return fix.pool.interface.parseLog(l); } catch { return null; } })
@@ -2695,9 +2599,9 @@ describe("Regression — N2-I1: openPositionCount tracks correctly through lifec
     await fix.usdc.mint(fix.trader2.address, ethers.parseUnits("3000", 6));
     await fix.pool.connect(fix.trader2).swap(ethers.parseUnits("3000", 6), 0n, false, fix.trader2.address);
     // Age the move out of the settlement clamp window: settlement prices
-    // against the worst open in the last SETTLE_GUARD_BLOCKS blocks (H-2).
-    await mine(SETTLE_GUARD_BLOCKS);
-    await fix.pool.connect(fix.trader1).closeLong(long1, 0n);
+    // against the worst open in the last CLAMP_BLOCKS blocks (H-2).
+    await mine(CLAMP_BLOCKS);
+    await fix.pool.connect(fix.trader1).closeLong(long1, 0n, fix.trader1.address);
     expect(await fix.pool.openPositionCount()).to.equal(2n);
   });
 });

@@ -440,16 +440,27 @@ describe("EXNIHILORouter", function () {
         ethers.parseUnits("999", 6),
       ];
 
-      let longOI = 0n; // track cumulative long OI
+      const pool = await ethers.getContractAt("EXNIHILOPool", poolAddress);
+      const accruedFees = async () =>
+        (await pool.lpFeesAccumulated()) + (await pool.protocolFeesAccumulated());
+
       for (const notional of notionals) {
-        const backedUsd = await (await ethers.getContractAt("EXNIHILOPool", poolAddress)).backedAirUsd();
-        const expectedFee = positionFee(notional, backedUsd, longOI);
+        // Open interest as last written. Funding shrinks it every second, so by
+        // the time the open executes it is slightly smaller and the impact fee
+        // with it — this formula is the fee as of the last write, an upper bound.
+        const expectedFee = positionFee(
+          notional, await pool.backedAirUsd(), await pool.longOpenInterest());
+        const accruedBefore = await accruedFees();
         const balBefore = await usdc.balanceOf(trader1.address);
         await router.connect(trader1).openLong(poolAddress, notional, 0n);
-        const balAfter = await usdc.balanceOf(trader1.address);
-        expect(balBefore - balAfter).to.equal(expectedFee,
+        const paid = balBefore - (await usdc.balanceOf(trader1.address));
+
+        // Exactly what the pool charged: the router quotes in the same block the
+        // open executes in, so nothing is over-pulled and nothing is refunded.
+        expect(paid).to.equal((await accruedFees()) - accruedBefore,
           `Fee mismatch for notional=${notional.toString()}`);
-        longOI += notional;
+        expect(paid).to.be.lte(expectedFee);
+        expect(paid).to.be.closeTo(expectedFee, expectedFee / 10_000n + 2n);
       }
     });
 
@@ -534,12 +545,21 @@ describe("EXNIHILORouter", function () {
       await usdc.mint(other.address, totalNeeded);
       await usdc.connect(other).approve(await router.getAddress(), totalNeeded);
 
+      const pool = await ethers.getContractAt("EXNIHILOPool", poolAddress);
+      const accruedBefore = (await pool.lpFeesAccumulated()) + (await pool.protocolFeesAccumulated());
       for (let i = 0; i < numTrades; i++) {
         await router.connect(other).openLong(poolAddress, notional, 0n);
       }
+      const accrued =
+        (await pool.lpFeesAccumulated()) + (await pool.protocolFeesAccumulated()) - accruedBefore;
 
-      // Balance should be zero — all 5 fees consumed exactly
-      expect(await usdc.balanceOf(other.address)).to.equal(0n);
+      // Every wei that left the wallet is a fee the pool accrued, and nothing
+      // near the notional was touched. A few wei stay behind because the budget
+      // above priced each impact fee off undecayed open interest, and funding
+      // shrinks open interest between trades.
+      const left = await usdc.balanceOf(other.address);
+      expect(totalNeeded - left).to.equal(accrued);
+      expect(left).to.be.lt(totalNeeded / 1_000n);
     });
   });
 
@@ -670,8 +690,8 @@ describe("EXNIHILORouter", function () {
       expect(posDirect.feesPaid).to.be.gt(posRouter.feesPaid); // 2nd position pays more (higher OI)
       // lockedAmount may differ slightly due to reserve changes between trades
       // but both should be non-zero
-      expect(posRouter.lockedAmount).to.be.gt(0n);
-      expect(posDirect.lockedAmount).to.be.gt(0n);
+      expect(posRouter.lockedAmountAtOpen).to.be.gt(0n);
+      expect(posDirect.lockedAmountAtOpen).to.be.gt(0n);
     });
   });
 });

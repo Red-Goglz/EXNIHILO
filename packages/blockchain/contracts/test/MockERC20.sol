@@ -3,11 +3,7 @@ pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
-/**
- * @title MockERC20
- * @notice Minimal mintable ERC-20 for use in unit tests only.
- *         Anyone can mint; this contract must never be deployed on a live network.
- */
+/// @notice Test-only ERC-20 with open minting and configurable decimals.
 contract MockERC20 is ERC20 {
     uint8 private immutable _dec;
 
@@ -23,7 +19,6 @@ contract MockERC20 is ERC20 {
         return _dec;
     }
 
-    /// @notice Mint `amount` tokens to `to`. Open access — test use only.
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
     }

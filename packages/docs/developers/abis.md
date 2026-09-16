@@ -1,64 +1,39 @@
 ---
-description: "Import EXNIHILO contract ABIs from the @exnihilio/abis workspace package, exported as const objects for full type safety with Viem and Wagmi."
+description: "Import EXNIHILO contract ABIs from the @exnihilio/abis workspace package — typed as const for viem and wagmi."
 ---
 
 # ABIs
 
-Contract ABIs are exported from the `@exnihilio/abis` workspace package.
+Every contract ABI is exported from the `@exnihilio/abis` workspace package as an `as const` array,
+so viem and wagmi infer argument and return types.
 
-## Installation
-
-If building within the monorepo, the ABIs are available as a workspace dependency:
-
-```json
-{
-  "dependencies": {
-    "@exnihilio/abis": "*"
-  }
-}
+```ts
+import { exnihiloPoolAbi, positionNFTAbi } from "@exnihilio/abis";
 ```
 
-## Usage
-
-```typescript
-import { EXNIHILOPoolAbi } from "@exnihilio/abis/EXNIHILOPool";
-import { EXNIHILOFactoryAbi } from "@exnihilio/abis/EXNIHILOFactory";
-```
-
-ABIs are exported as `as const` objects, giving you full type safety with Viem and Wagmi.
-
-## Available ABIs
-
-| Import | Contract |
+| Export | Contract |
 |---|---|
-| `EXNIHILOPoolAbi` | Pool AMM + trading |
-| `EXNIHILOFactoryAbi` | Factory |
-| `PositionNFTAbi` | Position NFTs |
-| `LpNFTAbi` | LP NFTs |
-| `erc20Abi` | Minimal ERC-20 (balanceOf, approve, allowance, decimals, symbol) |
+| `exnihiloPoolAbi` | EXNIHILOPool |
+| `exnihiloFactoryAbi` | EXNIHILOFactory |
+| `exnihiloRouterAbi` | EXNIHILORouter |
+| `positionNFTAbi` | PositionNFT |
+| `lpNFTAbi` | LpNFT |
+| `preMarketAbi` / `preMarketFactoryAbi` | PreMarket / PreMarketFactory |
+| `lockedLpVaultAbi` | LockedLpVault |
+| `erc20Abi` | Minimal ERC-20 |
 
-## With Viem
+```ts
+// viem
+const spot = await publicClient.readContract({
+  address: pool, abi: exnihiloPoolAbi, functionName: "spotPrice",
+});
 
-```typescript
-import { readContract } from "viem";
-import { EXNIHILOPoolAbi } from "@exnihilio/abis/EXNIHILOPool";
-
-const spotPrice = await readContract(client, {
-  address: poolAddress,
-  abi: EXNIHILOPoolAbi,
-  functionName: "spotPrice",
+// wagmi
+const { data } = useReadContract({
+  address: pool, abi: exnihiloPoolAbi, functionName: "liveAmountsOf", args: [tokenId],
 });
 ```
 
-## With Wagmi
-
-```typescript
-import { useReadContract } from "wagmi";
-import { EXNIHILOPoolAbi } from "@exnihilio/abis/EXNIHILOPool";
-
-const { data: spotPrice } = useReadContract({
-  address: poolAddress,
-  abi: EXNIHILOPoolAbi,
-  functionName: "spotPrice",
-});
-```
+The files are generated from `packages/blockchain/artifacts` and must be regenerated whenever a
+contract's interface changes. For a typed client with pre-flight checks, use the
+[SDK](/developers/sdk).

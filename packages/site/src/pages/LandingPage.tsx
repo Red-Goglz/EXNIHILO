@@ -238,7 +238,7 @@ export default function LandingPage() {
             }
             iconColor="var(--cyan)"
             title="Positions are options"
-            desc="A long is a call, a short is a put, the open fee is the premium. No strike to pick, no implied volatility, no Greeks — just a direction and a deadline."
+            desc="A long is a call, a short is a put, the open fee is the premium. No strike to pick, no implied volatility, no Greeks — just a direction, and funding that trims the position while you hold it."
           />
         </div>
       </section>
@@ -289,11 +289,11 @@ export default function LandingPage() {
             <ul className="text-sm space-y-2" style={{ color: "var(--muted)" }}>
               <li>No collateral &mdash; pay a premium instead</li>
               <li>No liquidation engine, no margin calls</li>
-              <li>Renewal fee each period &mdash; always a cost</li>
+              <li>Funding trims the position &mdash; always a cost</li>
               <li>Payoff bends with size; one LP per pool</li>
               <li>
                 <strong style={{ color: "var(--body)" }}>
-                  You cannot close underwater &mdash; only hold or expire
+                  You cannot close underwater &mdash; only hold and let it decay
                 </strong>
               </li>
             </ul>
@@ -306,9 +306,11 @@ export default function LandingPage() {
         >
           A wick that liquidates a 20&times; perp does nothing to a position
           here. In exchange, you start behind: break-even sits near{" "}
-          <strong style={{ color: "var(--body)" }}>+8.3%</strong> and every
-          renewal raises it. If active risk management is your edge, a perp is
-          the better instrument &mdash; and the comparison below says why.
+          <strong style={{ color: "var(--body)" }}>+8.3%</strong>, and holding
+          costs you size rather than margin &mdash; the position shrinks a little
+          every second instead of ever being called. If active risk management is
+          your edge, a perp is the better instrument &mdash; and the comparison
+          below says why.
         </p>
 
         <div className="flex flex-wrap gap-4 justify-center mt-6">

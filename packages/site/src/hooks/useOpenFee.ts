@@ -15,7 +15,7 @@ import { exnihiloPoolAbi } from "@exnihilio/abis";
  * between raises the real fee. Approving the bare quote makes the open a race.
  */
 
-/** Headroom over the quoted fee, in bps. The renew path uses 2%; opens get more
+/** Headroom over the quoted fee, in bps. Opens get generous headroom because
  *  because the impact term reacts to other traders' open interest. */
 const FEE_HEADROOM_BPS = 500n; // 5%
 

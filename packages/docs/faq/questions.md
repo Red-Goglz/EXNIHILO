@@ -1,5 +1,5 @@
 ---
-description: "Common questions about EXNIHILO — what the name means, whether positions are genuinely options, how the fees work, and what happens at expiry."
+description: "Common questions about EXNIHILO — whether positions are genuinely options, who pays a winning trade, how the fees work, and what funding does to a position you hold."
 ---
 
 # Common Questions
@@ -7,72 +7,91 @@ description: "Common questions about EXNIHILO — what the name means, whether p
 ## General
 
 ### What does "EXNIHILO" mean?
-Latin for "out of nothing" or "out of thin air." It refers to the synthetic minting mechanism — leveraged exposure is created from thin air via the three-curve AMM.
+Latin for "out of nothing". Exposure is created out of thin air: opening a position mints synthetic
+units against the pool's curves instead of borrowing anything.
 
 ### Is this actually an option?
-Structurally, yes. You pay a non-refundable premium (the open fee), you post no collateral, your max loss is that premium, the position has an expiry, and it settles worthless if you are underwater. A long is a call, a short is a put, and the strike is the spot price at open. See [Positions Are Options](/introduction/positions-are-options) — which also covers the four places the analogy breaks down.
+Structurally, yes. You pay a non-refundable premium, post no collateral, can lose at most the
+premium, and hold nothing of value while underwater. A long is a call and a short a put, struck at
+the price when you open. [Positions Are Options](/introduction/positions-are-options) covers where
+the analogy breaks.
 
-### No collateral and no liquidations? Who eats the loss?
-The pool's LP. Explicitly, and by design. Each pool has exactly one LP who is the counterparty to every position in it — in option terms, the writer. They collect the premium on every position opened and pay profitable settlements out of their liquidity. Their exposure is bounded by an automatic [position cap](/lp/position-caps) that nobody can widen, and they are compensated by an [impact fee](/trading/fees#impact-fee-lp-drain-protection) that scales quadratically with position size and open interest. Nothing about this is hidden from either side.
+### No collateral and no liquidations — who eats the loss?
+The pool's LP, by design. Each pool has one LP who is the counterparty to every position in it: they
+collect the premium and funding, pay every profitable close, and are protected by an automatic
+[position cap](/lp/position-caps) and an [impact fee](/protocol/fees#open-fee) that grows with size
+and crowding.
 
 ### Isn't a 5% fee enormous?
-Only if you compare it to a perp taker fee, which is the wrong comparison. A perp charges 0.05% *on top of* collateral you must post and can lose entirely. EXNIHILO's 5% *replaces* the collateral and is the entire downside. Priced as what it is — an at-the-money option on a volatile token with a 7-day term — 5% of notional is inexpensive.
+Only next to a perp's taker fee, which sits on top of collateral you can lose. EXNIHILO's 5%
+*replaces* the collateral and is the whole downside — compare it to an at-the-money option on a
+volatile token.
 
-### Why can't I close a losing position?
-Because you never posted collateral, there is nothing to return. The premium bought you a right, not a margin account. An underwater position can be held (renewing it each period) in the hope it recovers, or left to settle for nothing. There is no partial exit and no salvage value — this is the main cost of the no-liquidation design.
+### Where does a winning trader's profit come from?
+From the LP's reserves, replenished by the flow that moved the price. A long wins when buyers push
+the pool's price up — directly, or through arbitrage with other venues where the token trades. A
+short wins when sellers push it down.
+
+### How is this different from a perp?
+No collateral, no liquidation, and a maximum loss fixed at open. Funding here never pays you and
+never balances longs against shorts: it is rent on the LP's capital, taken by shrinking your
+position. See [vs Perpetual Futures](/introduction/vs-perpetuals).
 
 ### Has it been audited?
-Not by a human security firm. Four automated audit rounds have been performed by AI models, each across 11 independent analysis passes, with every finding and remediation published. See [Security](/protocol/security) and [Risk Disclosure](/faq/risks#smart-contract-risk).
-
-### Who is paying?
-When you open a long position, you need someone that will buy via the normal swap to increase the price. That someone could be buying the token on another dex, then arb bots will sync the price. Most projects also have an AVAX pool, actually people buying avax will pay your long. Yes that could even mean institutions. Shorts are different, you sell now the tokens you don't have. When the price is lower, you can buy them back for less.
-
-### How is this different from perpetual futures?
-Traditional perps require collateral, charge funding rates, and liquidate positions. EXNIHILO positions don't require any collateral, have a clear deadline, and are never liquidated. Your maximum loss is the fee paid.
+Not by a human firm. Five AI audit rounds have been published, and the move to continuous funding
+came after the latest one and has not been audited. See [Security](/protocol/security).
 
 ### Is there a token?
-No. EXNIHILO has no governance token and no plans for one. The protocol is immutable.
+No, and no governance. The contracts are immutable.
 
 ## Trading
 
-### Can my position be closed after the deadline?
-Positions have a deadline. After expiry, anyone can settle your position. Profitable positions pay you the profit minus 1% fee into your claimable balance; underwater positions return collateral to the LP. To avoid this, either renew before the deadline or opt into [auto-renewal](/positions/expiry#auto-renewal-opt-in) — then a winning position pays its own renewal fees from its profit and keeps running.
+### What happens if I leave a position open?
+It keeps running — nothing expires and nobody else can close it. It shrinks with funding: steeply on
+a new market, slowly on a mature one, faster on a crowded side. Your break-even never moves; the size
+behind it does. See [Funding](/positions/funding).
 
-### What's my maximum loss?
-As a trader, the USDC fees you paid. You cannot lose more than that — it is enforced by the contract, not by policy. Note that renewing a position pays the premium again, so a position held across many periods accumulates cost.
+### What is my maximum loss?
+As a trader, the fee you paid — enforced by the contract. As an **LP**, your whole deposit; see
+[Fee Earnings](/lp/fees#you-are-the-counterparty).
 
-As an **LP** the answer is different: your maximum loss is your full deposited liquidity. See [Fee Earnings](/lp/fees#you-are-the-counterparty).
+### Why can't I close a losing position?
+You posted no collateral, so there is nothing to return. An underwater position can be held
+indefinitely, shrinking, in the hope it recovers — but it has no salvage value.
 
 ### How small can a position be?
-The fee has a 0.05 USDC floor, so a $1 position costs $0.05 and is economically real. There is no minimum account size. In practice the binding limit is the [position cap](/lp/position-caps), which bounds the maximum rather than the minimum.
-
-### What tokens can I trade?
-Any ERC-20 token that someone has created a market for. Markets are permissionless — anyone can create one.
+The fee has a 0.05 USDC floor, so a $1 position is real. The binding limit is the maximum — the
+[position cap](/lp/position-caps).
 
 ### Why did my transaction revert?
-Common reasons:
-- **Slippage exceeded** — your `minAmountOut` was too tight. Increase slippage tolerance.
-- **Position cap exceeded** — a single position is capped at a share of pool reserves (1% on a market's first day, rising to 20% after 24 hours). Try a smaller amount, or wait.
-- **Insufficient approval** — approve the pool to spend your tokens first.
+- **`InsufficientOutput`** — slippage; widen your tolerance.
+- **`LeverageCapExceeded`** — over the position cap (1% of the pool on day one, 20% after 24 hours).
+- **`PoolClosing`** — the market is winding down and accepts no new positions.
+- **`PositionUnderwater`** — the position is not in profit, so it cannot be closed.
+- **Allowance** — approve USDC to the router (or the pool) first.
 
 ## Positions
 
 ### Can I transfer my position?
-Yes. Position NFTs are standard ERC-721 tokens. Use any wallet or marketplace to transfer them. Note that the auto-renewal opt-in is cleared on transfer — the new owner must set it themselves.
+Yes — it is a standard ERC-721, and it keeps its terms and its decay in the new owner's hands.
 
-### What happens if my position expires?
-If the holder opted into auto-renewal and the position's profit covers the fee (plus a small safety margin — 2% of the position's mark), `settleExpired` renews it instead of closing — no USDC needed from the holder. Otherwise anyone can settle it: profitable positions still pay you (credited to your claimable balance); underwater ones return collateral to the LP with no payout.
-
-### How is P&L calculated?
-From current pool reserves at the time of closing. See [P&L Calculation](/trading/pnl) for the formulas.
+### Can anyone else close my position?
+No. The only third-party action is `sweepDust`, once funding has taken all but 0.1% of the collateral
+a position opened with. If the sweep prices what is left in profit, that payout is credited to you;
+a caller who moves the price first can deny you it, but it is at most that last 0.1%.
 
 ## Liquidity
 
 ### Can anyone provide liquidity?
-Only one LP per pool — the market creator. If you want to LP, create your own market.
+One LP per pool — whoever holds its LP NFT, initially the market creator. To be an LP, create a
+market.
 
 ### How do LPs make money?
-Four ways: 4% base fee on every position opened, a dynamic impact fee that scales with position size and open interest, renewal fees (repriced at the position's current value every period — deep winners pay more), and passive swap fee yield. See [Fee Earnings](/lp/fees).
+The 4% open fee, the impact fee, funding on every open position, and swap fees. Funding and swap fees
+stay in the pool's reserves rather than becoming claimable. See [Fee Earnings](/lp/fees).
 
 ### Can the LP rug the pool?
-The LP can withdraw liquidity only when there are no open positions. If positions are open, the LP must wait for them to close or expire. The LP cannot force-close profitable positions.
+The LP can withdraw only when no position is open. Closing the pool — which the LP or the factory's
+emergency role can do — blocks new positions and, after 7 days, doubles funding daily, so open
+positions have to be closed or decay away within about two and a half weeks. Nothing is force-closed
+at a price the holder did not choose.

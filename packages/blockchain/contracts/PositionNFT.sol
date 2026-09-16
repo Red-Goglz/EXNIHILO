@@ -5,28 +5,12 @@ import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 import "@openzeppelin/contracts/utils/Base64.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 
-/**
- * @title PositionNFT
- * @notice Manages both Long and Short position tokens for all EXNIHILO pools.
- *
- * Registry model
- * ──────────────
- * The NFT is a pure position registry: locked collateral never leaves the
- * pool — the pool's supply counters plus the Position struct's lockedAmount
- * fully describe it. mintLong / mintShort record the position and mint the
- * NFT; release() burns the NFT and returns the Position struct, which gives
- * the pool everything it needs to complete the settlement math.
- *
- * Access control
- * ──────────────
- * mintLong / mintShort  →  factory must be initialised, msg.sender must equal
- *                          the `pool` argument, and the pool must be registered
- *                          with the factory.
- * release               →  msg.sender must equal positions[tokenId].pool.
- */
 interface IEXNIHILOPool {
     function underlyingToken() external view returns (address);
     function quoteClose(uint256 nftId) external view returns (bool ready, int256 pnl);
+    function liveAmountsOf(uint256 nftId)
+        external view returns (uint256 locked, uint256 debt, uint256 notional);
+    function remainingSizeBps(uint256 nftId) external view returns (uint256);
 }
 
 interface ITokenMeta {
@@ -39,35 +23,40 @@ interface IEXNIHILOFactory {
     function isPool(address pool) external view returns (bool);
 }
 
+/**
+ * @title  PositionNFT
+ * @notice Long and short position registry for all EXNIHILO pools. Collateral stays
+ *         in the pool; only registered pools mint, and only a position's own pool
+ *         releases it. tokenURI renders a live on-chain SVG.
+ */
 contract PositionNFT is ERC721Enumerable {
     using Strings for uint256;
 
     // ── Position data ──────────────────────────────────────────────────────────
 
+    // Amounts are as at open; live figures come from EXNIHILOPool.liveAmountsOf().
     struct Position {
         bool isLong;
         address pool;
-        /// @dev airTokenLocked for longs, airUsdLocked for shorts
-        uint256 lockedAmount;
-        /// @dev Long only: USDC notional used to open the position
-        uint256 usdcIn;
-        /// @dev Long only: synthetic airUsd debt minted at open
-        uint256 airUsdMinted;
-        /// @dev Short only: synthetic airToken debt minted at open
-        uint256 airTokenMinted;
+        uint256 lockedAmountAtOpen; // airToken (long) / airUsd (short)
+        uint256 usdcIn;             // USDC notional
+        uint256 airUsdMinted;       // long debt
+        uint256 airTokenMinted;     // short debt
         uint256 feesPaid;
         uint256 openedAt;
-        /// @dev Timestamp after which the position can be closed by anyone.
-        uint256 deadline;
+        uint256 fundingIndexAtOpen; // side's funding index at mint, in RAY
     }
 
-    /// @dev Live pool data resolved at tokenURI call time.
     struct LiveData {
-        string tokenSymbol;   // underlying token symbol, e.g. "PEPE"
-        bool   pnlReady;     // false if pool state unavailable
+        string tokenSymbol;
+        bool   pnlReady;      // pool returned a usable quote
         bool   pnlPositive;
-        uint256 pnlAbs;      // abs PnL in USDC 6-dec units (net of 1% close fee on profit)
-        uint8  tokenDecimals; // underlying token decimals (for display formatting)
+        uint256 pnlAbs;       // USDC (6 dec), net of the close fee
+        uint8  tokenDecimals;
+        uint256 locked;       // live, net of funding
+        uint256 debt;         // live, net of funding
+        uint256 notional;     // live, net of funding
+        uint256 remainingBps;
     }
 
     // ── State ──────────────────────────────────────────────────────────────────
@@ -75,21 +64,9 @@ contract PositionNFT is ERC721Enumerable {
     uint256 private _nextTokenId;
     mapping(uint256 => Position) private _positions;
 
-    /// @dev Auto-renew opt-in per position. `maxFee` caps the renewal fee the
-    ///      pool may charge against the position's equity at expiry. Cleared on
-    ///      every ownership change so each new holder must opt in themselves.
-    struct AutoRenewConfig {
-        bool    enabled;
-        uint256 maxFee;
-    }
-
-    mapping(uint256 => AutoRenewConfig) private _autoRenew;
-
-    /// @notice The deployer address (used to authorize initFactory).
     address private immutable _deployer;
 
-    /// @notice Factory that registers valid pools. When set, mintLong/mintShort
-    ///         verify that msg.sender is a pool registered with this factory.
+    /// @notice Pool registry consulted on mint; set once by the deployer.
     address public factory;
 
     // ── Errors ─────────────────────────────────────────────────────────────────
@@ -112,16 +89,10 @@ contract PositionNFT is ERC721Enumerable {
     // ── Events ─────────────────────────────────────────────────────────────────
 
     event FactoryInitialized(address indexed factory);
-    event AutoRenewSet(uint256 indexed tokenId, bool enabled, uint256 maxFee);
 
     // ── Factory initialisation ────────────────────────────────────────────────
 
-    /**
-     * @notice Wire this NFT to a factory so that only registered pools may
-     *         mint positions. Called once by the deployer after the factory
-     *         contract is deployed.
-     * @param factory_ Address of the EXNIHILOFactory.
-     */
+    /// @notice One-time wiring to the factory whose pools may mint. Deployer only.
     function initFactory(address factory_) external {
         if (msg.sender != _deployer) revert OnlyDeployer();
         if (factory != address(0)) revert FactoryAlreadySet();
@@ -132,19 +103,13 @@ contract PositionNFT is ERC721Enumerable {
 
     // ── Views ──────────────────────────────────────────────────────────────────
 
-    /**
-     * @notice Returns the full position data for `tokenId`.
-     * @dev Reverts if the token does not exist.
-     */
+    /// @notice Opening data for `tokenId`; reverts if it does not exist.
     function getPosition(uint256 tokenId) external view returns (Position memory) {
         if (_positions[tokenId].pool == address(0)) revert PositionNotFound();
         return _positions[tokenId];
     }
 
-    /**
-     * @notice Fully on-chain SVG metadata.  Live PnL is computed from current
-     *         pool reserves — no external data source required.
-     */
+    /// @notice On-chain JSON metadata and SVG, with live PnL from the pool.
     function tokenURI(uint256 tokenId) public view override returns (string memory) {
         if (_positions[tokenId].pool == address(0)) revert PositionNotFound();
         Position memory pos = _positions[tokenId];
@@ -170,33 +135,8 @@ contract PositionNFT is ERC721Enumerable {
         ));
     }
 
-    /**
-     * @dev The trader's actual result: signed USDC, and the same number as a
-     *      percent of what they staked. One helper for both so the figure and
-     *      the percent can never disagree on the card.
-     *
-     *      The premium IS the cost basis. openLong / openShort pull only the
-     *      fee from the trader and mint the notional synthetically, so what
-     *      they staked is `feesPaid` and what they get back is the payout:
-     *
-     *          pnl = payout − premium        pct = pnl / premium
-     *
-     *      Two floors follow from the settlement rules, and both matter:
-     *
-     *      - `payout` floors at ZERO. A position below break-even cannot be
-     *        closed and pays nothing at expiry; the pool's reported shortfall
-     *        is a notional gap, not a debt the trader owes. Carrying that gap
-     *        into the display printed losses many times the premium — a
-     *        position that risked $5 rendering as −$80.
-     *      - `pnl` therefore floors at −premium, i.e. −100%. Losing everything
-     *        staked is the worst case, which is the whole point of buying an
-     *        option rather than taking on leverage.
-     *
-     *      Reporting the raw payout as "PnL" — as this contract used to — is
-     *      the same error in the other direction: it omits the cost basis, so
-     *      a position that returned $3 on a $5 premium read as a $3 gain when
-     *      the trader is down $2.
-     */
+    /// @dev Net return on the premium (feesPaid is the trader's whole stake). The
+    ///      payout floors at zero, so the loss floors at −100 %.
     function _netReturn(Position memory pos, LiveData memory ld)
         internal
         pure
@@ -220,35 +160,33 @@ contract PositionNFT is ERC721Enumerable {
         Position memory pos,
         LiveData memory ld
     ) internal pure returns (bytes memory) {
-        // Build in chunks to stay within abi.encodePacked 16-arg limit
+        // Chunked to stay within the encodePacked argument limit.
         bytes memory a1 = abi.encodePacked(
             '"attributes":[',
             '{"trait_type":"Side","value":"', pos.isLong ? "Long" : "Short", '"},',
             '{"trait_type":"Market","value":"', ld.tokenSymbol, '/USDC"},',
             '{"trait_type":"Token ID","display_type":"number","value":', tokenId.toString(), '},',
-            '{"trait_type":"Position Size (USDC)","display_type":"number","value":', _fmt6(pos.usdcIn), '},'
+            '{"trait_type":"Position Size (USDC)","display_type":"number","value":', _fmt6(ld.notional), '},'
         );
 
         bytes memory a2 = pos.isLong
             ? abi.encodePacked(
-                '{"trait_type":"Locked ', ld.tokenSymbol, '","display_type":"number","value":', _fmtToken(pos.lockedAmount, ld.tokenDecimals), '},',
-                '{"trait_type":"Debt (airUSD)","display_type":"number","value":', _fmt6(pos.airUsdMinted), '},'
+                '{"trait_type":"Locked ', ld.tokenSymbol, '","display_type":"number","value":', _fmtToken(ld.locked, ld.tokenDecimals), '},',
+                '{"trait_type":"Debt (airUSD)","display_type":"number","value":', _fmt6(ld.debt), '},'
             )
             : abi.encodePacked(
-                '{"trait_type":"Locked USDC","display_type":"number","value":', _fmt6(pos.lockedAmount), '},',
-                '{"trait_type":"Debt (airToken)","display_type":"number","value":', _fmtToken(pos.airTokenMinted, ld.tokenDecimals), '},'
+                '{"trait_type":"Locked USDC","display_type":"number","value":', _fmt6(ld.locked), '},',
+                '{"trait_type":"Debt (airToken)","display_type":"number","value":', _fmtToken(ld.debt, ld.tokenDecimals), '},'
             );
 
         bytes memory a3 = abi.encodePacked(
             '{"trait_type":"Fees Paid (USDC)","display_type":"number","value":', _fmt6(pos.feesPaid), '},',
             '{"trait_type":"Opened","display_type":"date","value":', pos.openedAt.toString(), '},',
-            '{"trait_type":"Deadline","display_type":"date","value":', pos.deadline.toString(), '},'
+            '{"trait_type":"Size Remaining %","display_type":"number","value":', (ld.remainingBps / 100).toString(), '},'
         );
 
         bytes memory pnlAttr;
         if (ld.pnlReady) {
-            // Both figures are net of the premium, so a marketplace sorting on
-            // either one ranks positions the same way.
             (bool up, uint256 usdcAbs, uint256 pct) = _netReturn(pos, ld);
             pnlAttr = abi.encodePacked(
                 '{"trait_type":"Est. PnL (USDC)","display_type":"number","value":',
@@ -265,7 +203,7 @@ contract PositionNFT is ERC721Enumerable {
         return abi.encodePacked(a1, a2, a3, pnlAttr, ']');
     }
 
-    // ── Mint ───────────────────────────────────────────────────────────────────
+    // ── Mint / release (pools only) ────────────────────────────────────────────
 
     function mintLong(
         address to,
@@ -274,7 +212,7 @@ contract PositionNFT is ERC721Enumerable {
         uint256 airUsdMinted,
         uint256 airTokenLocked,
         uint256 feesPaid,
-        uint256 deadline
+        uint256 fundingIndexAtOpen
     ) external returns (uint256 tokenId) {
         if (factory == address(0)) revert FactoryNotSet();
         if (msg.sender != pool) revert OnlyPool();
@@ -284,13 +222,13 @@ contract PositionNFT is ERC721Enumerable {
         _positions[tokenId] = Position({
             isLong: true,
             pool: pool,
-            lockedAmount: airTokenLocked,
+            lockedAmountAtOpen: airTokenLocked,
             usdcIn: usdcIn,
             airUsdMinted: airUsdMinted,
             airTokenMinted: 0,
             feesPaid: feesPaid,
             openedAt: block.timestamp,
-            deadline: deadline
+            fundingIndexAtOpen: fundingIndexAtOpen
         });
 
         _safeMint(to, tokenId);
@@ -303,7 +241,7 @@ contract PositionNFT is ERC721Enumerable {
         uint256 airUsdLocked,
         uint256 usdcIn,
         uint256 feesPaid,
-        uint256 deadline
+        uint256 fundingIndexAtOpen
     ) external returns (uint256 tokenId) {
         if (factory == address(0)) revert FactoryNotSet();
         if (msg.sender != pool) revert OnlyPool();
@@ -313,92 +251,17 @@ contract PositionNFT is ERC721Enumerable {
         _positions[tokenId] = Position({
             isLong: false,
             pool: pool,
-            lockedAmount: airUsdLocked,
+            lockedAmountAtOpen: airUsdLocked,
             usdcIn: usdcIn,
             airUsdMinted: 0,
             airTokenMinted: airTokenMinted,
             feesPaid: feesPaid,
             openedAt: block.timestamp,
-            deadline: deadline
+            fundingIndexAtOpen: fundingIndexAtOpen
         });
 
         _safeMint(to, tokenId);
     }
-
-    // ── Renewal ───────────────────────────────────────────────────────────────
-
-    /**
-     * @notice Apply a renewal to a position. Pool-only.
-     *
-     *         Covers both renewal modes:
-     *           Manual  — locked/debt unchanged, deadline extended, fee added.
-     *           Auto    — the pool charges the fee against the position's own
-     *                     equity: a long's synthetic debt grows, a short's
-     *                     locked collateral shrinks. The pool passes the new
-     *                     values; this contract just records them.
-     */
-    function applyRenewal(
-        uint256 tokenId,
-        uint256 newLockedAmount,
-        uint256 newAirUsdMinted,
-        uint256 addFeesPaid,
-        uint256 newDeadline
-    ) external {
-        Position storage pos = _positions[tokenId];
-        if (pos.pool == address(0)) revert PositionNotFound();
-        if (msg.sender != pos.pool) revert PositionNotFromPool();
-        pos.lockedAmount = newLockedAmount;
-        pos.airUsdMinted = newAirUsdMinted;
-        pos.feesPaid    += addFeesPaid;
-        pos.deadline     = newDeadline;
-    }
-
-    // ── Auto-renew opt-in ─────────────────────────────────────────────────────
-
-    /**
-     * @notice Opt a position in or out of keeper-driven auto-renewal at expiry.
-     *         Holder only. `maxFee` is the ceiling on the renewal fee the pool
-     *         may charge against the position's equity — if the dynamic fee
-     *         quote exceeds it at expiry, the keeper closes instead of renewing.
-     *
-     *         The setting is cleared on every transfer: each new holder must
-     *         opt in themselves.
-     */
-    function setAutoRenew(uint256 tokenId, bool enabled, uint256 maxFee) external {
-        if (_positions[tokenId].pool == address(0)) revert PositionNotFound();
-        if (ownerOf(tokenId) != msg.sender) revert OnlyTokenOwner();
-        if (enabled) {
-            _autoRenew[tokenId] = AutoRenewConfig({enabled: true, maxFee: maxFee});
-        } else {
-            delete _autoRenew[tokenId];
-        }
-        emit AutoRenewSet(tokenId, enabled, enabled ? maxFee : 0);
-    }
-
-    /// @notice Auto-renew configuration for `tokenId` (enabled=false if unset).
-    function getAutoRenew(uint256 tokenId) external view returns (bool enabled, uint256 maxFee) {
-        AutoRenewConfig memory cfg = _autoRenew[tokenId];
-        return (cfg.enabled, cfg.maxFee);
-    }
-
-    /**
-     * @dev Clear the auto-renew opt-in on every ownership change (transfer or
-     *      burn). Opt-in is personal to the holder who set it — a buyer must
-     *      not inherit a keeper authorization they never gave.
-     */
-    function _update(address to, uint256 tokenId, address auth)
-        internal
-        override
-        returns (address from)
-    {
-        from = super._update(to, tokenId, auth);
-        if (from != address(0) && _autoRenew[tokenId].enabled) {
-            delete _autoRenew[tokenId];
-            emit AutoRenewSet(tokenId, false, 0);
-        }
-    }
-
-    // ── Release ────────────────────────────────────────────────────────────────
 
     function release(uint256 tokenId) external returns (Position memory position) {
         position = _positions[tokenId];
@@ -409,21 +272,28 @@ contract PositionNFT is ERC721Enumerable {
         _burn(tokenId);
     }
 
-    // ── Live data reader ───────────────────────────────────────────────────────
+    // ── Live data ──────────────────────────────────────────────────────────────
 
-    /**
-     * @dev Reads token metadata and the live PnL quote from the pool.
-     *      All external calls are wrapped in try/catch so tokenURI never
-     *      reverts due to pool state issues.
-     *
-     *      PnL is delegated to EXNIHILOPool.quoteClose(), the single source
-     *      of truth that mirrors the exact closeLong / closeShort settlement
-     *      math — this contract no longer replicates any AMM formulas.
-     */
+    /// @dev Best-effort pool reads; every call is try/catch so tokenURI never reverts.
     function _readLive(uint256 tokenId, Position memory pos) internal view returns (LiveData memory ld) {
         ld.tokenDecimals = 18; // safe default
 
-        // Token symbol + decimals (best-effort)
+        // Opening figures as the fallback if the pool call fails.
+        ld.locked       = pos.lockedAmountAtOpen;
+        ld.debt         = pos.isLong ? pos.airUsdMinted : pos.airTokenMinted;
+        ld.notional     = pos.usdcIn;
+        ld.remainingBps = 10_000;
+        try IEXNIHILOPool(pos.pool).liveAmountsOf(tokenId) returns (
+            uint256 liveLocked, uint256 liveDebt, uint256 liveNotional
+        ) {
+            ld.locked   = liveLocked;
+            ld.debt     = liveDebt;
+            ld.notional = liveNotional;
+            try IEXNIHILOPool(pos.pool).remainingSizeBps(tokenId) returns (uint256 bps) {
+                ld.remainingBps = bps;
+            } catch {}
+        } catch {}
+
         try IEXNIHILOPool(pos.pool).underlyingToken() returns (address token) {
             try ITokenMeta(token).symbol() returns (string memory sym) {
                 ld.tokenSymbol = sym;
@@ -433,13 +303,8 @@ contract PositionNFT is ERC721Enumerable {
             } catch {}
         } catch { ld.tokenSymbol = "TOKEN"; }
 
-        // Live PnL quote (net of close fee on profit).
-        //
-        // `ready == false` means the pool cannot settle the position at all —
-        // underwater past the point its debt can be bought back. That is a
-        // loss, not an unknown, and the pool reports the estimated shortfall in
-        // `pnl` so the certificate can show it. Only a reverting pool or a
-        // genuinely zero quote still renders "N/A".
+        // !ready still carries the estimated shortfall; only a failed or zero
+        // quote renders "N/A".
         try IEXNIHILOPool(pos.pool).quoteClose(tokenId) returns (bool ready, int256 pnl) {
             ld.pnlReady    = ready || pnl != 0;
             ld.pnlPositive = ready && pnl >= 0;
@@ -447,7 +312,7 @@ contract PositionNFT is ERC721Enumerable {
         } catch { /* pnlReady stays false */ }
     }
 
-    // ── SVG builder ────────────────────────────────────────────────────────────
+    // ── SVG ────────────────────────────────────────────────────────────────────
 
     function _buildSVG(
         uint256 tokenId,
@@ -462,30 +327,26 @@ contract PositionNFT is ERC721Enumerable {
             _svgChrome(tokenId, sc, sl, ld.tokenSymbol),
             pos.isLong ? _svgLongData(pos, ld) : _svgShortData(pos, ld),
             _svgPnl(pos, ld),
-            _svgFooter(pos),
+            _svgFooter(pos, ld),
             "</svg>"
         );
     }
 
     function _svgOpen() internal pure returns (bytes memory) {
-        // CSS animations split across two encodePacked calls to stay within
-        // the 16-argument limit.
         bytes memory styles = abi.encodePacked(
             "<defs><style>",
             ".f{font-family:'Courier New',Courier,monospace;}",
-            // Sized for a card that is usually viewed at half its 800x450
-            // canvas: 10px labels at #555 are unreadable there.
             ".lbl{font-size:13;letter-spacing:2;fill:#8a8a8a;}",
             ".val{font-size:20;fill:#e8e8e8;}",
             ".dat{font-size:16;fill:#999;}",
-            // Glitch cyan — exact keyframes from the website
+            // glitch cyan
             "@keyframes gc{",
             "0%,87%,100%{clip-path:inset(0 0 100% 0);opacity:0;transform:translateX(0)}",
             "88%{clip-path:inset(8% 0 52% 0);opacity:1;transform:translateX(-4px)}",
             "89%{clip-path:inset(30% 0 28% 0);opacity:1;transform:translateX(3px)}",
             "90%{clip-path:inset(68% 0 4% 0);opacity:1;transform:translateX(-2px)}",
             "91%{clip-path:inset(0 0 100% 0);opacity:0;transform:translateX(0)}}",
-            // Glitch red
+            // glitch red
             "@keyframes gr{",
             "0%,89%,100%{clip-path:inset(0 0 100% 0);opacity:0;transform:translateX(0)}",
             "90%{clip-path:inset(48% 0 12% 0);opacity:1;transform:translateX(4px)}",
@@ -497,7 +358,7 @@ contract PositionNFT is ERC721Enumerable {
             "</style></defs>"
         );
 
-        // 800x450 — 16:9, the ratio X renders in-timeline without cropping.
+        // 800x450 (16:9) so X renders it uncropped.
         bytes memory chrome = abi.encodePacked(
             '<rect width="800" height="450" fill="#000"/>',
             '<rect x="1" y="1" width="798" height="448" fill="none" stroke="#1a1a1a"/>',
@@ -507,7 +368,7 @@ contract PositionNFT is ERC721Enumerable {
             '<polyline points="776,449 799,449 799,426"  fill="none" stroke="#00e5ff" stroke-width="1.5"/>'
         );
 
-        // Three-layer glitch title: cyan behind, red behind, white on top
+        // Glitch title: cyan and red layers under white.
         bytes memory title = abi.encodePacked(
             '<text x="32" y="58" class="f gc" font-size="32" letter-spacing="8" font-weight="bold">EXNIHILO</text>',
             '<text x="32" y="58" class="f gr" font-size="32" letter-spacing="8" font-weight="bold">EXNIHILO</text>',
@@ -532,7 +393,6 @@ contract PositionNFT is ERC721Enumerable {
     ) internal pure returns (bytes memory) {
         string memory market = string(abi.encodePacked(tokenSymbol, " / USDC"));
 
-        // Split across two calls to stay within encodePacked's 16-argument limit.
         bytes memory badge = abi.encodePacked(
             '<rect x="32" y="110" width="74" height="26" fill="', sc, '" fill-opacity="0.08"/>',
             '<rect x="32" y="110" width="74" height="26" fill="none" stroke="', sc, '" stroke-opacity="0.35"/>',
@@ -547,29 +407,26 @@ contract PositionNFT is ERC721Enumerable {
         return abi.encodePacked(badge, head);
     }
 
+    // Stats strip columns 1-3; the footer adds 4-5.
     function _svgLongData(Position memory pos, LiveData memory ld) internal pure returns (bytes memory) {
-        // Columns 1-3 of the bottom stats strip; the footer adds 4-5.
         string memory lockedLabel = string(abi.encodePacked("LOCKED ", ld.tokenSymbol));
         return abi.encodePacked(
             '<text x="32"  y="330" class="f lbl">POSITION SIZE</text>',
             '<text x="196" y="330" class="f lbl">', lockedLabel, "</text>",
             '<text x="360" y="330" class="f lbl">PREMIUM PAID</text>',
-            '<text x="32"  y="360" class="f val">', _fmt6(pos.usdcIn),        "</text>",
-            '<text x="196" y="360" class="f val">', _fmtToken(pos.lockedAmount, ld.tokenDecimals), "</text>",
+            '<text x="32"  y="360" class="f val">', _fmt6(ld.notional),       "</text>",
+            '<text x="196" y="360" class="f val">', _fmtToken(ld.locked, ld.tokenDecimals), "</text>",
             '<text x="360" y="360" class="f val">', _fmt6(pos.feesPaid), "</text>"
         );
     }
 
-    function _svgShortData(Position memory pos, LiveData memory) internal pure returns (bytes memory) {
-        // Mirrors the long layout (SIZE | LOCKED collateral) so both sides
-        // read the same. The airToken debt stays in the JSON attributes for
-        // marketplace pricing — on the certificate it is noise.
+    function _svgShortData(Position memory pos, LiveData memory ld) internal pure returns (bytes memory) {
         return abi.encodePacked(
             '<text x="32"  y="330" class="f lbl">POSITION SIZE</text>',
             '<text x="196" y="330" class="f lbl">LOCKED USDC</text>',
             '<text x="360" y="330" class="f lbl">PREMIUM PAID</text>',
-            '<text x="32"  y="360" class="f val">', _fmt6(pos.usdcIn),      "</text>",
-            '<text x="196" y="360" class="f val">', _fmt6(pos.lockedAmount), "</text>",
+            '<text x="32"  y="360" class="f val">', _fmt6(ld.notional),     "</text>",
+            '<text x="196" y="360" class="f val">', _fmt6(ld.locked), "</text>",
             '<text x="360" y="360" class="f val">', _fmt6(pos.feesPaid),     "</text>"
         );
     }
@@ -586,14 +443,11 @@ contract PositionNFT is ERC721Enumerable {
             pnlText  = "N/A";
             caption  = "POOL CANNOT PRICE THIS POSITION";
         } else if (usdcAbs == 0) {
-            // Exactly break-even: the payout gives the premium back and no more.
             pnlColor = "#aaaaaa";
             pnlText  = "$0.00";
             caption  = "NET OF PREMIUM PAID";
         } else {
-            // Colour tracks the RETURN, not the payout: a position can pay out
-            // a positive number and still sit far below the premium that bought
-            // it, and painting that green would sell a loss as a win.
+            // Colour follows the net return, not the payout.
             pnlColor = up ? "#00ff88" : "#ff3b30";
             string memory pctPart = "";
             if (pos.feesPaid > 0) {
@@ -607,9 +461,6 @@ contract PositionNFT is ERC721Enumerable {
             caption = "NET OF PREMIUM PAID";
         }
 
-        // Hero of the card — centred in the open space above the stats strip.
-        // Figure and percent are both net of the premium, so the caption names
-        // the one basis rather than reconciling two.
         return abi.encodePacked(
             '<text x="400" y="196" class="f lbl" text-anchor="middle" letter-spacing="4">EST. PnL</text>',
             '<text x="400" y="252" class="f" font-size="56" font-weight="bold" fill="', pnlColor, '" text-anchor="middle" letter-spacing="2">', pnlText, "</text>",
@@ -617,14 +468,13 @@ contract PositionNFT is ERC721Enumerable {
         );
     }
 
-    function _svgFooter(Position memory pos) internal pure returns (bytes memory) {
-        // Divider above the strip, columns 4-5, and the tagline.
+    function _svgFooter(Position memory pos, LiveData memory ld) internal pure returns (bytes memory) {
         return abi.encodePacked(
             '<line x1="32" y1="300" x2="768" y2="300" stroke="#1a1a1a"/>',
             '<text x="524" y="330" class="f lbl">OPENED</text>',
             '<text x="524" y="360" class="f dat">', _fmtDate(pos.openedAt), "</text>",
-            '<text x="656" y="330" class="f lbl">EXPIRES</text>',
-            '<text x="656" y="360" class="f dat">', _fmtDate(pos.deadline), "</text>",
+            '<text x="656" y="330" class="f lbl">SIZE LEFT</text>',
+            '<text x="656" y="360" class="f dat">', (ld.remainingBps / 100).toString(), '%', "</text>",
             '<text x="768" y="424" class="f" font-size="12" letter-spacing="3" fill="#555" text-anchor="end">OUT OF THIN AIR</text>',
             '<text x="32" y="424" class="f" font-size="12" letter-spacing="2" fill="#555">exnihilo.markets</text>'
         );
@@ -639,10 +489,7 @@ contract PositionNFT is ERC721Enumerable {
         return string(abi.encodePacked(whole.toString(), ".", frac.toString()));
     }
 
-    /**
-     * @dev Format a token amount with up to 4 fractional digits, adapting to
-     *      the token's actual decimal count (works for 18, 8, 6, etc.).
-     */
+    /// @dev Up to 4 fractional digits, for any token decimals.
     function _fmtToken(uint256 v, uint8 dec) internal pure returns (string memory) {
         if (dec == 0) return v.toString();
         uint256 unit = 10 ** uint256(dec);

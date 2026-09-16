@@ -26,7 +26,7 @@ input[type="number"] { -moz-appearance: textfield; }
   --muted: #6a6a6a;
   --dim: #3a3a3a;
   /* Short-side identity — distinct from --red so "short" never reads as
-     "error/danger". Losses, errors, and expiry stay --red. */
+     "error/danger". Losses and errors stay --red. */
   --magenta: #ff2d9d;
   --magenta-glow: rgba(255, 45, 157, 0.1);
   --font-display: "Bebas Neue", "Arial Black", sans-serif;

@@ -1,83 +1,46 @@
 ---
-description: "As the LP you are the option writer: you collect every premium and pay every winning close. How fee income accrues and what it genuinely costs you."
+description: "As the LP you are the option writer: you collect the premium and funding on every position and pay every winning close. How income accrues and what it genuinely costs you."
 ---
 
 # LP Fee Earnings
 
 ## You are the counterparty
 
-Read this before depositing.
+In option terms **the LP is the writer**. Every position in your pool is written against your
+liquidity: you collect the premium and the funding, and when a trader closes in profit, the profit
+is paid from your reserves. There is no insurance fund. Writing options pays when premiums exceed
+payouts and loses when a trader catches a large move.
 
-In option terms, **the LP is the writer**. Every position opened in your pool is written
-against your liquidity: you collect the premium, and when a trader closes in profit,
-that profit is paid out of your backed reserves. There is no shared insurance fund and
-no other party absorbing it.
+Three protections apply, and none of them are yours to set:
 
-This is not a hidden risk — it is the business you are entering. Writing options is
-profitable when premiums collected exceed payouts made, and loss-making when a trader
-catches a large move in a pool that let them size into it.
-
-**Three things protect you, and none of them are yours to set:**
-
-| Protection | Who sets it |
+| Protection | What it does |
 |---|---|
-| **Position cap** — bounds any single position to a share of reserves, 1% at launch rising to 20% over 24h | Protocol, automatic |
-| **Impact fee** — scales quadratically with position size and open interest, sized to compensate above the price-distortion cost of writing the position | Protocol, automatic |
-| **Pool isolation** — one pool's losses never touch another | Protocol, structural |
-
-The impact fee is what makes the math work. A position small relative to your reserves
-pays almost nothing extra — and can only win a correspondingly small amount. A position
-large relative to your reserves pays sharply more, precisely because it is the one that
-could hurt you. The cap decides where that line sits, and the protocol sets it — not you.
+| **Position cap** | Bounds one position to 1% of your USDC at launch, 20% after 24 hours |
+| **Impact fee** | Charges large positions and crowded sides quadratically more |
+| **Pool isolation** | One pool's losses never touch another |
 
 ::: warning Depth is your only lever
-The cap is a share of your reserves, so the size a single trader can take against you is
-decided by how much you seed. You cannot tighten it if you get nervous, and you cannot
-widen it to attract larger flow. Seed only what you can afford to see drawn down.
+The cap is a share of your reserves, so what one trader can take against you is set by how much you
+seed, and you cannot tighten it. Seed only what you can afford to see drawn down.
 :::
 
-## Revenue sources
+## Income
 
-LPs earn fees from three sources.
+| Source | Rate | Where it goes |
+|---|---|---|
+| Open fee | 4% of notional (of the 5% base) | `lpFeesAccumulated` — claim with `claimFees(to)` |
+| Impact fee | Grows with size and open interest | `lpFeesAccumulated` |
+| Funding | Continuous, 100% to you | The pool's reserves — not claimable |
+| Swap fees | 1% of every swap | The pool's reserves — not claimable |
 
-## 1. Position open fees — 4% of notional
+Funding and swap fees deepen the pool rather than paying out; you receive them when you withdraw.
+Funding does not appear in the fee accumulators — track it with the `FundingAccrued` event or the
+indexer's `/funding/:pool`. See [Funding](/positions/funding).
 
-Every time a trader opens a long or short, 4% of the USDC notional is added to `lpFeesAccumulated`. Renewals accrue 4% of the position's current mark value (notional + profit) plus the renewal impact slice. The LP can claim these at any time via `claimFees(to)`.
+`claimFees(to)` sends the accumulated USDC to `to` and resets the balance. Only the current LP NFT
+holder can claim, and fees are never pushed.
 
-```
-baseFee = usdcAmount * 5 / 100
-lpShare = baseFee * 4 / 5    // 4% of notional
-```
+## What drives it
 
-## 2. Impact fee — dynamic, scales with position size and OI
-
-An additional impact fee is charged on every position open and goes **entirely to the LP**. This fee protects against LP drain attacks by scaling quadratically with position size relative to pool liquidity.
-
-```
-impactFee = 1500 × N × (2 × OI + N) / (2 × backedAirUsd × 10000)
-```
-
-The impact fee is negligible for small positions in deep pools but becomes significant when positions are large relative to the pool — exactly when LP protection matters most.
-
-## 3. Swap fees — passive yield
-
-The 1% swap fee stays in the pool on every swap. This implicitly increases the LP's backed reserves over time — it's not claimed separately, it's reflected in larger withdrawal amounts.
-
-## Claiming fees
-
-Call `claimFees(to)` on the pool. The accumulated USDC (base LP fee + impact fee) is transferred to `to` and `lpFeesAccumulated` resets to zero. Fees are pull payments — nothing is ever pushed automatically, so no wallet condition can interfere with pool operations.
-
-Only the current LP NFT holder can claim.
-
-## Revenue model
-
-LP earnings scale with:
-- **Number of positions opened** — more opens = more base fees
-- **Position size relative to pool** — larger positions pay more impact fee
-- **Cumulative open interest** — more OI = higher impact fees on new positions
-- **Swap volume** — more swaps = more passive yield
-- **Pool TVL** — larger pools attract more traders
-
-::: tip
-The impact fee ensures that LPs are always compensated more than the price-distortion cost of any position — no profitable drain strategy exists.
-:::
+More positions opened, larger positions relative to the pool, more crowding on a side, more swap
+volume — and time, since funding accrues on every open position every second.
