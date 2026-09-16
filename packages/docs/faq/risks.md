@@ -30,11 +30,15 @@ deployed. See [Security](/protocol/security).
 
   A crowded side pays several times more. A position held through a long flat stretch can lose most
   of its size without the price ever moving against you. Check `remainingSizeBps(nftId)`.
-- **Markets can be wound down.** If the LP or the factory's emergency role closes a pool, no new
-  positions open, and after 7 days funding doubles daily — a position you do not close decays away
-  within about eleven more days.
+- **Markets can be wound down.** If the pool's LP closes it, no new positions open, and after 7
+  days funding doubles daily — a position you do not close decays away within about eleven more
+  days. Nobody but that LP can do this.
 - **Settlement runs through the pool's curves.** Large positions in small pools lose a lot to
   slippage, and a close right after a sharp favourable move may be priced at the earlier price.
+- **A close can be held back for a few seconds.** A close is priced against the worst of the last
+  5 block opens, so after a sharp dip — or someone pushing the price down at a block boundary — a
+  position in profit can refuse to close until the dip ages out. Retry shortly. Someone repeating
+  the push can keep a position near break-even from closing for as long as they keep it up.
 - There are no stop-losses.
 
 ## As an LP

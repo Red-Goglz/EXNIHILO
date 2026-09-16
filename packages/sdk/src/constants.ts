@@ -47,6 +47,10 @@ export const CAP_RAMP_SECONDS = 86_400n; // 24 hours
  * A close is priced against the worst of the last CLAMP_BLOCKS block-opens
  * wherever that is less favourable than live, so a holder cannot close at a
  * price they just moved (audit H-2). Quote with `quoteClose`, which applies it.
+ *
+ * The same rule can hold a close back: a price move that stood at any recent
+ * block open blocks a close that is in profit at live reserves, until it ages
+ * out. `quoteCloseUnclamped` tells that apart from a real loss.
  */
 export const CLAMP_BLOCKS = 5n;
 

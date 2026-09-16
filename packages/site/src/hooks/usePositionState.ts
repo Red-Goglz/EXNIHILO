@@ -29,6 +29,25 @@ const RAY = 10n ** 27n;
 /** Below this fraction of opening collateral, anyone may sweep the position. */
 const SWEEP_DUST_BPS = 10n;
 
+/** Shown when a recent price move is holding a profitable close back. */
+export const CLOSE_HELD_BACK_TIP =
+  "The price moved in the last few blocks. A close is priced against the worst " +
+  "recent price, so it is held back until that move ages out, usually a few " +
+  "seconds. Your position is still in profit: retry shortly.";
+
+// Positions of the two close quotes in usePositionState's read batch.
+const CLOSE_QUOTE_INDEX = 7;
+const CLOSE_UNCLAMPED_INDEX = 8;
+
+/** In profit at live reserves, but not closeable at the clamped quote. */
+function closeHeldBackFrom(data: unknown): boolean {
+  const reads = data as ReadonlyArray<{ result?: unknown }> | undefined;
+  const clamped = reads?.[CLOSE_QUOTE_INDEX]?.result as readonly [boolean, bigint] | undefined;
+  const live = reads?.[CLOSE_UNCLAMPED_INDEX]?.result as readonly [boolean, bigint] | undefined;
+  const canClose = (clamped?.[0] ?? false) && (clamped?.[1] ?? 0n) > 0n;
+  return !canClose && (live?.[0] ?? false) && (live?.[1] ?? 0n) > 0n;
+}
+
 /** Parse a "12.50"-style USDC string into 6-dec units. Null if malformed. */
 export function parseUsdcInput(s: string): bigint | null {
   const m = s.trim().match(/^(\d+)(?:\.(\d{0,6}))?$/);
@@ -104,6 +123,12 @@ export interface PositionState {
   windDownShift: bigint;
   // Close
   canClose: boolean;
+  /**
+   * In profit at live reserves, but a price move in the last few blocks is
+   * holding the close back. Clears on its own within a few blocks — show
+   * "retry shortly", not a loss.
+   */
+  closeHeldBack: boolean;
   closeStatus: TxStatus;
   close: (to?: `0x${string}`) => void;
   // Timing
@@ -140,6 +165,12 @@ export function usePositionState(
   const poolContract = { address: position.pool, abi: exnihiloPoolAbi, chainId } as const;
 
   const { data } = useReadContracts({
+    // While a close is held back, re-read until it clears so the button comes
+    // back without a reload.
+    query: {
+      refetchInterval: (q: { state: { data?: unknown } }) =>
+        closeHeldBackFrom(q.state.data) ? 3_000 : false,
+    },
     contracts: [
       { ...poolContract, functionName: "underlyingToken" },
       { ...poolContract, functionName: "closeDate" },
@@ -149,6 +180,7 @@ export function usePositionState(
       { ...poolContract, functionName: "liveAmountsOf", args: [tokenId] },
       { ...poolContract, functionName: "remainingSizeBps", args: [tokenId] },
       { ...poolContract, functionName: "quoteClose", args: [tokenId] },
+      { ...poolContract, functionName: "quoteCloseUnclamped", args: [tokenId] },
     ],
   });
 
@@ -164,7 +196,8 @@ export function usePositionState(
   const debt            = live?.[1] ?? (position.isLong ? position.airUsdMinted : position.airTokenMinted);
   const notional        = live?.[2] ?? position.usdcIn;
   const remainingBps    = (data?.[6]?.result as bigint | undefined) ?? 10_000n;
-  const closeQuote      = data?.[7]?.result as readonly [boolean, bigint] | undefined;
+  const closeQuote      = data?.[CLOSE_QUOTE_INDEX]?.result as readonly [boolean, bigint] | undefined;
+  const unclampedQuote  = data?.[CLOSE_UNCLAMPED_INDEX]?.result as readonly [boolean, bigint] | undefined;
 
   const isMarketClosed = poolCloseDate !== undefined && poolCloseDate > 0n;
   // closeDate is the END of the grace period; show when closePool was called.
@@ -237,8 +270,16 @@ export function usePositionState(
   const hasPnl = closeQuote !== undefined;
   const canClose = quoteReady && quotePnl > 0n;
 
-  const pnlPositiveRaw = quotePnl > 0n;
-  const pnlAbsRaw = quotePnl >= 0n ? quotePnl : -quotePnl;
+  // quoteClose prices against the worst of the last few block opens, so a
+  // price move that stood at one of them can make a profitable position quote
+  // as underwater for a few blocks. The unclamped quote tells that apart from a
+  // real loss. While held back, show the live figure: the clamped one would
+  // flash a loss that is gone a few seconds later.
+  const closeHeldBack = closeHeldBackFrom(data);
+  const shownPnl = closeHeldBack ? unclampedQuote![1] : quotePnl;
+
+  const pnlPositiveRaw = shownPnl > 0n;
+  const pnlAbsRaw = shownPnl >= 0n ? shownPnl : -shownPnl;
 
   // ── Net result ──────────────────────────────────────────────────────────
   // Mirrors PositionNFT._netReturn exactly, so the app and the position
@@ -282,6 +323,7 @@ export function usePositionState(
     isDust: remainingBps < SWEEP_DUST_BPS,
     windDownShift,
     canClose,
+    closeHeldBack,
     closeStatus,
     close,
     openedDate,

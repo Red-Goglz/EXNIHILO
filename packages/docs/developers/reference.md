@@ -26,7 +26,7 @@ description: "Function reference for EXNIHILOPool, the factory, router, NFTs and
 | `removeLiquidity()` | LP | Withdraw everything; requires no open positions |
 | `claimFees(to)` | LP | Claim LP fees |
 | `claimProtocolFees(to)` | Treasury | Claim protocol fees |
-| `closePool()` | LP or factory `deployer` | Irreversible. Blocks opens now; after `closeDate` (now + 7 days) funding doubles daily |
+| `closePool()` | LP | Irreversible. Blocks opens now; after `closeDate` (now + 7 days) funding doubles daily |
 
 ### Views
 
@@ -39,6 +39,7 @@ description: "Function reference for EXNIHILOPool, the factory, router, NFTs and
 | `openPositionCount()` | Number of open positions |
 | `quoteOpenFee(notional, isLong)` | The exact open fee now |
 | `quoteClose(nftId)` | `(ready, pnl)` for a close in the next block, clamp included; `pnl` is net of the close fee, negative when underwater (an estimate when `ready` is false) |
+| `quoteCloseUnclamped(nftId)` | The same at live reserves, without the clamp. Not what a close pays: in profit here but not in `quoteClose` means a recent price move is holding the close back — retry within a few blocks |
 | `liveAmountsOf(nftId)` | `(locked, debt, notional)` now, net of funding |
 | `effectiveLockedOf(nftId)` / `remainingSizeBps(nftId)` | Live collateral; what is left of the opening size, in bps |
 | `fundingRatePerSecond(isLong)` | Current rate in RAY per second, including any wind-down multiplier |
@@ -80,8 +81,10 @@ different units, never summed.
 |---|---|
 | `createMarket(tokenAddress, usdcAmount, tokenAmount)` | Deploy and seed a market; returns `(pool, lpNftId)` |
 | `allPools(i)` / `allPoolsLength()` / `isPool(address)` | Enumerate and check markets |
-| `deployer()` / `setDeployer(address)` | The emergency role that can call `closePool`; set `address(0)` to renounce |
 | `usdc()` / `protocolTreasury()` / `positionNFT()` / `lpNftContract()` / `poolDeployer()` | Immutables |
+
+The factory has no owner and no admin function. Earlier deployments exposed `deployer()` /
+`setDeployer(address)`, an emergency role that could call `closePool` on any pool; it was removed.
 
 ## EXNIHILORouter
 

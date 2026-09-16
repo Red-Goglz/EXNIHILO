@@ -72,8 +72,15 @@ export async function getPositionOwner(ctx: Ctx, tokenId: bigint): Promise<Addre
 
 export interface PositionState extends Position {
   owner: Address;
-  /** Live close quote. `ready` false means it cannot be settled right now. */
+  /** Close quote, clamped as a close sent now settles. `ready` false means it cannot be settled right now. */
   close: { ready: boolean; pnl: bigint };
+  /**
+   * True when the position is in profit at live reserves but a price move in
+   * the last few blocks is holding the close back. It clears on its own within
+   * CLAMP_BLOCKS; tell the holder to retry shortly rather than that they are
+   * losing.
+   */
+  closeHeldBack: boolean;
   /**
    * Collateral backing the position RIGHT NOW, net of all funding charged since
    * it opened — including funding the pool has accrued but not yet written to
@@ -109,7 +116,7 @@ export async function getPositionState(
 ): Promise<PositionState> {
   const position = await getPosition(ctx, tokenId);
 
-  const [owner, closeRaw, live, remainingBps] = (await ctx.publicClient.multicall({
+  const [owner, closeRaw, live, remainingBps, unclampedRaw] = (await ctx.publicClient.multicall({
     contracts: [
       {
         address: ctx.addresses.positionNFT,
@@ -135,14 +142,24 @@ export async function getPositionState(
         functionName: "remainingSizeBps",
         args: [tokenId],
       },
+      {
+        address: position.pool,
+        abi: exnihiloPoolAbi,
+        functionName: "quoteCloseUnclamped",
+        args: [tokenId],
+      },
     ],
     allowFailure: false,
-  })) as [Address, [boolean, bigint], readonly [bigint, bigint, bigint], bigint];
+  })) as [Address, [boolean, bigint], readonly [bigint, bigint, bigint], bigint, [boolean, bigint]];
+
+  const canClose = closeRaw[0] && closeRaw[1] > 0n;
+  const liveInProfit = unclampedRaw[0] && unclampedRaw[1] > 0n;
 
   return {
     ...position,
     owner,
     close: { ready: closeRaw[0], pnl: closeRaw[1] },
+    closeHeldBack: liveInProfit && !canClose,
     lockedAmount: live[0],
     debt: live[1],
     notional: live[2],

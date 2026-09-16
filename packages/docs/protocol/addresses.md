@@ -26,9 +26,10 @@ not bridged `USDC.e`.
 
 ::: warning Immutable
 The factory has no owner. `usdc` and `protocolTreasury` are constructor immutables and every pool
-parameter is a contract constant, so changing any of them means deploying a new protocol. The one
-privileged role is `deployer`, which can call `closePool` on any pool. It is currently the deploying
-EOA above, and can be transferred or renounced by setting it to `address(0)`.
+parameter is a contract constant, so changing any of them means deploying a new protocol. The
+contracts listed here still carry one privileged role, `deployer` — currently the deploying EOA
+above — which can call `closePool` on any pool. The next deployment removes it: its factory has no
+role at all, and only a pool's own LP can close it.
 :::
 
 Each market is one `EXNIHILOPool`, emitted in `MarketCreated` and listed by

@@ -55,10 +55,6 @@ interface ILpNFT {
     function ownerOf(uint256 tokenId) external view returns (address);
 }
 
-interface IEXNIHILOFactory {
-    function deployer() external view returns (address);
-}
-
 /**
  * @title  EXNIHILOPool
  * @notice One token/USDC market: a spot AMM plus fee-only leveraged longs and
@@ -131,7 +127,8 @@ contract EXNIHILOPool is ReentrancyGuard {
     address public immutable protocolTreasury;
     /// @notice Creation time; anchors the position-cap ramp and the funding window.
     uint256 public immutable createdAt;
-    IEXNIHILOFactory public immutable factory;
+    /// @notice The factory that created this pool. It holds no authority over it.
+    address public immutable factory;
 
     // ── State ─────────────────────────────────────────────────────────────────
 
@@ -223,7 +220,6 @@ contract EXNIHILOPool is ReentrancyGuard {
     error FeeOnTransferNotSupported();
     error PoolClosing();
     error PoolAlreadyClosed();
-    error OnlyLpHolderOrDeployer();
     error OnlyTreasury();
     error PositionNotDust();
 
@@ -284,16 +280,10 @@ contract EXNIHILOPool is ReentrancyGuard {
     // ── Admin ─────────────────────────────────────────────────────────────────
 
     /// @notice Start the irreversible wind-down: blocks new opens and sets
-    ///         closeDate = now + WIND_DOWN_GRACE. LP holder or factory deployer.
-    function closePool() external nonReentrant {
+    ///         closeDate = now + WIND_DOWN_GRACE. LP holder only, so a pool whose
+    ///         LP NFT is locked in a LockedLpVault can never be closed.
+    function closePool() external nonReentrant onlyLpHolder {
         if (closeDate != 0) revert PoolAlreadyClosed();
-
-        address lpHolder = lpNftContract.ownerOf(lpNftId);
-        address emergencyDeployer = factory.deployer();
-
-        if (msg.sender != lpHolder && msg.sender != emergencyDeployer) {
-            revert OnlyLpHolderOrDeployer();
-        }
 
         // Charge time already elapsed before closeDate exists.
         _accrueFunding();
@@ -330,7 +320,7 @@ contract EXNIHILOPool is ReentrancyGuard {
         lpNftId          = lpNftId_;
         protocolTreasury = protocolTreasury_;
         createdAt        = block.timestamp;
-        factory          = IEXNIHILOFactory(factory_);
+        factory          = factory_;
 
         lastFundingLong  = block.timestamp;
         lastFundingShort = block.timestamp;
@@ -691,7 +681,7 @@ contract EXNIHILOPool is ReentrancyGuard {
         (totalFee,,) = _openFees(notional, _projectedOpenInterest(isLong));
     }
 
-    /// @notice Close quote for display.
+    /// @notice Close quote for display, clamped as a close sent now would be.
     /// @return ready False when the settlement math cannot price the position.
     /// @return pnl   Net payout when non-negative; otherwise the (estimated) shortfall.
     function quoteClose(uint256 nftId) external view returns (bool ready, int256 pnl) {
@@ -702,6 +692,25 @@ contract EXNIHILOPool is ReentrancyGuard {
         // and the clamp window it will face.
         (bool priceable, uint256 surplus, uint256 deficit,) =
             _priceCloseClamped(pos, block.number + 1);
+        return _closeQuote(pos, priceable, surplus, deficit);
+    }
+
+    /// @notice quoteClose at live reserves, without the clamp. Where this is in
+    ///         profit and quoteClose is not, a recent price move is holding the
+    ///         close back and it clears within CLAMP_BLOCKS. Not what a close pays now.
+    function quoteCloseUnclamped(uint256 nftId) external view returns (bool ready, int256 pnl) {
+        Position memory pos = positionNFT.getPosition(nftId);
+        if (pos.pool != address(this)) revert PositionNotFromThisPool();
+
+        (bool priceable, uint256 surplus, uint256 deficit,) = _priceClose(pos);
+        return _closeQuote(pos, priceable, surplus, deficit);
+    }
+
+    function _closeQuote(Position memory pos, bool priceable, uint256 surplus, uint256 deficit)
+        internal
+        view
+        returns (bool, int256)
+    {
         if (!priceable) return (false, -int256(_quoteShortfall(pos)));
         if (deficit > 0) return (true, -int256(deficit));
         return (true, int256(surplus - (surplus * CLOSE_FEE_BPS) / BPS_DENOM));

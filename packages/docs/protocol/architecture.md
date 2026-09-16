@@ -21,7 +21,7 @@ PreMarketFactory ──► PreMarket ── buyout ──► EXNIHILOFactory
 
 | Contract | Role |
 |---|---|
-| **EXNIHILOFactory** | Permissionless `createMarket`: deploys the pool through `PoolDeployer`, mints the LP NFT and seeds liquidity in one transaction. Its one privileged role, `deployer`, can call `closePool` on any pool |
+| **EXNIHILOFactory** | Permissionless `createMarket`: deploys the pool through `PoolDeployer`, mints the LP NFT and seeds liquidity in one transaction. It has no owner and no privileged role |
 | **EXNIHILOPool** | Everything per market — the three curves, swaps, positions, funding, dust sweeps, liquidity, fee accounting and position caps. Holds all tokens and all collateral |
 | **PositionNFT** | Shared ERC-721 registry of positions with on-chain SVG metadata. Holds no funds; only the owning pool can release a position |
 | **LpNFT** | ERC-721, one per pool; its holder is that pool's LP |

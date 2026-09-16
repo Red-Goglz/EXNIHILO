@@ -42,11 +42,6 @@ contract EXNIHILOFactory is ReentrancyGuard {
     address public immutable protocolTreasury;
     IPoolDeployer public immutable poolDeployer;
 
-    // ── Emergency admin ───────────────────────────────────────────────────────
-
-    /// @notice May close any pool. Set to zero to renounce.
-    address public deployer;
-
     // ── Registry ──────────────────────────────────────────────────────────────
 
     mapping(address => bool) public isPool;
@@ -54,7 +49,6 @@ contract EXNIHILOFactory is ReentrancyGuard {
 
     // ── Errors ────────────────────────────────────────────────────────────────
 
-    error OnlyDeployer();
     error ZeroAddress();
     error ZeroAmount();
     error TokenIsUsdc();
@@ -89,7 +83,6 @@ contract EXNIHILOFactory is ReentrancyGuard {
         usdc              = usdc_;
         protocolTreasury  = protocolTreasury_;
         poolDeployer      = IPoolDeployer(poolDeployer_);
-        deployer          = msg.sender;
     }
 
     // ── Market creation ───────────────────────────────────────────────────────
@@ -149,14 +142,6 @@ contract EXNIHILOFactory is ReentrancyGuard {
         allPools.push(pool);
 
         emit MarketCreated(pool, tokenAddress, msg.sender, lpNftId);
-    }
-
-    // ── Emergency admin ───────────────────────────────────────────────────────
-
-    /// @notice Hand over the emergency role; address(0) renounces it permanently.
-    function setDeployer(address newDeployer) external {
-        if (msg.sender != deployer) revert OnlyDeployer();
-        deployer = newDeployer;
     }
 
     function allPoolsLength() external view returns (uint256) {

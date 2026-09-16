@@ -37,11 +37,6 @@ export const exnihiloFactoryAbi = [
   },
   {
     "inputs": [],
-    "name": "OnlyDeployer",
-    "type": "error"
-  },
-  {
-    "inputs": [],
     "name": "ReentrancyGuardReentrantCall",
     "type": "error"
   },
@@ -169,19 +164,6 @@ export const exnihiloFactoryAbi = [
     "type": "function"
   },
   {
-    "inputs": [],
-    "name": "deployer",
-    "outputs": [
-      {
-        "internalType": "address",
-        "name": "",
-        "type": "address"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
     "inputs": [
       {
         "internalType": "address",
@@ -250,19 +232,6 @@ export const exnihiloFactoryAbi = [
       }
     ],
     "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "address",
-        "name": "newDeployer",
-        "type": "address"
-      }
-    ],
-    "name": "setDeployer",
-    "outputs": [],
-    "stateMutability": "nonpayable",
     "type": "function"
   },
   {

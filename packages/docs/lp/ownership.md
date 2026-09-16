@@ -27,8 +27,9 @@ the funding rate doubles every day. Trading and closes continue and nothing is f
 positions nobody closes decay into sweep range within about eleven days of the grace period
 ending. Once every position is closed or swept, `removeLiquidity()` works.
 
-The factory's emergency `deployer` role can also close any pool. Announce a closure before calling
-it — holders need the grace period to exit.
+Only the LP can close a pool; the factory has no role that can. Announce a closure before calling
+it — holders need the grace period to exit. A launchpad market's LP NFT is locked in a
+`LockedLpVault`, which has no path to `closePool`, so such a market can never be wound down.
 
 ## Why one LP
 

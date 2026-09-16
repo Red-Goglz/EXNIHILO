@@ -921,6 +921,26 @@ describe("Funding", function () {
       expect(b - a).to.be.lte(b / 1_000n + 2n);
     });
 
+    it("can only be started by the LP; the factory has no role that can", async function () {
+      // The factory's emergency deployer role was removed (audit R3, NM-R3-005):
+      // closePool decays every open position, and one key able to do that to
+      // every pool — launchpad markets included — was more power than a brake needs.
+      const { pool, factory, trader1 } = await loadFixture(fixture);
+      const factoryDeployer = (await ethers.getSigners())[8];
+
+      for (const who of [factoryDeployer, trader1]) {
+        await expect(pool.connect(who).closePool())
+          .to.be.revertedWithCustomError(pool, "OnlyLpHolder");
+      }
+      expect(await pool.closeDate()).to.equal(0n);
+
+      const fns = factory.interface.fragments
+        .filter((f: any) => f.type === "function")
+        .map((f: any) => f.name);
+      expect(fns).to.not.include("deployer");
+      expect(fns).to.not.include("setDeployer");
+    });
+
     it("blocks new positions immediately", async function () {
       const { pool, poolAddress, usdc, trader1, creator } = await loadFixture(fixture);
       await (await pool.connect(creator).closePool()).wait();

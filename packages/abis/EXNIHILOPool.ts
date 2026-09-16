@@ -72,11 +72,6 @@ export const exnihiloPoolAbi = [
   },
   {
     "inputs": [],
-    "name": "OnlyLpHolderOrDeployer",
-    "type": "error"
-  },
-  {
-    "inputs": [],
     "name": "OnlyPositionHolder",
     "type": "error"
   },
@@ -751,7 +746,7 @@ export const exnihiloPoolAbi = [
     "name": "factory",
     "outputs": [
       {
-        "internalType": "contract IEXNIHILOFactory",
+        "internalType": "address",
         "name": "",
         "type": "address"
       }
@@ -1148,6 +1143,30 @@ export const exnihiloPoolAbi = [
       }
     ],
     "name": "quoteClose",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "ready",
+        "type": "bool"
+      },
+      {
+        "internalType": "int256",
+        "name": "pnl",
+        "type": "int256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "nftId",
+        "type": "uint256"
+      }
+    ],
+    "name": "quoteCloseUnclamped",
     "outputs": [
       {
         "internalType": "bool",

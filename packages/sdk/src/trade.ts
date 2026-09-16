@@ -36,7 +36,10 @@ export interface CloseQuote {
   pnl: bigint;
 }
 
-/** Live close quote, mirroring settlement maths exactly. */
+/**
+ * Close quote as a close sent now would settle, including the close-price
+ * clamp (see CLAMP_BLOCKS). This is what a close pays, and what gates it.
+ */
 export async function quoteClose(
   ctx: Ctx,
   pool: Address,
@@ -46,6 +49,26 @@ export async function quoteClose(
     address: pool,
     abi: exnihiloPoolAbi,
     functionName: "quoteClose",
+    args: [tokenId],
+  })) as [boolean, bigint];
+  return { ready, pnl };
+}
+
+/**
+ * Close quote at live reserves, without the clamp. Not what a close pays now:
+ * use it only to tell a real loss from a close a recent price move is holding
+ * back. When this is in profit and `quoteClose` is not, retry within a few
+ * blocks.
+ */
+export async function quoteCloseUnclamped(
+  ctx: Ctx,
+  pool: Address,
+  tokenId: bigint
+): Promise<CloseQuote> {
+  const [ready, pnl] = (await ctx.publicClient.readContract({
+    address: pool,
+    abi: exnihiloPoolAbi,
+    functionName: "quoteCloseUnclamped",
     args: [tokenId],
   })) as [boolean, bigint];
   return { ready, pnl };

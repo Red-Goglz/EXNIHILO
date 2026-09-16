@@ -958,4 +958,59 @@ describe("Settlement clamp window", function () {
     // Still fully clamped: the pump bought nothing and the dust was pure cost.
     expect(await closeFor(fix, fix.nftId)).to.equal(plain);
   });
+
+  it("holds a close back after a dip held across a block boundary, and quoteCloseUnclamped says so", async function () {
+    // The cost of the clamp, stated as a test (audit R3, NM-R3-004). Anyone can
+    // push the price at the end of one block and pull it back at the start of
+    // the next: the next block's open is recorded at the pushed price, and a
+    // position that is underwater at ANY open in the window cannot close. The
+    // holder is delayed, not robbed, and the delay ends with the window.
+    //
+    // Sized to be undone: the swap fee is charged at the pre-trade price, so a
+    // push many times the reserve cannot be reversed and would really sink the
+    // position. Here a long ~$2,800 in profit is pushed to ~−$920 by 10 % of the
+    // token reserve, and the pull-back restores ~$2,775.
+    const base = await deployPool(POOL_USDC, POOL_TOKEN, 0n);
+    const nftId = await openSide(base.pool, base.attacker, true, NOTIONAL);
+    if (nftId === null) throw new Error("open reverted");
+    const mover = (await ethers.getSigners())[5];
+    const drift = ethers.parseUnits("20000", 6);
+    await base.usdc.mint(mover.address, drift);
+    await base.usdc.connect(mover).approve(base.poolAddr, ethers.MaxUint256);
+    await base.pool.connect(mover).swap(drift, 0n, false, mover.address);
+    await mine(CLAMP_BLOCKS);
+    const fix = { ...base, nftId };
+
+    const [, liveBefore] = await fix.pool.quoteClose(fix.nftId);
+    expect(liveBefore).to.be.gt(0n);
+
+    const griefer = (await ethers.getSigners())[6];
+    const dump = ethers.parseEther("10000");
+    await fix.baseToken.mint(griefer.address, dump);
+    await fix.baseToken.connect(griefer).approve(fix.poolAddr, ethers.MaxUint256);
+    await fix.usdc.connect(griefer).approve(fix.poolAddr, ethers.MaxUint256);
+
+    // Block B: push the price down. Block B+1: pull it back; B+1's open is the pushed state.
+    const usdcBefore = await fix.usdc.balanceOf(griefer.address);
+    await fix.pool.connect(griefer).swap(dump, 0n, true, griefer.address);
+    const got = (await fix.usdc.balanceOf(griefer.address)) - usdcBefore;
+    await fix.pool.connect(griefer).swap(got, 0n, false, griefer.address);
+
+    // Live reserves are back near where they were, so the position is in profit...
+    const [liveReady, livePnl] = await fix.pool.quoteCloseUnclamped(fix.nftId);
+    expect(liveReady).to.equal(true);
+    expect(livePnl).to.be.gt(0n);
+    // ...but the clamped quote, and a close, still see the pushed open.
+    const [clampReady, clampPnl] = await fix.pool.quoteClose(fix.nftId);
+    expect(clampReady && clampPnl > 0n).to.equal(false);
+    await expect(
+      fix.pool.connect(fix.attacker).closeLong(fix.nftId, 0n, fix.attacker.address),
+    ).to.be.revertedWithCustomError(fix.pool, "PositionUnderwater");
+
+    // Once the window has passed, both quotes agree and the close goes through.
+    await mine(CLAMP_BLOCKS);
+    const [, clampAfter] = await fix.pool.quoteClose(fix.nftId);
+    expect(clampAfter).to.be.gt(0n);
+    expect(await closeFor(fix, fix.nftId)).to.be.gt(0n);
+  });
 });

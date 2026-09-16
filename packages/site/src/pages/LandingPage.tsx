@@ -354,18 +354,18 @@ export default function LandingPage() {
         </div>
 
         <div className="cyber-panel p-6 mt-6">
-          <p className="section-label mb-3">The one privileged role</p>
+          <p className="section-label mb-3">No privileged role</p>
           <p className="text-sm mb-4" style={{ color: "var(--muted)" }}>
-            The factory deployer can force any pool into wind-down. That is the
-            entire extent of it: it cannot move funds, cannot block a
-            settlement, and cannot take LP liquidity. Positions still settle and
-            LPs still withdraw on their own terms. The role is renounceable by
-            setting it to the zero address.
+            Nobody can move funds, change a parameter or close someone else&apos;s
+            market. Only a pool&apos;s own LP can start its wind-down, and a
+            launchpad market, whose LP NFT is locked in a vault, can never be
+            wound down at all.
           </p>
           <p className="text-sm" style={{ color: "var(--muted)" }}>
-            We list it because you would find it anyway &mdash; and anyone
-            claiming a protocol has zero privileged roles is usually hoping you
-            will not look.
+            Earlier versions kept one emergency role that could wind any pool
+            down. We removed it: a key that can force every trader out of every
+            market is more power than an emergency brake needs. Check the
+            factory yourself &mdash; it has no admin function to find.
           </p>
         </div>
 

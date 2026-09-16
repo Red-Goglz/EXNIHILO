@@ -112,15 +112,22 @@ opened. See [Funding](/positions/funding#the-rate).
 
 ## Quotes
 
-All three proxy to the pool.
+All proxy to the pool.
 
 ```ts
-const fee   = await exnihilo.quoteOpenFee(pool, notional, true); // isLong
-const close = await exnihilo.quoteClose(pool, tokenId);          // { ready, pnl }
+const fee   = await exnihilo.quoteOpenFee(pool, notional, true);       // isLong
+const close = await exnihilo.quoteClose(pool, tokenId);                // { ready, pnl }
+const live  = await exnihilo.quoteCloseUnclamped(pool, tokenId);       // { ready, pnl }
 ```
 
 When `close.ready` is false the position cannot be settled at current reserves
 and `pnl` is a display-only estimate of the shortfall.
+
+`quoteClose` is what a close pays, clamped to the worst of the last few block
+opens. `quoteCloseUnclamped` prices at live reserves only. When `live` is in
+profit and `close` is not, a recent price move is holding the close back: tell
+the holder to retry shortly, not that they are losing. `getPositionState`
+returns this as `closeHeldBack`.
 
 ## Trading
 

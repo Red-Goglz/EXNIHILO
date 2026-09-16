@@ -178,14 +178,12 @@ async function main() {
     usdc: await factory.usdc(),
     treasury: await factory.protocolTreasury(),
     positionNFT: await factory.positionNFT(),
-    admin: await factory.deployer(),
   };
   if (onchain.usdc.toLowerCase() !== usdc.toLowerCase())
     throw new Error(`factory.usdc mismatch: ${onchain.usdc}`);
   if (onchain.treasury.toLowerCase() !== treasury.toLowerCase())
     throw new Error(`factory.protocolTreasury mismatch: ${onchain.treasury}`);
   console.log("On-chain immutables verified ✓");
-  console.log("Emergency admin (factory.deployer):", onchain.admin);
 
   // ── 7. Write addresses ────────────────────────────────────────────────────
   const addresses = {

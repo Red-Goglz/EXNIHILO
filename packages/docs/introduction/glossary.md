@@ -11,7 +11,7 @@ description: "Definitions for every EXNIHILO term — airToken and airUsd counte
 | **Claimable balance** | USDC credited to a holder when their position is swept with a residual claim. Withdrawn with `claimPayout(to)`. |
 | **Close-price clamp** | A close is priced against the worst of the last 5 block opens wherever that is worse than live, so a holder cannot close at a price they just moved. |
 | **Constant-product** | `x * y = k`, used by all three curves. |
-| **EXNIHILOFactory** | Creates markets. Permissionless, with no owner; its one role, `deployer`, can wind a pool down. |
+| **EXNIHILOFactory** | Creates markets. Permissionless, with no owner and no privileged role. |
 | **EXNIHILOPool** | One per market: the curves, swaps, positions, funding and liquidity. Holds all tokens and collateral. |
 | **Funding** | Continuous rent on an open position, charged by shrinking it — collateral, debt and notional together. Paid entirely to the LP. See [Funding](/positions/funding). |
 | **Funding index** | One number per side, in RAY, describing the decay of the whole book. A position's live size is `atOpen × index / fundingIndexAtOpen`. |

@@ -27,12 +27,25 @@ Either way 1% of the profit goes to the protocol and the NFT is burned. The form
 [P&L Calculation](/trading/pnl). Quote a close with `quoteClose(nftId)`, which returns
 `(ready, pnl)` net of the close fee.
 
-::: tip Closing right after a big move
+## Closing right after a price move
+
 A close is priced against the worst of the last 5 block opens wherever that is worse than the
-live price. It stops a holder pumping the price and closing into their own move — and it means a
-close in the seconds after a sharp favourable move may pay the earlier price. `quoteClose`
-already accounts for it.
-:::
+live price. It stops a holder pumping the price and closing into their own move. It has two
+consequences for an honest holder, and `quoteClose` accounts for both:
+
+- **A close right after a favourable move may pay the earlier price.**
+- **A close right after an unfavourable move may be refused.** If the position was underwater at
+  any of those block opens, the close reverts `PositionUnderwater` even though the live price
+  shows a profit. It clears on its own once the move is more than 5 blocks old — a few seconds.
+
+The second can also be caused on purpose: anyone who pushes the price down at the end of one block
+and back at the start of the next holds a close back for 5 blocks, and can repeat it. Nothing is
+taken — the holder keeps the position and can close once the pushing stops — but funding keeps
+running meanwhile, and only a position close to break-even can be held back cheaply.
+
+`quoteCloseUnclamped(nftId)` returns the same `(ready, pnl)` at live reserves, without the clamp.
+When it shows a profit and `quoteClose` does not, the close is being held back rather than losing:
+retry shortly. The app does this for you and labels the button **Retry shortly**.
 
 ## Underwater positions
 

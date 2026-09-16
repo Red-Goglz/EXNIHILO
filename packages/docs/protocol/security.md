@@ -34,7 +34,14 @@ rather than wrapping: the pool fails closed.
 A holder can move the price their own close settles against. So a close is priced against the worst
 of the last 5 block opens wherever that is less favourable than live, with entries ageing out by
 block. Pumping, closing and unwinding — in one transaction or across blocks — pays no more than an
-honest close. The holder can always close; they just cannot close at a price they moved.
+honest close.
+
+The cost is a delay. A price move that stands at any of those block opens also refuses a close
+that is in profit at the live price, until it ages out. Anyone can cause that by pushing the price
+at a block boundary and pulling it back, and can repeat it every 5 blocks: a holder close to
+break-even can be kept from closing while funding runs. Nothing is taken, and the push has to
+survive a block boundary exposed to arbitrage. `quoteCloseUnclamped` tells a held-back close from a
+losing one. See [Closing Positions](/trading/closing-realizing#closing-right-after-a-price-move).
 
 ### Funding cannot be steered
 
@@ -54,16 +61,16 @@ it opened with.
 - The swap fee is 1% of the input's spot value, rounded up, so no swap is free and a trade that
   moves the price pays on its full size rather than on its reduced output.
 
-## Immutability and the one privileged role
+## Immutability and privileged roles
 
 No proxies, no `delegatecall`, no owner on the factory, and every pool parameter is a constant.
 `PositionNFT` is bound to its factory once, and only the owning pool can release a position. A
 defect in a deployed pool is therefore permanent; the remedy is a new deployment.
 
-One role remains: `EXNIHILOFactory.deployer` can call `closePool()` on any pool. It cannot move
-funds, but a closure starts the wind-down — after 7 days funding doubles daily, so positions nobody
-closes decay away within about eleven more days. The role is transferable and can be renounced by
-setting it to `address(0)`.
+There is no privileged role. Only a pool's own LP can call `closePool()`. Earlier versions let the
+factory's `deployer` close any pool; that was removed, because a closure starts the wind-down —
+after 7 days funding doubles daily and positions nobody closes decay away — and one key able to do
+that to every market, launchpad markets included, was more than an emergency brake needs.
 
 ## Audit status
 

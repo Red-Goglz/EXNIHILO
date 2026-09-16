@@ -67,7 +67,9 @@ The fee has a 0.05 USDC floor, so a $1 position is real. The binding limit is th
 - **`InsufficientOutput`** — slippage; widen your tolerance.
 - **`LeverageCapExceeded`** — over the position cap (1% of the pool on day one, 20% after 24 hours).
 - **`PoolClosing`** — the market is winding down and accepts no new positions.
-- **`PositionUnderwater`** — the position is not in profit, so it cannot be closed.
+- **`PositionUnderwater`** — the position is not in profit, so it cannot be closed. If it shows a
+  profit, the price moved in the last few blocks and the close is priced against that move: retry
+  in a few seconds. See [Closing Positions](/trading/closing-realizing#closing-right-after-a-price-move).
 - **Allowance** — approve USDC to the router (or the pool) first.
 
 ## Positions
@@ -91,7 +93,7 @@ The 4% open fee, the impact fee, funding on every open position, and swap fees. 
 stay in the pool's reserves rather than becoming claimable. See [Fee Earnings](/lp/fees).
 
 ### Can the LP rug the pool?
-The LP can withdraw only when no position is open. Closing the pool — which the LP or the factory's
-emergency role can do — blocks new positions and, after 7 days, doubles funding daily, so open
+The LP can withdraw only when no position is open. Closing the pool — which only the LP can do —
+blocks new positions and, after 7 days, doubles funding daily, so open
 positions have to be closed or decay away within about two and a half weeks. Nothing is force-closed
 at a price the holder did not choose.
