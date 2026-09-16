@@ -56,9 +56,10 @@ export async function pokeFunding(ctx: Ctx, pool: Address): Promise<Hash> {
  * own opening size rather than against its claim, so it cannot be reached by
  * pushing the mark down — only by funding, which no caller controls.
  *
- * Any residual claim is credited to the holder as a pull payment rather than
- * transferred, so the sweep cannot be blocked by the holder's wallet and cannot
- * be used to take value.
+ * A residual claim is credited to the holder as a pull payment rather than
+ * transferred, so the sweep cannot be blocked by the holder's wallet. The claim
+ * is priced at sweep time, so a caller who moves the price first can make it
+ * price underwater and credit nothing; what that denies is at most the dust.
  */
 export async function sweepDust(
   ctx: Ctx,

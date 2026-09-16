@@ -212,6 +212,74 @@ describe("Funding", function () {
       expect(await pool.remainingSizeBps(id)).to.equal(BPS);
     });
 
+    // An empty book is not the only idle side. Aggregates round up and positions
+    // round down, so a side's last close normally leaves a unit or two behind, and
+    // _flushResidue clears it only once BOTH sides are empty. A release on 1 unit
+    // rounds to zero forever, which used to freeze the side's clock and bill the
+    // whole frozen stretch to the next opener (audit R3, NM-R3-001).
+    describe("does not bill a newcomer for time carried on a residue", function () {
+      const CLAMP_BLOCKS = 5;
+      const GAP = 30 * DAY;
+
+      it("short side: residue left by a closed short while a long stays open", async function () {
+        const { pool, poolAddress, usdc, baseToken, trader1, trader2, trader3 } =
+          await loadFixture(fixture);
+        await openLongFor(pool, usdc, poolAddress, trader1, N);
+        const s = await openShortFor(pool, usdc, poolAddress, trader2, N);
+
+        // Move the price down so the short can close in profit.
+        await time.increase(HOUR);
+        const dump = 30_000n * 10n ** 18n;
+        await (await baseToken.connect(trader3).approve(poolAddress, dump)).wait();
+        await (await pool.connect(trader3).swap(dump, 0n, true, trader3.address)).wait();
+        await mine(CLAMP_BLOCKS);
+        await (await pool.connect(trader2).closeShort(s, 0n, trader2.address)).wait();
+
+        // The case under test: no shorts, a residue, and a long keeping it alive.
+        expect(await pool.openPositionCount()).to.equal(1n);
+        expect(await pool.totalShortCollateral()).to.be.gt(0n);
+
+        await time.increase(GAP);
+        const id = await openShortFor(pool, usdc, poolAddress, trader3, N);
+        await (await pool.pokeFunding()).wait();
+        expect(await pool.remainingSizeBps(id)).to.be.gte(BPS - 1n);
+      });
+
+      it("long side: residue left by a closed long while a short stays open", async function () {
+        const { pool, poolAddress, usdc, trader1, trader2, trader3 } = await loadFixture(fixture);
+        await openShortFor(pool, usdc, poolAddress, trader1, N);
+        const l = await openLongFor(pool, usdc, poolAddress, trader2, N);
+
+        // Move the price up so the long can close in profit.
+        await time.increase(HOUR);
+        const pump = 40_000n * 10n ** 6n;
+        await (await usdc.connect(trader3).approve(poolAddress, pump)).wait();
+        await (await pool.connect(trader3).swap(pump, 0n, false, trader3.address)).wait();
+        await mine(CLAMP_BLOCKS);
+        await (await pool.connect(trader2).closeLong(l, 0n, trader2.address)).wait();
+
+        expect(await pool.openPositionCount()).to.equal(1n);
+        expect(await pool.totalLongCollateral()).to.be.gt(0n);
+
+        await time.increase(GAP);
+        const id = await openLongFor(pool, usdc, poolAddress, trader3, N);
+        await (await pool.pokeFunding()).wait();
+        expect(await pool.remainingSizeBps(id)).to.be.gte(BPS - 1n);
+      });
+
+      it("a deliberate 1-unit dust short cannot freeze the clock for the next short", async function () {
+        const { pool, poolAddress, usdc, creator, trader1 } = await loadFixture(fixture);
+        // 3 units of notional sells for exactly 1 unit of collateral, for the 0.05 USDC fee floor.
+        await openShortFor(pool, usdc, poolAddress, creator, 3n);
+        expect(await pool.totalShortCollateral()).to.equal(1n);
+
+        await time.increase(GAP);
+        const id = await openShortFor(pool, usdc, poolAddress, trader1, N);
+        await (await pool.pokeFunding()).wait();
+        expect(await pool.remainingSizeBps(id)).to.be.gte(BPS - 1n);
+      });
+    });
+
     it("only ever decreases", async function () {
       const { pool, poolAddress, usdc, trader1, trader2 } = await loadFixture(fixture);
       await openLongFor(pool, usdc, poolAddress, trader1, N);

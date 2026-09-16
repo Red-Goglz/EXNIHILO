@@ -43,6 +43,8 @@ with funding, and is yours again if the price recovers.
 
 Once funding has taken all but **0.1%** of the collateral a position opened with, anyone may call
 `sweepDust(nftId)` to clear it so the LP can eventually withdraw. The threshold depends only on
-funding, never on price. If the position still has a claim, the payout is credited to the holder
-— withdraw it with `claimPayout(to)` — rather than sent, so nothing about the holder's wallet can
-block the sweep. See [Funding](/positions/funding#sweeping-a-decayed-position).
+funding, never on price. If the sweep prices the position in profit, the payout is credited to
+the holder — withdraw it with `claimPayout(to)` — rather than sent, so nothing about the holder's
+wallet can block the sweep. That payout is not guaranteed: a caller can move the price first so
+the position prices underwater, and the holder then receives nothing. It is at most the dust that
+was left. See [Funding](/positions/funding#sweeping-a-decayed-position).

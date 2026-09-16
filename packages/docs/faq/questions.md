@@ -77,7 +77,8 @@ Yes — it is a standard ERC-721, and it keeps its terms and its decay in the ne
 
 ### Can anyone else close my position?
 No. The only third-party action is `sweepDust`, once funding has taken all but 0.1% of the collateral
-a position opened with, and any residual is credited to you.
+a position opened with. If the sweep prices what is left in profit, that payout is credited to you;
+a caller who moves the price first can deny you it, but it is at most that last 0.1%.
 
 ## Liquidity
 

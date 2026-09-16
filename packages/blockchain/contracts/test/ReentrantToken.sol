@@ -4,22 +4,15 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /**
- * @title ReentrantToken
- * @notice Minimal mintable ERC-20 whose transferFrom re-enters a target contract.
- *         Used ONLY in unit tests to exercise the ReentrancyGuard "else" branch.
- *         Must never be deployed on a live network.
+ * @title  ReentrantToken
+ * @notice Test-only ERC-20 whose transferFrom (and optionally transfer) calls
+ *         `target` with `callData` once, bubbling up any revert.
  */
 contract ReentrantToken is ERC20 {
     uint8 private immutable _dec;
 
-    /// @notice When true, transferFrom re-enters `target` with `data`.
-    bool    public  reentrantEnabled;
-
-    /// @notice When true, plain `transfer` re-enters too. Opt-in and default
-    ///         off, so contracts that only ever push tokens out (e.g. a refund
-    ///         path) can have their reentrancy guard exercised as well.
-    bool    public  reentrantOnTransferEnabled;
-
+    bool    public  reentrantEnabled;           // re-enter on transferFrom
+    bool    public  reentrantOnTransferEnabled; // re-enter on transfer
     address public  target;
     bytes   public  callData;
 
@@ -39,22 +32,12 @@ contract ReentrantToken is ERC20 {
         _mint(to, amount);
     }
 
-    /**
-     * @notice Configure the re-entrancy attack.
-     * @param target_   Address to call back into.
-     * @param callData_ ABI-encoded call to make during transferFrom.
-     */
     function setReentrantCall(address target_, bytes calldata callData_) external {
         target          = target_;
         callData        = callData_;
         reentrantEnabled = true;
     }
 
-    /**
-     * @notice Configure a re-entrancy attack that fires on plain `transfer`.
-     * @param target_   Address to call back into.
-     * @param callData_ ABI-encoded call to make during transfer.
-     */
     function setReentrantTransferCall(address target_, bytes calldata callData_) external {
         target                     = target_;
         callData                   = callData_;
@@ -66,9 +49,6 @@ contract ReentrantToken is ERC20 {
         reentrantOnTransferEnabled = false;
     }
 
-    /**
-     * @dev Mirror of the transferFrom override for the push direction.
-     */
     function transfer(address to, uint256 amount) public override returns (bool) {
         if (reentrantOnTransferEnabled && target != address(0)) {
             reentrantOnTransferEnabled = false;
@@ -80,25 +60,16 @@ contract ReentrantToken is ERC20 {
         return super.transfer(to, amount);
     }
 
-    /**
-     * @dev Override transferFrom to inject a re-entrant call when enabled.
-     *      The call is made BEFORE completing the actual transfer so the
-     *      pool sees the re-entry while its nonReentrant lock is held.
-     *      The re-entrant call's revert (from the reentrancy guard) is bubbled
-     *      up to ensure the outer transaction also reverts.
-     */
+    /// @dev Re-enters before the transfer, while the caller's lock is held.
     function transferFrom(
         address from,
         address to,
         uint256 amount
     ) public override returns (bool) {
         if (reentrantEnabled && target != address(0)) {
-            // Disable before calling to prevent infinite recursion.
-            reentrantEnabled = false;
-            // Use a low-level call and bubble up any revert.
+            reentrantEnabled = false; // one shot, no recursion
             (bool ok, bytes memory ret) = target.call(callData);
             if (!ok) {
-                // Bubble up the revert from the re-entrant call.
                 assembly { revert(add(ret, 32), mload(ret)) }
             }
         }

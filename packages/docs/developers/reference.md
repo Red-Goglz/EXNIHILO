@@ -14,7 +14,7 @@ description: "Function reference for EXNIHILOPool, the factory, router, NFTs and
 | `openLong(usdcAmount, minAirTokenOut, recipient)` | Anyone | Open a long; pulls the fee, mints the NFT to `recipient` |
 | `openShort(usdcNotional, minAirUsdOut, recipient)` | Anyone | Open a short |
 | `closeLong(nftId, minUsdcOut, to)` / `closeShort(nftId, minUsdcOut, to)` | Holder | Close in profit; payout to `to` |
-| `sweepDust(nftId)` | Anyone | Clear a position below 0.1% of its opening collateral; otherwise reverts `PositionNotDust`. Any residual is credited |
+| `sweepDust(nftId)` | Anyone | Clear a position below 0.1% of its opening collateral; otherwise reverts `PositionNotDust`. A residual is credited if the sweep prices it in profit |
 | `claimPayout(to)` | Credited holder | Withdraw a payout credited by a sweep |
 | `pokeFunding()` | Anyone | Write accrued funding without trading |
 

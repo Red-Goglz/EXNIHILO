@@ -55,8 +55,15 @@ steepest on a new market — no price history, the most volatility — and falls
 **Crowding.** Each side pays for its own open interest relative to pool depth. A lone position
 pays close to the base rate; a side whose open interest equals the pool's depth pays three times
 that. Open interest decays with the positions it counts, so crowding eases on its own, and the
-contract integrates that exactly: a stretch of time costs the same whether it is accrued in one
-step or fifty.
+contract integrates that in closed form. For longs, a stretch of time costs the same whether it is
+accrued in one step or fifty.
+
+Shorts are not quite exact. Short funding returns USDC to the pool, which deepens it and lowers the
+short side's utilization, and a single accrual does not see that happen inside its own interval.
+So a crowded short side on a quiet pool pays a little more: in testing, a short side at high
+utilization kept 57.7% of its size after 20 days accrued in one step, against 58.9% accrued twice
+a day. The error only ever overcharges, so nobody gains by keeping a pool quiet, and any trade or
+`pokeFunding()` narrows it.
 
 The rate is priced as an option's carry — more than a perp's funding, and steepest where
 volatility is highest. Measured on a lone position, by market age when it opens:
@@ -106,9 +113,11 @@ The NFT stores opening figures; each live figure is
 `atOpen × fundingIndex(side) / fundingIndexAtOpen`. Both views include funding not yet written to
 storage, so they are accurate on a pool that has been quiet for a week.
 
-`pokeFunding()` writes accrued funding without trading. Anyone may call it and nobody needs to:
-accrual timing does not change what is charged, except above the 4× utilization cap, where the
-rate is held for the interval — which can only overcharge, and the next accrual corrects it.
+`pokeFunding()` writes accrued funding without trading. Anyone may call it and nobody needs to.
+Accrual timing does not change what longs are charged. It can change what a side is charged in two
+cases — above the 4× utilization cap, where the rate is held for the interval, and on a crowded
+short side (see [The rate](#the-rate)) — and in both the error is an overcharge, never an
+undercharge. Accruing more often narrows it.
 
 ## Sweeping a decayed position
 
@@ -118,8 +127,11 @@ position is below **0.1%** of the collateral it opened with, anyone may call `sw
 before that it reverts `PositionNotDust`.
 
 The threshold uses the position's own opening size, so only funding — never a manipulated price —
-can reach it. Any residual claim is credited to the holder, never taken. Sweeping is unpaid; the
-LP is the party with the motive.
+can reach it. If the sweep prices the position in profit, the payout is credited to the holder.
+The price at the moment of the sweep can still be moved, though: a caller who pushes it first makes
+the position price underwater, and then the collateral goes to the LP and the holder gets nothing.
+What is lost that way is at most the position's remaining collateral, 0.1% or less of what it
+opened with. Sweeping is unpaid; the LP is the party with the motive.
 
 ## Closing and underwater positions
 

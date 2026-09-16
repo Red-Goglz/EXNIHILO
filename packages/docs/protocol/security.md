@@ -38,9 +38,12 @@ honest close. The holder can always close; they just cannot close at a price the
 
 ### Funding cannot be steered
 
-No position is valued at accrual time, and a stretch of time costs the same however it is accrued.
-Only the holder can close a position with value; the one third-party action, `sweepDust`, needs
-decay that only funding can cause.
+No position is valued at accrual time, and accruing less often can only raise what a side is
+charged, never lower it, so nobody gains by keeping a pool quiet. Only the holder can close a
+position with value; the one third-party action, `sweepDust`, needs decay that only funding can
+cause. A caller can still move the price so a dust position prices underwater and its holder
+receives nothing, but by then it is worth at most its remaining collateral — 0.1% or less of what
+it opened with.
 
 ### Tokens, outputs and slippage
 

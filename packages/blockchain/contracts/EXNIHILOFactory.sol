@@ -25,88 +25,39 @@ interface IERC20Decimals {
 
 /**
  * @title  EXNIHILOFactory
- * @author EXNIHILO
- * @notice Permissionless factory that creates EXNIHILO token/USDC trading markets.
- *
- *         Each call to createMarket deploys:
- *           - EXNIHILOPool  (the AMM + leveraged-trading contract; internal
- *             airToken/airUsd accounting is held as pool supply counters)
- *
- *         The factory also mints exactly one LP NFT per pool (via the shared
- *         LpNFT contract), seeds the pool with the caller's initial liquidity,
- *         and finally transfers the LP NFT to the market creator.
- *
- * ── Immutability ───────────────────────────────────────────────────────────────
- *
- *   The factory has no owner and no admin functions.  All constructor parameters
- *   are stored as immutables.  Once deployed the factory's behaviour cannot change.
- *
- * ── LP NFT ID prediction ───────────────────────────────────────────────────────
- *
- *   EXNIHILOPool records its LP NFT id as an immutable, so the id must be known
- *   before the pool is deployed.  LpNFT._nextTokenId is private, but because:
- *     1. LpNFT is deployed with this factory as its sole minter, and
- *     2. Each createMarket mints exactly one LP NFT,
- *   the next id equals allPools.length at any point in time (both start at 0
- *   and increment together by 1 per market).  No storage-slot reads or assembly
- *   are required.
- *
- * ── LP NFT seeding flow ────────────────────────────────────────────────────────
- *
- *   EXNIHILOPool.addLiquidity() requires msg.sender == ownerOf(lpNftId).
- *   The factory temporarily mints the LP NFT to itself, seeds the pool
- *   (as the NFT holder), then transfers the NFT to the market creator.
- *   This requires no changes to any existing contract.
- *
- * ── Security ───────────────────────────────────────────────────────────────────
- *
- *   - ReentrancyGuard on createMarket.
- *   - SafeERC20 for all token transfers (handles non-standard ERC-20s).
- *   - All constructor addresses validated non-zero.
- *   - Residual token approvals cleared after addLiquidity.
+ * @notice Permissionless, ownerless factory for token/USDC markets. createMarket
+ *         deploys a pool, mints its LP NFT, seeds it and hands the NFT to the caller.
+ * @dev    The pool stores its LP NFT id as an immutable, so the id is predicted as
+ *         allPools.length (sole minter, one mint per market) and checked on mint.
  */
 contract EXNIHILOFactory is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // ── Immutables ────────────────────────────────────────────────────────────
 
-    /// @notice Shared PositionNFT contract (deployed once, passed at construction).
     address public immutable positionNFT;
-
-    /// @notice Shared LpNFT contract (deployed once, passed at construction).
     LpNFT  public immutable lpNftContract;
-
-    /// @notice USDC token (6 decimals). Used as the quote / collateral asset.
     address public immutable usdc;
-
-    /// @notice Receives the 1 % protocol fee from every pool on position opens.
+    /// @notice Receives protocol fees from every pool.
     address public immutable protocolTreasury;
-
-    /// @notice Stateless deployer contract that creates EXNIHILOPool instances.
     IPoolDeployer public immutable poolDeployer;
 
-    // ── Emergency admin ──────────────────────────────────────────────────────
+    // ── Emergency admin ───────────────────────────────────────────────────────
 
-    /// @notice Emergency deployer address. Can close any pool.
-    ///         Set to msg.sender in the constructor. Updatable via setDeployer().
+    /// @notice May close any pool. Set to zero to renounce.
     address public deployer;
 
-    // ── Registry state ────────────────────────────────────────────────────────
+    // ── Registry ──────────────────────────────────────────────────────────────
 
-    /// @notice True if `pool` was created by this factory.
     mapping(address => bool) public isPool;
-
-    /// @notice Ordered list of all pools created by this factory.
     address[] public allPools;
 
-
-    // ── Custom errors ─────────────────────────────────────────────────────────
+    // ── Errors ────────────────────────────────────────────────────────────────
 
     error OnlyDeployer();
     error ZeroAddress();
     error ZeroAmount();
     error TokenIsUsdc();
-    /// @dev LpNFT handed back an id other than the one baked into the pool.
     error LpNftIdMismatch();
 
     // ── Events ────────────────────────────────────────────────────────────────
@@ -120,13 +71,6 @@ contract EXNIHILOFactory is ReentrancyGuard {
 
     // ── Constructor ───────────────────────────────────────────────────────────
 
-    /**
-     * @param positionNFT_       Global PositionNFT contract (deployed separately).
-     * @param lpNftContract_     Global LpNFT contract (deployed separately).
-     * @param usdc_              USDC token address (6 decimals).
-     * @param protocolTreasury_  Receives the 1 % protocol fee from all pools.
-     * @param poolDeployer_     PoolDeployer contract that creates EXNIHILOPool instances.
-     */
     constructor(
         address positionNFT_,
         address lpNftContract_,
@@ -134,9 +78,6 @@ contract EXNIHILOFactory is ReentrancyGuard {
         address protocolTreasury_,
         address poolDeployer_
     ) {
-        // The contract header has always claimed these were checked. They were
-        // not — a factory deployed with any of them zero is permanently broken,
-        // and being immutable there is no way to correct it after the fact.
         if (positionNFT_      == address(0)) revert ZeroAddress();
         if (lpNftContract_    == address(0)) revert ZeroAddress();
         if (usdc_             == address(0)) revert ZeroAddress();
@@ -153,59 +94,20 @@ contract EXNIHILOFactory is ReentrancyGuard {
 
     // ── Market creation ───────────────────────────────────────────────────────
 
-    /**
-     * @notice Create a new permissionless token/USDC trading market.
-     *
-     *         The caller determines the initial token:USDC price ratio by
-     *         supplying both amounts.  Both tokens must be pre-approved for
-     *         transfer to this factory before calling.
-     *
-     * ── createMarket flow ──────────────────────────────────────────────────────
-     *
-     *   1.  Validate all inputs.
-     *   2.  Pull usdcAmount USDC and tokenAmount token from msg.sender.
-     *   3.  Read the underlying token's decimals (fallback 18).
-     *   4.  Predict the next LP NFT id (= allPools.length, see contract header).
-     *   5.  Deploy EXNIHILOPool with all parameters, passing the predicted LP NFT id.
-     *   6.  Mint LP NFT to factory (factory is temporary LP holder for seeding).
-     *   7.  Approve pool to pull factory's tokens; call pool.addLiquidity().
-     *   8.  Revoke residual approvals.
-     *   9.  Transfer LP NFT from factory to msg.sender.
-     *  10.  Update registry and emit MarketCreated.
-     *
-     * @param tokenAddress    ERC-20 underlying token to create a market for. Must not be zero.
-     * @param usdcAmount      Initial USDC liquidity (6 dec). Must be > 0.
-     * @param tokenAmount     Initial underlying token liquidity. Must be > 0.
-     *
-     * @return pool    Address of the newly deployed EXNIHILOPool.
-     * @return lpNftId LP NFT token ID transferred to the caller.
-     */
+    /// @notice Create a market seeded with pre-approved `usdcAmount` USDC and
+    ///         `tokenAmount` tokens; the caller receives the LP NFT.
     function createMarket(
         address tokenAddress,
         uint256 usdcAmount,
         uint256 tokenAmount
     ) external nonReentrant returns (address pool, uint256 lpNftId) {
-        // ── 1. Input validation ───────────────────────────────────────────────
-        //    The pool's own guards reject all three cases downstream — a zero
-        //    address has no code for safeTransferFrom to call, and addLiquidity
-        //    reverts ZeroAmount on either leg. Checking here fails before any
-        //    transfer is attempted and names the actual mistake, rather than
-        //    surfacing it as SafeERC20's "call to non-contract" three frames
-        //    deep or as a revert from a contract the caller never named.
-
         if (tokenAddress == address(0)) revert ZeroAddress();
         if (tokenAddress == usdc) revert TokenIsUsdc();
         if (usdcAmount == 0 || tokenAmount == 0) revert ZeroAmount();
 
-        // ── 2. Pull tokens from caller ────────────────────────────────────────
-        //    Fee-on-transfer tokens are rejected by the pool's own _transferIn guard.
-
+        // Fee-on-transfer tokens fail the pool's own _transferIn check below.
         IERC20(usdc).safeTransferFrom(msg.sender, address(this), usdcAmount);
         IERC20(tokenAddress).safeTransferFrom(msg.sender, address(this), tokenAmount);
-
-        // ── 3. Read the underlying token's decimals ───────────────────────────
-        //    Read from the token itself (fallback 18) so the pool's airToken
-        //    accounting can never be created with mismatched decimals.
 
         uint8 tokenDecimals;
         try IERC20Decimals(tokenAddress).decimals() returns (uint8 d) {
@@ -214,10 +116,6 @@ contract EXNIHILOFactory is ReentrancyGuard {
             tokenDecimals = 18;
         }
 
-        // ── 4/5. Deploy EXNIHILOPool via PoolDeployer ─────────────────────────
-
-        // Held in a local: the pool bakes this in as an immutable, and the
-        // check below has to compare against the exact value that went in.
         uint256 predictedLpNftId = allPools.length;
 
         pool = poolDeployer.deploy(
@@ -226,42 +124,26 @@ contract EXNIHILOFactory is ReentrancyGuard {
             tokenDecimals,
             positionNFT,
             address(lpNftContract),
-            predictedLpNftId,   // lpNftId_ — equals LpNFT._nextTokenId
+            predictedLpNftId,
             protocolTreasury,
-            address(this)       // factory address for emergency deployer lookup
+            address(this)
         );
 
-        // ── 6. Mint LP NFT to factory (temporary holder for seeding) ──────────
-
-        // LpNFT.mint() increments _nextTokenId and returns tokenId = _nextTokenId++.
+        // Minted to the factory so it can seed the pool as LP holder.
         lpNftId = lpNftContract.mint(address(this), pool);
 
-        // The prediction above is now checked rather than asserted in prose.
-        // It rests on this factory being LpNFT's sole minter and on one mint per
-        // market; if either ever stopped holding, the pool would already carry
-        // the WRONG id as an immutable — and lpNftId gates addLiquidity,
-        // removeLiquidity, claimFees and closePool through ownerOf. A market
-        // whose controls answer to someone else's NFT must never be created, so
-        // this fails the whole transaction rather than seeding into it.
+        // The pool already stores the predicted id; never seed a mismatched market.
         if (lpNftId != predictedLpNftId) revert LpNftIdMismatch();
-
-        // ── 7. Seed the pool via addLiquidity (factory is the LP NFT holder) ──
 
         IERC20(tokenAddress).forceApprove(pool, tokenAmount);
         IERC20(usdc).forceApprove(pool, usdcAmount);
 
         IPoolAddLiquidity(pool).addLiquidity(tokenAmount, usdcAmount);
 
-        // Revoke residual approvals (defense-in-depth for non-standard
-        // ERC-20s that do not zero the allowance on exact transferFrom).
         IERC20(tokenAddress).forceApprove(pool, 0);
         IERC20(usdc).forceApprove(pool, 0);
 
-        // ── 9. Transfer LP NFT to market creator ──────────────────────────────
-
         IERC721(address(lpNftContract)).transferFrom(address(this), msg.sender, lpNftId);
-
-        // ── 10. Registry update and event ─────────────────────────────────────
 
         isPool[pool] = true;
         allPools.push(pool);
@@ -269,19 +151,9 @@ contract EXNIHILOFactory is ReentrancyGuard {
         emit MarketCreated(pool, tokenAddress, msg.sender, lpNftId);
     }
 
-    // ── Emergency admin ────────────────────────────────────────────────────────
+    // ── Emergency admin ───────────────────────────────────────────────────────
 
-    /**
-     * @notice Transfer the deployer (emergency admin) role to a new address.
-     *         Only callable by the current deployer.
-     * @dev    Intentionally allows `address(0)` as `newDeployer`: setting the
-     *         deployer to zero relinquishes the emergency `closePool` role
-     *         permanently, which is the intended handoff path for a fully
-     *         permissionless protocol. The call is irreversible — once set
-     *         to zero, no address can re-assume the role. See 4.7 audit
-     *         findings NM-007 / IA-7 / SGA-4 for the tradeoff discussion.
-     * @param newDeployer  New deployer address, or `address(0)` to renounce.
-     */
+    /// @notice Hand over the emergency role; address(0) renounces it permanently.
     function setDeployer(address newDeployer) external {
         if (msg.sender != deployer) revert OnlyDeployer();
         deployer = newDeployer;

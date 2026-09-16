@@ -20,18 +20,10 @@ interface IEXNIHILOPool {
 }
 
 /**
- * @title EXNIHILORouter
- * @notice Thin router for trading operations. Users approve USDC (and any
- *         underlying tokens) to this contract once; the router pulls only
- *         the position fee from the caller, approves the target pool, and
- *         forwards the call. Any unconsumed input is refunded to the caller
- *         atomically in the same transaction — the router holds zero token
- *         state between transactions.
- *
- *         LP operations (addLiquidity, removeLiquidity, claimFees)
- *         and holder-only position operations (closeLong, closeShort,
- *         claimPayout, sweepDust) are called directly on the pool — the
- *         router does not wrap them.
+ * @title  EXNIHILORouter
+ * @notice Pulls only what a registered pool needs (the open fee or the swap input),
+ *         forwards the call with the caller as recipient and refunds any residue.
+ *         LP and position-holder actions go to the pool directly.
  */
 contract EXNIHILORouter is ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -51,19 +43,11 @@ contract EXNIHILORouter is ReentrancyGuard {
         usdc    = IERC20(usdc_);
     }
 
-    /// @dev Quote the open fee from the pool itself — the pool is the single
-    ///      source of truth for fee math; the router replicates nothing.
-    ///      Unconsumed surplus (if any) is refunded atomically via the
-    ///      _refundResidual pattern in each entry point.
     function _positionFee(uint256 notional, address pool, bool isLong) internal view returns (uint256) {
         return IEXNIHILOPool(pool).quoteOpenFee(notional, isLong);
     }
 
-    /// @dev Refund any portion of `token` that this call added to the router's
-    ///      balance but the pool did not consume, back to `recipient`.
-    ///      Uses a balance-delta against `balBefore` so pre-existing residuals
-    ///      (from prior donations or accidents) are never attributable to the
-    ///      current caller.
+    /// @dev Refund what this call added but the pool left, measured from `balBefore`.
     function _refundResidual(IERC20 token, uint256 balBefore, address recipient) internal {
         uint256 balAfter = token.balanceOf(address(this));
         if (balAfter > balBefore) {
@@ -71,7 +55,7 @@ contract EXNIHILORouter is ReentrancyGuard {
         }
     }
 
-    /// @notice Open a long position on `pool`. Caller must have approved USDC to this router.
+    /// @notice Open a long on `pool`. Caller must have approved USDC to this router.
     function openLong(
         address pool,
         uint256 usdcAmount,
@@ -86,7 +70,7 @@ contract EXNIHILORouter is ReentrancyGuard {
         _refundResidual(usdc, balBefore, msg.sender);
     }
 
-    /// @notice Open a short position on `pool`. Caller must have approved USDC to this router.
+    /// @notice Open a short on `pool`. Caller must have approved USDC to this router.
     function openShort(
         address pool,
         uint256 usdcNotional,
@@ -101,7 +85,7 @@ contract EXNIHILORouter is ReentrancyGuard {
         _refundResidual(usdc, balBefore, msg.sender);
     }
 
-    /// @notice Swap tokens via `pool`. Caller must have approved the input token to this router.
+    /// @notice Swap via `pool`. Caller must have approved the input token to this router.
     function swap(
         address pool,
         uint256 amountIn,
@@ -119,5 +103,4 @@ contract EXNIHILORouter is ReentrancyGuard {
         tokenIn.forceApprove(pool, 0);
         _refundResidual(tokenIn, balBefore, msg.sender);
     }
-
 }

@@ -25,7 +25,7 @@ description: "Definitions for every EXNIHILO term — airToken and airUsd counte
 | **Premium** | The open fee — 5% of notional plus the impact fee, minimum 0.05 USDC. Non-refundable, and the most a trader can lose. |
 | **Spot price** | `backedAirUsd / backedAirToken`. |
 | **Supply counters** | `airTokenSupply` / `airUsdSupply` — the backed reserve plus collateral locked in positions plus synthetic debt. |
-| **sweepDust** | Clear a position that has decayed below 0.1% of the collateral it opened with. Anyone may call it; any residual claim is credited to the holder. |
+| **sweepDust** | Clear a position that has decayed below 0.1% of the collateral it opened with. Anyone may call it; a residual claim is credited to the holder if the sweep prices it in profit. |
 | **SWAP-1 / SWAP-2 / SWAP-3** | The three curves: spot swaps; long opens and short closes; short opens and long closes. |
 | **Synthetic mint** | Increasing a supply counter without collateral — how exposure is created at open. |
 | **Wind-down** | What `closePool` starts: no new positions, and after 7 days the funding rate doubles every day until every position is closed or swept. |
