@@ -39,6 +39,24 @@ export const CLOSE_HELD_BACK_TIP =
 const CLOSE_QUOTE_INDEX = 7;
 const CLOSE_UNCLAMPED_INDEX = 8;
 
+/**
+ * How far below the quoted payout a close may still settle.
+ *
+ * A close is priced off the reserves as of the block it lands in, so anyone can
+ * move it between the quote and the mine — sell the token ahead of a long, buy
+ * ahead of a short — and the pool's clamp only ever lowers a payout, never
+ * restores one. Without a floor the close takes whatever price it is handed.
+ * The gap this has to absorb honestly is small: a few seconds of funding decay
+ * and ordinary trading, not someone stepping in front.
+ */
+export const DEFAULT_CLOSE_SLIPPAGE_BPS = 100n; // 1 %
+
+/** Floor for `minUsdcOut`. Zero whenever there is no positive quote to protect. */
+export function closeFloor(quotedPayout: bigint, slippageBps = DEFAULT_CLOSE_SLIPPAGE_BPS): bigint {
+  if (quotedPayout <= 0n) return 0n;
+  return (quotedPayout * (10_000n - slippageBps)) / 10_000n;
+}
+
 /** In profit at live reserves, but not closeable at the clamped quote. */
 function closeHeldBackFrom(data: unknown): boolean {
   const reads = data as ReadonlyArray<{ result?: unknown }> | undefined;
@@ -199,6 +217,14 @@ export function usePositionState(
   const closeQuote      = data?.[CLOSE_QUOTE_INDEX]?.result as readonly [boolean, bigint] | undefined;
   const unclampedQuote  = data?.[CLOSE_UNCLAMPED_INDEX]?.result as readonly [boolean, bigint] | undefined;
 
+  // `ready === false` means the pool cannot price the position at all — it is
+  // underwater past the point its debt can be bought back. That is a loss, not
+  // an unknown, and the pool reports the estimated shortfall as a negative pnl.
+  // Read here rather than with the rest of the PnL maths because `close` floors
+  // its payout with it.
+  const quoteReady = closeQuote?.[0] ?? false;
+  const quotePnl   = closeQuote?.[1] ?? 0n;
+
   const isMarketClosed = poolCloseDate !== undefined && poolCloseDate > 0n;
   // closeDate is the END of the grace period; show when closePool was called.
   const WIND_DOWN_GRACE = 604_800n; // 7 days — mirrors EXNIHILOPool
@@ -241,7 +267,7 @@ export function usePositionState(
    *           cannot receive USDC has no other exit, since positions no longer
    *           expire into a claimable payout.
    */
-  const close = (to?: `0x${string}`) => {
+  const close = (to?: `0x${string}`, slippageBps = DEFAULT_CLOSE_SLIPPAGE_BPS) => {
     lastActionRef.current = "close";
     const recipient = to ?? address;
     if (!recipient) return;
@@ -249,7 +275,7 @@ export function usePositionState(
       address: position.pool,
       abi: exnihiloPoolAbi,
       functionName: position.isLong ? "closeLong" : "closeShort",
-      args: [tokenId, 0n, recipient],
+      args: [tokenId, closeFloor(quotePnl, slippageBps), recipient],
       chainId,
     });
   };
@@ -262,11 +288,6 @@ export function usePositionState(
   }, []);
 
   // ── PnL ─────────────────────────────────────────────────────────────────
-  // `ready === false` means the pool cannot price the position at all — it is
-  // underwater past the point its debt can be bought back. That is a loss, not
-  // an unknown, and the pool reports the estimated shortfall as a negative pnl.
-  const quoteReady = closeQuote?.[0] ?? false;
-  const quotePnl   = closeQuote?.[1] ?? 0n;
   const hasPnl = closeQuote !== undefined;
   const canClose = quoteReady && quotePnl > 0n;
 
