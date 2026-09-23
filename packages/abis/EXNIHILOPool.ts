@@ -87,6 +87,11 @@ export const exnihiloPoolAbi = [
   },
   {
     "inputs": [],
+    "name": "FundingIndexExhausted",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "PoolAlreadyClosed",
     "type": "error"
   },
@@ -1322,6 +1327,25 @@ export const exnihiloPoolAbi = [
     ],
     "name": "sweepDust",
     "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256[]",
+        "name": "nftIds",
+        "type": "uint256[]"
+      }
+    ],
+    "name": "sweepDustBatch",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "swept",
+        "type": "uint256"
+      }
+    ],
     "stateMutability": "nonpayable",
     "type": "function"
   },

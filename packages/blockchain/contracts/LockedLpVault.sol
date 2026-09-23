@@ -126,7 +126,11 @@ contract LockedLpVault is ReentrancyGuard, IERC721Receiver {
             }
         }
 
-        amount = usdc.balanceOf(address(this)) - lpAccrued - integratorAccrued;
+        // Saturating: a balance that has fallen below what is already banked leaves
+        // nothing to split, and must not take the claim paths down with it.
+        uint256 balance = usdc.balanceOf(address(this));
+        uint256 banked  = lpAccrued + integratorAccrued;
+        amount = balance > banked ? balance - banked : 0;
 
         if (amount == 0) return 0;
 
@@ -200,8 +204,10 @@ contract LockedLpVault is ReentrancyGuard, IERC721Receiver {
 
     /// @notice Each party's balance if harvested now.
     function pending() external view returns (uint256 lpPending, uint256 integratorPending) {
+        uint256 balance = usdc.balanceOf(address(this));
+        uint256 banked  = lpAccrued + integratorAccrued;
         uint256 unharvested = pool.lpFeesAccumulated()
-            + (usdc.balanceOf(address(this)) - lpAccrued - integratorAccrued);
+            + (balance > banked ? balance - banked : 0);
         uint256 integratorCut = (unharvested * integratorBps) / BPS_DENOM;
 
         lpPending         = lpAccrued + (unharvested - integratorCut);

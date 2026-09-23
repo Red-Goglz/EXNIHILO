@@ -33,6 +33,12 @@ interface IERC20Decimals {
 contract EXNIHILOFactory is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
+    // ── Constants ─────────────────────────────────────────────────────────────
+
+    /// @notice Supported token precision. Covers USDC-like 6 through the usual 18.
+    uint8 public constant MIN_TOKEN_DECIMALS = 6;
+    uint8 public constant MAX_TOKEN_DECIMALS = 18;
+
     // ── Immutables ────────────────────────────────────────────────────────────
 
     address public immutable positionNFT;
@@ -53,6 +59,7 @@ contract EXNIHILOFactory is ReentrancyGuard {
     error ZeroAmount();
     error TokenIsUsdc();
     error LpNftIdMismatch();
+    error UnsupportedDecimals();
 
     // ── Events ────────────────────────────────────────────────────────────────
 
@@ -102,11 +109,17 @@ contract EXNIHILOFactory is ReentrancyGuard {
         IERC20(usdc).safeTransferFrom(msg.sender, address(this), usdcAmount);
         IERC20(tokenAddress).safeTransferFrom(msg.sender, address(this), tokenAmount);
 
+        // Funding rounds per unit of collateral, so a coarse unit is a valuable
+        // one: below MIN_TOKEN_DECIMALS the sub-unit residue is worth trading
+        // against. A token that will not answer is assumed to be the usual 18.
         uint8 tokenDecimals;
         try IERC20Decimals(tokenAddress).decimals() returns (uint8 d) {
             tokenDecimals = d;
         } catch {
             tokenDecimals = 18;
+        }
+        if (tokenDecimals < MIN_TOKEN_DECIMALS || tokenDecimals > MAX_TOKEN_DECIMALS) {
+            revert UnsupportedDecimals();
         }
 
         uint256 predictedLpNftId = allPools.length;

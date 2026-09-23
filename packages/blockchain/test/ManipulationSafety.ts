@@ -1014,3 +1014,96 @@ describe("Settlement clamp window", function () {
     expect(await closeFor(fix, fix.nftId)).to.be.gt(0n);
   });
 });
+
+/**
+ * Sandwiching SOMEONE ELSE's close.
+ *
+ * Every case above is a holder sandwiching their own exit, which the clamp
+ * exists to stop. The reverse is not symmetric: the clamp seeds from the live
+ * price and only ever narrows, so a valuation moved AGAINST a holder stands,
+ * and no earlier snapshot can restore it.
+ *
+ * Nothing here is a claim that the clamp is wrong — taking the maximum instead
+ * would just re-open the attack the tests above close. These pin what the
+ * exposure actually is, and that `minUsdcOut` is what answers it. A close sent
+ * without one takes whatever price it is handed.
+ */
+describe("Manipulation: sandwiching someone else's close", function () {
+  this.timeout(120_000);
+
+  const POOL_USDC  = 100_000n * 10n ** 6n;
+  const POOL_TOKEN = 100_000n * 10n ** 18n;
+  const NOTIONAL   = 5_000n * 10n ** 6n;
+
+  /**
+   * A victim long, in profit and past the clamp window, plus a separate
+   * attacker holding the other side of the book.
+   */
+  async function victimLong() {
+    const fix = await deployPool(POOL_USDC, POOL_TOKEN, 0n);
+    const victim = (await ethers.getSigners())[6];
+    await fix.usdc.mint(victim.address, POOL_USDC);
+    await fix.usdc.connect(victim).approve(fix.poolAddr, ethers.MaxUint256);
+
+    const nftId = await openSide(fix.pool.connect(victim) as EXNIHILOPool, victim, true, NOTIONAL);
+    if (nftId === null) throw new Error("open reverted");
+
+    // Unrelated drift into profit, then out of the clamp window so the position
+    // has a real, settled payout to be robbed of.
+    const mover = (await ethers.getSigners())[5];
+    await fix.usdc.mint(mover.address, 40_000n * 10n ** 6n);
+    await fix.usdc.connect(mover).approve(fix.poolAddr, ethers.MaxUint256);
+    await fix.pool.connect(mover).swap(40_000n * 10n ** 6n, 0n, false, mover.address);
+    await mine(CLAMP_BLOCKS);
+
+    return { ...fix, victim, nftId };
+  }
+
+  it("an attacker can cut the payout of a close that carries no floor", async function () {
+    const honest = await victimLong();
+    const [, quoted] = await honest.pool.quoteClose(honest.nftId);
+    expect(quoted).to.be.gt(0n);
+
+    // Same position, same moment — but the attacker sells token first.
+    const sandwiched = await victimLong();
+    await sandwiched.pool
+      .connect(sandwiched.attacker)
+      .swap(20_000n * 10n ** 18n, 0n, true, sandwiched.attacker.address);
+
+    const before = await sandwiched.usdc.balanceOf(sandwiched.victim.address);
+    await sandwiched.pool
+      .connect(sandwiched.victim)
+      .closeLong(sandwiched.nftId, 0n, sandwiched.victim.address);
+    const paid = (await sandwiched.usdc.balanceOf(sandwiched.victim.address)) - before;
+
+    // The clamp did not restore the pre-attack valuation.
+    expect(paid).to.be.lt(quoted);
+  });
+
+  it("a floor turns that into a failed transaction instead of a loss", async function () {
+    const fix = await victimLong();
+    const [, quoted] = await fix.pool.quoteClose(fix.nftId);
+    const floor = (quoted * 9_900n) / 10_000n; // the site's 1 % tolerance
+
+    await fix.pool
+      .connect(fix.attacker)
+      .swap(20_000n * 10n ** 18n, 0n, true, fix.attacker.address);
+
+    await expect(
+      fix.pool.connect(fix.victim).closeLong(fix.nftId, floor, fix.victim.address),
+    ).to.be.revertedWithCustomError(fix.pool, "InsufficientOutput");
+
+    // The position is untouched and still closeable once the move passes.
+    expect(await fix.pool.openPositionCount()).to.equal(1n);
+  });
+
+  it("the floor does not block an honest close", async function () {
+    const fix = await victimLong();
+    const [, quoted] = await fix.pool.quoteClose(fix.nftId);
+    const floor = (quoted * 9_900n) / 10_000n;
+
+    const before = await fix.usdc.balanceOf(fix.victim.address);
+    await fix.pool.connect(fix.victim).closeLong(fix.nftId, floor, fix.victim.address);
+    expect((await fix.usdc.balanceOf(fix.victim.address)) - before).to.be.gte(floor);
+  });
+});

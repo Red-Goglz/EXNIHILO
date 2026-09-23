@@ -379,3 +379,93 @@ describe("Sweep (what replaced expiry)", function () {
     });
   });
 });
+
+/**
+ * Clearing an abandoned book.
+ *
+ * Only a sweep decrements openPositionCount, and removeLiquidity waits on it
+ * reaching zero. Nothing bounds how many positions a pool can hold, and the
+ * opening fee floor is 0.05 USDC, so a book of tiny abandoned positions is
+ * cheap to create and — one sweepDust transaction at a time — expensive to
+ * clear. sweepDustBatch is what makes the cleanup proportional.
+ */
+describe("Sweep: clearing a book in one transaction", function () {
+  const SMALL = 20n * 10n ** 6n;
+
+  /** Six abandoned positions, decayed past the dust threshold. */
+  async function abandoned() {
+    const f = await loadFixture(fixture);
+    const ids: bigint[] = [];
+    for (let i = 0; i < 3; i++) {
+      ids.push(await openLongFor(f.pool, f.usdc, f.poolAddress, f.trader1, SMALL));
+      ids.push(await openShortFor(f.pool, f.usdc, f.poolAddress, f.trader2, SMALL));
+    }
+    await (await f.pool.connect(f.creator).closePool()).wait();
+    await time.increase(7 * DAY + 45 * DAY);
+    await (await f.pool.pokeFunding()).wait();
+    return { ...f, ids };
+  }
+
+  it("releases every dust position it is given", async function () {
+    const f = await abandoned();
+    expect(await f.pool.openPositionCount()).to.equal(6n);
+
+    const swept = await f.pool.connect(f.other).sweepDustBatch.staticCall(f.ids);
+    expect(swept).to.equal(6n);
+
+    await (await f.pool.connect(f.other).sweepDustBatch(f.ids)).wait();
+    expect(await f.pool.openPositionCount()).to.equal(0n);
+  });
+
+  it("frees the LP's principal, which is the point", async function () {
+    const f = await abandoned();
+    await expect(f.pool.connect(f.creator).removeLiquidity())
+      .to.be.revertedWithCustomError(f.pool, "OpenPositionsExist");
+
+    await (await f.pool.connect(f.other).sweepDustBatch(f.ids)).wait();
+    await expect(f.pool.connect(f.creator).removeLiquidity()).to.not.be.reverted;
+  });
+
+  it("skips what another sweeper already took, rather than losing the batch", async function () {
+    const f = await abandoned();
+    await (await f.pool.connect(f.other).sweepDust(f.ids[0]!)).wait();
+
+    // The whole original list, including the id that is now gone.
+    const swept = await f.pool.connect(f.other).sweepDustBatch.staticCall(f.ids);
+    expect(swept).to.equal(5n);
+
+    await (await f.pool.connect(f.other).sweepDustBatch(f.ids)).wait();
+    expect(await f.pool.openPositionCount()).to.equal(0n);
+  });
+
+  it("skips a position that is not yet dust", async function () {
+    const f = await loadFixture(fixture);
+    const id = await openLongFor(f.pool, f.usdc, f.poolAddress, f.trader1, SMALL);
+
+    expect(await f.pool.connect(f.other).sweepDustBatch.staticCall([id])).to.equal(0n);
+    await (await f.pool.connect(f.other).sweepDustBatch([id])).wait();
+    expect(await f.pool.openPositionCount()).to.equal(1n);
+  });
+
+  it("ignores ids that were never positions, and an empty list", async function () {
+    const f = await abandoned();
+    expect(await f.pool.connect(f.other).sweepDustBatch.staticCall([99_999n])).to.equal(0n);
+    expect(await f.pool.connect(f.other).sweepDustBatch.staticCall([])).to.equal(0n);
+    expect(await f.pool.openPositionCount()).to.equal(6n);
+  });
+
+  it("costs less per position than sweeping them one at a time", async function () {
+    const one = await abandoned();
+    let individual = 0n;
+    for (const id of one.ids) {
+      const rc = await (await one.pool.connect(one.other).sweepDust(id)).wait();
+      individual += rc!.gasUsed;
+    }
+
+    const many = await abandoned();
+    const batched = (await (await many.pool.connect(many.other).sweepDustBatch(many.ids)).wait())!
+      .gasUsed;
+
+    expect(batched).to.be.lessThan(individual);
+  });
+});

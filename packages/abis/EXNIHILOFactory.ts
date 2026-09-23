@@ -58,6 +58,11 @@ export const exnihiloFactoryAbi = [
   },
   {
     "inputs": [],
+    "name": "UnsupportedDecimals",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "ZeroAddress",
     "type": "error"
   },

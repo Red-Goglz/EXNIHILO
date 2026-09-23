@@ -737,6 +737,57 @@ describe("LockedLpVault", () => {
 
   // ───────────────────────────────────────────────────────────────────────────
 
+  /**
+   * The vault splits whatever its balance holds over what is already banked. If
+   * the balance instead falls BELOW the banked total — a seizure, a burn, a
+   * negative rebase — that subtraction used to underflow, and since both claim
+   * paths and the view harvest first, a deficit of one unit froze every exit.
+   * Nothing can conjure the missing USDC back, but what is still there has to
+   * stay reachable.
+   */
+  describe("A balance below what is banked", () => {
+    async function withDeficit() {
+      const base = await loadFixture(withVaultFixture);
+      await generateFees(base);
+      await base.vault.harvest();
+
+      const banked = (await base.vault.lpAccrued()) + (await base.vault.integratorAccrued());
+      const vaultAddr = await base.vault.getAddress();
+      expect(await base.usdc.balanceOf(vaultAddr)).to.equal(banked);
+
+      // Take out exactly the integrator's share: the balance still covers the LP
+      // on its own, but no longer covers the pair, which is what used to underflow.
+      const bite = await base.vault.integratorAccrued();
+      expect(bite).to.be.greaterThan(0n);
+      await (await base.usdc.burn(vaultAddr, bite)).wait();
+      expect(await base.usdc.balanceOf(vaultAddr)).to.be.lessThan(banked);
+
+      return base;
+    }
+
+    it("leaves the view readable", async () => {
+      const { vault } = await withDeficit();
+      await expect(vault.pending()).to.not.be.reverted;
+    });
+
+    it("leaves harvest callable, with nothing to split", async () => {
+      const { vault } = await withDeficit();
+      await expect(vault.harvest()).to.not.be.reverted;
+      expect(await vault.harvest.staticCall()).to.equal(0n);
+    });
+
+    it("still pays a claim the remaining balance covers", async () => {
+      const { vault, usdc, lp } = await withDeficit();
+      const owed = await vault.lpAccrued();
+
+      await expect(vault.connect(lp).claimLpFees(lp.address)).to.not.be.reverted;
+      expect(await usdc.balanceOf(lp.address)).to.equal(owed);
+      expect(await vault.lpAccrued()).to.equal(0n);
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+
   describe("Reentrancy", () => {
     /**
      * Build a system whose USDC re-enters on transfer. Theoretical against real
