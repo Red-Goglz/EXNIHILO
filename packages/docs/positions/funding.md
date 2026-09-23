@@ -114,10 +114,14 @@ The NFT stores opening figures; each live figure is
 storage, so they are accurate on a pool that has been quiet for a week.
 
 `pokeFunding()` writes accrued funding without trading. Anyone may call it and nobody needs to.
-Accrual timing does not change what longs are charged. It can change what a side is charged in two
-cases — above the 4× utilization cap, where the rate is held for the interval, and on a crowded
-short side (see [The rate](#the-rate)) — and in both the error is an overcharge, never an
-undercharge. Accruing more often narrows it.
+Accrual timing can change what a side is charged, in three ways: above the 4× utilization cap the
+rate is held for the whole interval even after funding has burned open interest back below it; a
+crowded short side is measured against a depth that short funding itself deepens (see
+[The rate](#the-rate)); and while the window is still widening, the integral is approximated
+piecewise, so a different set of boundaries lands on a slightly different number. In all three the
+error is an overcharge, never an undercharge, and accruing more often narrows it. The gaps are
+small — the widening-window one is bounded at a fraction of a percent of the interval's charge,
+and every case shrinks to nothing once the window reaches its 30-day cap.
 
 ## Sweeping a decayed position
 

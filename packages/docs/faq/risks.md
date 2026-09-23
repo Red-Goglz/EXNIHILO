@@ -35,6 +35,9 @@ deployed. See [Security](/protocol/security).
   days. Nobody but that LP can do this.
 - **Settlement runs through the pool's curves.** Large positions in small pools lose a lot to
   slippage, and a close right after a sharp favourable move may be priced at the earlier price.
+- **Always set `minUsdcOut` on a close.** The close-price clamp only ever lowers a payout, so it
+  does nothing about someone moving the price against you in the block before yours lands. A floor
+  turns that into a failed transaction; without one the close takes whatever price it is handed.
 - **A close can be held back for a few seconds.** A close is priced against the worst of the last
   5 block opens, so after a sharp dip — or someone pushing the price down at a block boundary — a
   position in profit can refuse to close until the dip ages out. Retry shortly. Someone repeating

@@ -54,8 +54,12 @@ it opened with.
 
 ### Tokens, outputs and slippage
 
-- `SafeERC20` everywhere, and every inbound transfer checks the balance delta, rejecting
-  fee-on-transfer and rebasing tokens.
+- `SafeERC20` everywhere, and every inbound transfer checks the balance delta, rejecting a token
+  that credits less than it was told to. That is a check per transfer, not a property of the
+  token: one that rebases or is seized *after* the pull passes it and then breaks the reserve
+  invariant, which is why elastic-supply tokens are
+  [unsupported](/markets/creating#rebasing-and-elastic-supply) rather than rejected.
+- Token decimals must be 6–18; coarser units make funding's sub-unit residue worth trading against.
 - Opens and swaps that would return nothing revert instead of keeping the input.
 - Every swap, open and close takes a minimum output.
 - The swap fee is 1% of the input's spot value, rounded up, so no swap is free and a trade that

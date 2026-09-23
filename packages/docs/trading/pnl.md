@@ -28,13 +28,19 @@ The position's own collateral is excluded from the reserve it sells into.
 ## Short
 
 ```
-totalBuyable = cpAmountOut(locked, airUsdSupply − locked, backedAirToken)
-cost         = ceil(locked × debt / totalBuyable)
-surplus      = locked − cost
-payout       = surplus − 1% close fee
+cost    = min x such that cpAmountOut(x, airUsdSupply − locked, backedAirToken) ≥ debt
+surplus = locked − cost
+payout  = surplus − 1% close fee
 ```
 
-`cost` is the airUsd needed to buy back the airToken debt, rounded up in the pool's favour.
+`cost` is the airUsd needed to buy back the airToken debt — the exact inverse of the
+curve, found by bisection, not a share of a full-collateral trade. Constant-product
+output is concave, so buying part of what the whole collateral could buy costs less
+than that share of the whole: prorating overcharged the holder by up to a few percent
+of the surplus on a position large against the pool.
+
+The pool still checks that the whole collateral could cover the debt
+(`cpAmountOut(locked, …) ≥ debt`) before pricing; below that the position is underwater.
 
 ## Notes
 

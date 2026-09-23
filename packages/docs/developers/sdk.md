@@ -394,6 +394,15 @@ prices or open interest — its debt decays with it — but it still counts as
 open, and an LP cannot withdraw until every position is gone. The threshold
 depends only on funding, so no price movement can make a sweep succeed or fail.
 
+Clearing a whole book one call at a time is the slow way. `sweepDustBatch` takes
+a list and returns how many it released, skipping anything already gone, from
+another pool, or not yet dust — so another sweeper taking one mid-batch does not
+cost you the rest. Chunk it: the work is linear and a block still has a gas limit.
+
+```ts
+const swept = await exnihilo.sweepDustBatch(pool, tokenIds); // → count released
+```
+
 `pokeFunding` is never required; every trade accrues funding first.
 
 ## Constants

@@ -12,8 +12,10 @@ closeLong(nftId, minUsdcOut, to)
 closeShort(nftId, minUsdcOut, to)
 ```
 
-`minUsdcOut` protects the payout from slippage. `to` receives it — a separate parameter so a
-holder whose wallet cannot receive USDC (a blacklisted one, say) can still exit.
+`minUsdcOut` is the floor the payout must clear, and it is the only thing protecting it. `to`
+receives the payout — a separate parameter so a holder whose wallet cannot receive USDC (a
+blacklisted one, say) can still exit. **Always set `minUsdcOut`**; see
+[the clamp only moves one way](#the-clamp-only-moves-one-way) for why zero is not safe.
 
 ## What happens
 
@@ -37,6 +39,22 @@ consequences for an honest holder, and `quoteClose` accounts for both:
 - **A close right after an unfavourable move may be refused.** If the position was underwater at
   any of those block opens, the close reverts `PositionUnderwater` even though the live price
   shows a profit. It clears on its own once the move is more than 5 blocks old — a few seconds.
+
+## The clamp only moves one way
+
+The clamp can lower a payout and never raise one. It starts from the live price, and a recent
+block open replaces it only when that is worse. That is deliberate — it is what stops a holder
+pricing a close against a move they just made — but it means the clamp does nothing about a move
+made *at* you. Someone can sell the token into the pool immediately before your long closes, or
+buy immediately before your short does, and the close settles against that price; no earlier
+snapshot restores it.
+
+`minUsdcOut` is what answers this. With a sensible floor the close reverts `InsufficientOutput`
+instead of settling into someone else's trade, and the position is untouched and closeable once
+the move ages out. A close sent with `minUsdcOut = 0` takes whatever price it is handed.
+
+The same move can also push a position underwater and hold the exit shut for as long as it is
+sustained, while funding keeps decaying the position. That one a floor cannot fix.
 
 The second can also be caused on purpose: anyone who pushes the price down at the end of one block
 and back at the start of the next holds a close back for 5 blocks, and can repeat it. Nothing is
