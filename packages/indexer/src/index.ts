@@ -494,6 +494,12 @@ ponder.on("EXNIHILOPool:FundingAccrued", async ({ event, context }) => {
   const ts = BigInt(event.block.timestamp);
   const { isLong, released, debtCancelled, newIndex } = event.args;
 
+  // pokeFunding reaches this handler and no other, so without a read here the
+  // rates keep whatever a trade last left behind — or zero, if this is the first
+  // event for the pool — while lastUpdated below says the row is current. During
+  // wind-down that gap is the whole 2^shift multiplier.
+  const state = await readPoolState(context, pool);
+
   await context.db
     .insert(poolMetrics)
     .values({
@@ -506,19 +512,23 @@ ponder.on("EXNIHILOPool:FundingAccrued", async ({ event, context }) => {
       shortCount: 0,
       closeCount: 0,
       totalPayout: 0n,
-      fundingIndexLong: isLong ? newIndex : RAY,
-      fundingIndexShort: isLong ? RAY : newIndex,
+      // The event is authoritative for the side that just accrued; the other
+      // side comes from the same-block projection rather than a bare RAY.
+      fundingIndexLong: isLong ? newIndex : state.fundingIndexLong,
+      fundingIndexShort: isLong ? state.fundingIndexShort : newIndex,
       fundingReleasedLong: isLong ? released : 0n,
       fundingReleasedShort: isLong ? 0n : released,
       fundingDebtCancelledLong: isLong ? debtCancelled : 0n,
       fundingDebtCancelledShort: isLong ? 0n : debtCancelled,
-      fundingRateLong: 0n,
-      fundingRateShort: 0n,
+      fundingRateLong: state.fundingRateLong,
+      fundingRateShort: state.fundingRateShort,
       lastUpdated: ts,
     })
     .onConflictDoUpdate((row: any) => ({
-      fundingIndexLong: isLong ? newIndex : row.fundingIndexLong,
-      fundingIndexShort: isLong ? row.fundingIndexShort : newIndex,
+      fundingIndexLong: isLong ? newIndex : state.fundingIndexLong,
+      fundingIndexShort: isLong ? state.fundingIndexShort : newIndex,
+      fundingRateLong: state.fundingRateLong,
+      fundingRateShort: state.fundingRateShort,
       // Separate columns because they are in different units — airToken on the
       // long side, airUsd on the short. Summing them is always a bug.
       fundingReleasedLong: row.fundingReleasedLong + (isLong ? released : 0n),

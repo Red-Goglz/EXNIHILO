@@ -10,7 +10,7 @@ import {
   userActivity,
   dailyMetrics,
 } from "ponder:schema";
-import { eq, desc, gte, and, sql } from "ponder";
+import { eq, desc, gte, and, inArray, sql } from "ponder";
 import { INDEXED_CHAIN_ID, ZERO_ADDR } from "../chain.js";
 
 const app = new Hono();
@@ -138,17 +138,25 @@ function liveAmounts(
   const atOpen = {
     lockedAmount: r.lockedAmountAtOpen, debt: debtAtOpen, notional: r.usdcIn, remainingBps: 10_000,
   };
-  if (r.status !== "open" || !metrics || r.fundingIndexAtOpen === 0n) return atOpen;
+  const spent = { lockedAmount: 0n, debt: 0n, notional: 0n, remainingBps: 0 };
+
+  if (r.status !== "open" || !metrics) return atOpen;
+  // A zero opening index is malformed; _liveAt reads it as spent, not untouched.
+  if (r.fundingIndexAtOpen === 0n) return spent;
   const idx = r.isLong ? metrics.fundingIndexLong : metrics.fundingIndexShort;
   if (idx >= r.fundingIndexAtOpen) return atOpen;
 
   // Each rounds down, matching EXNIHILOPool._liveAt.
   const scale = (x: bigint) => (x * idx) / r.fundingIndexAtOpen;
+  // _liveAt zeroes the whole position once the debt leg rounds away, so that
+  // collateral is never settled against a zero buyback cost.
+  const debt = scale(debtAtOpen);
+  if (debt === 0n) return spent;
   const lockedAmount = scale(r.lockedAmountAtOpen);
   const remainingBps = r.lockedAmountAtOpen === 0n
     ? 0
     : Number((lockedAmount * 10_000n) / r.lockedAmountAtOpen);
-  return { lockedAmount, debt: scale(debtAtOpen), notional: scale(r.usdcIn), remainingBps };
+  return { lockedAmount, debt, notional: scale(r.usdcIn), remainingBps };
 }
 
 // ── Single position ─────────────────────────────────────────────────────────
@@ -212,18 +220,18 @@ app.get("/positions/user/:address", async (c) => {
     .orderBy(desc(position.openedAt))
     .limit(limit);
 
-  // One metrics row per pool the user has a position in, fetched once rather
-  // than per position — a portfolio spanning five pools would otherwise issue a
-  // query per row.
+  // Every pool's metrics in ONE query. Position NFTs transfer freely, so the
+  // number of distinct pools behind an address is chosen by whoever assembled
+  // it, not by us: a row-per-pool loop here turns one unauthenticated request
+  // into as many round trips as the caller cares to arrange.
   const pools = [...new Set(rows.map((r) => r.pool))];
   const metricsByPool = new Map<string, typeof poolMetrics.$inferSelect>();
-  for (const pl of pools) {
-    const mr = await db
+  if (pools.length > 0) {
+    const mrs = await db
       .select()
       .from(poolMetrics)
-      .where(eq(poolMetrics.address, pl))
-      .limit(1);
-    if (mr[0]) metricsByPool.set(pl, mr[0]);
+      .where(inArray(poolMetrics.address, pools));
+    for (const m of mrs) metricsByPool.set(m.address, m);
   }
 
   return c.json({
