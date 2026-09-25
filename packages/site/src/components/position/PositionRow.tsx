@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { formatUsdc, formatToken } from "../../lib/format.ts";
-import { usePositionState, fmtDuration, type Position } from "../../hooks/usePositionState.ts";
+import {
+  usePositionState, fmtDuration, CLOSE_HELD_BACK_TIP, type Position,
+} from "../../hooks/usePositionState.ts";
 import TxButton from "../shared/TxButton.tsx";
 import PnlCardModal from "./PnlCardModal.tsx";
 import FundingMeter from "./FundingMeter.tsx";
@@ -75,6 +77,11 @@ export default function PositionRow({
           ) : (
             <span style={{ color: "var(--dim)" }}>—</span>
           )}
+          {st.closeHeldBack && (
+            <div style={{ fontSize: "var(--fs-nano)", color: "var(--orange)", letterSpacing: "0.06em", marginTop: 2 }}>
+              PRICE JUST MOVED · RETRY SHORTLY
+            </div>
+          )}
         </td>
 
         {/* FUNDING — what replaced EXPIRES and AUTO-RENEW.
@@ -108,12 +115,13 @@ export default function PositionRow({
               PNL CARD
             </button>
             <TxButton
-              idleLabel="Close"
+              idleLabel={st.closeHeldBack ? "Retry shortly" : "Close"}
+              title={st.closeHeldBack ? CLOSE_HELD_BACK_TIP : undefined}
               status={st.closeStatus}
               variant={position.isLong ? "red" : "green"}
               onClick={() => st.close()}
               disabled={!st.canClose}
-              style={{ fontSize: "var(--fs-label)", padding: "4px 10px" }}
+              style={{ fontSize: "var(--fs-label)", padding: "4px 10px", whiteSpace: "nowrap" }}
             />
             <button
               onClick={() => setExpanded((v) => !v)}

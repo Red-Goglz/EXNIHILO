@@ -8,22 +8,10 @@ import {
 } from "./constants.js";
 
 /**
- * Launchpad integration.
- *
- * EXNIHILO markets are token/USDC only, but a bonding curve quotes in whatever
- * its venue uses. A PreMarket bridges the two without an oracle: it opens as a
- * plain token/quote AMM, runs a descending-price auction on the quote reserve
- * in parallel, and when someone buys that reserve out for USDC it creates the
- * real market at the ratio trading has arrived at.
- *
- * Seeding is irreversible — there is no withdrawal or refund path. The only way
- * assets move again is a buyout, which locks the LP NFT in a LockedLpVault.
- *
- * A curve that already bonded in USDC skips all of that. There is nothing for an
- * auction to discover, so `createPreMarket` opens the real market in the same
- * transaction and the premarket comes back already launched. Pass the USDC
- * address as `quote` and leave `quoteSpotPriceUsdc` off; the plan reports this
- * as `directLaunch`.
+ * Launchpad integration. A PreMarket is a token/quote AMM with a descending-price
+ * USDC auction on its quote reserve; the buyout creates the real token/USDC
+ * market and locks its LP NFT in a LockedLpVault. Seeding is irreversible.
+ * A USDC quote skips the auction and launches at seed time (`directLaunch`).
  */
 
 export class PreFlightError extends Error {
@@ -75,7 +63,7 @@ export interface PreMarketPlan {
   integrator: Address;
   /** Seconds until the auction price crosses the honest spot quote. */
   secondsToBreakeven: number;
-  /** USDC the auction asks for the whole quote reserve at t=0. */
+  /** Auction price at t=0: USDC (6 dec) per whole quote unit, i.e. `startPrice`. */
   openingBuyoutCost: bigint;
   /**
    * True when `quote` is USDC: no auction runs, `startPrice` and
@@ -90,10 +78,10 @@ const ZERO: Address = "0x0000000000000000000000000000000000000000";
 /**
  * Build and validate the parameters without sending anything.
  *
- * Worth calling on its own: a bad `quoteSpotPriceUsdc` is the one input that
- * cannot be checked on-chain, and it is asymmetric. Too high only delays the
- * fill (~30 s per 1 % at the default decay). Too low and the quote reserve is
- * bought out at that number almost immediately, with no band to absorb it.
+ * `quoteSpotPriceUsdc` cannot be checked on-chain. Too high delays the fill
+ * (~30 s per 1 % at the default decay); more than ~10 % too high and the price,
+ * which stops at 90 % of the start, floors above spot, so nobody fills it. Too
+ * low and the reserve is bought out at that number almost at once.
  *
  * @param usdc The chain's USDC address, so a USDC quote can be recognised as a
  *             direct launch. `createPreMarket` passes it from the context; a
@@ -241,10 +229,9 @@ export interface PreMarketState {
   /** Current Dutch price: USDC (6 dec) per whole quote unit. */
   currentPrice: bigint;
   /**
-   * USDC to buy the entire quote reserve right now. Never below $1 — the
-   * contract floors the total at MIN_BUYOUT_USDC so a decayed auction can
-   * always still be filled. Size `maxUsdc` off this, not off
-   * `currentPrice * quoteReserve`, which can be lower.
+   * USDC to buy the entire quote reserve right now: currentPrice × quoteReserve.
+   * Zero when a drawn-down reserve prices to nothing; buyout then reverts
+   * `BuyoutNotPriceable` until quote is swapped in.
    */
   buyoutCostUsdc: bigint;
   /** Quote received for that USDC. */
@@ -352,17 +339,11 @@ export async function swapPreMarket(
  * Buy the entire quote reserve at the current Dutch price and launch the real
  * market in the same transaction.
  *
- * @param maxUsdc      Cost guard. The price only falls with time, but the quote
- *                     reserve can grow if someone swaps quote in, so total cost
- *                     is not monotonic — always set this. Must be at least $1:
- *                     the contract floors the total there, so a guard derived
- *                     from the raw price reverts on a fully decayed auction.
- *                     `getPreMarket().buyoutCostUsdc` already accounts for it.
- * @param minQuoteOut  Guard against the reserve being drained between quote and
- *                     execution.
+ * @param maxUsdc      Cost guard; always set it. The price only falls, but a
+ *                     quote-in swap grows the reserve and so the cost.
+ * @param minQuoteOut  Guard against the reserve shrinking before execution.
  *
- * Not available on a direct-launch premarket, which was launched at seed time
- * and has no quote reserve left to buy.
+ * Reverts on a direct-launch premarket, which launched at seed time.
  */
 export async function buyout(
   ctx: Ctx,

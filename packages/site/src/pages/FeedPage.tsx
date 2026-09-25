@@ -17,11 +17,11 @@ import {
 } from "@exnihilio/abis";
 import { useAppChain } from "../hooks/useAppChain.ts";
 import { formatUsdc, formatUsdcCompact, parseUnits, formatToken, decodeSpotPrice } from "../lib/format.ts";
-import { quoteLong, quoteShort } from "../lib/amm.ts";
 import { useRouterApproval } from "../hooks/useRouterApproval.ts";
 import { usePositionAlerts } from "../hooks/usePositionAlerts.ts";
 import { usePriceHistory } from "../hooks/usePriceHistory.ts";
 import { useOpenFee } from "../hooks/useOpenFee.ts";
+import { useOpenQuote } from "../hooks/useOpenQuote.ts";
 import { useNeedsPerTradeApproval } from "../hooks/useRouterApprovalPrompt.ts";
 import { useSeo } from "../lib/seo.ts";
 import { protocolFeeFor } from "../lib/fees.ts";
@@ -308,7 +308,6 @@ function FeedCard({
 
   const { data: poolData } = useReadContracts({
     contracts: [
-      { ...poolContract, functionName: "swapFeeBps" },
       { ...poolContract, functionName: "airTokenSupply" },
       { ...poolContract, functionName: "airUsdSupply" },
       { ...poolContract, functionName: "longPrice" },
@@ -317,21 +316,20 @@ function FeedCard({
     ],
   });
 
-  const swapFeeBps   = poolData?.[0]?.result as bigint | undefined;
-  const airTokenTotalSupply = poolData?.[1]?.result as bigint | undefined;
-  const airUsdTotalSupply   = poolData?.[2]?.result as bigint | undefined;
-  const longPriceRaw  = poolData?.[3]?.result as bigint | undefined;
-  const shortPriceRaw = poolData?.[4]?.result as bigint | undefined;
-  const leverageCap   = poolData?.[5]?.result as bigint | undefined;
+  const airTokenTotalSupply = poolData?.[0]?.result as bigint | undefined;
+  const airUsdTotalSupply   = poolData?.[1]?.result as bigint | undefined;
+  const longPriceRaw  = poolData?.[2]?.result as bigint | undefined;
+  const shortPriceRaw = poolData?.[3]?.result as bigint | undefined;
+  const leverageCap   = poolData?.[4]?.result as bigint | undefined;
 
   const MAX_UINT256 = 2n ** 256n - 1n;
   const hasLeverageCap = leverageCap !== undefined && leverageCap !== MAX_UINT256;
   const capUsdc = hasLeverageCap ? Number(leverageCap!) / 1_000_000 : Infinity;
   const overCap = hasLeverageCap && usdcRaw > 0n && usdcRaw > leverageCap!;
   const longPriceDisplay  = longPriceRaw !== undefined && longPriceRaw > 0n
-    ? decodeSpotPrice(longPriceRaw, tokenDecimals) : "—";
+    ? decodeSpotPrice(longPriceRaw) : "—";
   const shortPriceDisplay = shortPriceRaw !== undefined && shortPriceRaw > 0n
-    ? decodeSpotPrice(shortPriceRaw, tokenDecimals) : "—";
+    ? decodeSpotPrice(shortPriceRaw) : "—";
 
   // Allowance — only needed after direction is picked
   const { data: allowanceData } = useReadContracts({
@@ -348,19 +346,6 @@ function FeedCard({
   });
   const allowance = allowanceData?.[0]?.result as bigint | undefined;
 
-  // Preview helper: compute estimated output for any direction + USDC amount
-  const canPreview =
-    backedAirToken !== undefined && backedAirUsd !== undefined &&
-    airTokenTotalSupply !== undefined && airUsdTotalSupply !== undefined &&
-    swapFeeBps !== undefined;
-
-  function computePreview(dir: "long" | "short", rawUsdc: bigint) {
-    if (!canPreview || rawUsdc === 0n) return undefined;
-    return dir === "long"
-      ? quoteLong(rawUsdc, airUsdTotalSupply!, backedAirToken!, swapFeeBps!)
-      : quoteShort(rawUsdc, airTokenTotalSupply!, backedAirUsd!, swapFeeBps!);
-  }
-
   // Hover state: which side is hovered (for chart highlight + preview)
   const [hoverSide, setHoverSide] = useState<"long" | "short" | null>(null);
   const [hoverPreview, setHoverPreview] = useState<{ dir: "long" | "short"; amount: number } | null>(null);
@@ -368,7 +353,9 @@ function FeedCard({
   // Display values: use hover data as preview, selected data as committed
   const showDir   = direction ?? hoverPreview?.dir ?? null;
   const showUsdc  = direction !== null && usdcRaw > 0n ? usdcRaw : hoverPreview ? parseUnits(String(hoverPreview.amount), 6) : 0n;
-  const showOut   = showDir && showUsdc > 0n ? computePreview(showDir, showUsdc) : undefined;
+  // From the pool, which prices an open at the worst recent block open.
+  const { locked: showOut } =
+    useOpenQuote(poolAddress, chainId, showUsdc, showDir === null ? null : showDir === "long");
 
   // Fee comes from the pool, not a local 5% guess: quoteOpenFee includes the
   // OI-integral impact fee and the MIN_POSITION_FEE floor. `showUsdc` equals
@@ -382,10 +369,8 @@ function FeedCard({
   const showConfirm = showDir !== null; // show section whenever a direction is known (selected or hovered)
 
   // Active selection values (for slippage/minOut used by tx)
-  let previewOut: bigint | undefined;
-  if (usdcRaw > 0n && direction !== null) {
-    previewOut = computePreview(direction, usdcRaw);
-  }
+  // `showOut` quotes the committed selection once a direction is picked.
+  const previewOut = usdcRaw > 0n && direction !== null ? showOut : undefined;
 
   const priceImpactBps = (() => {
     if (usdcRaw === 0n) return 0n;

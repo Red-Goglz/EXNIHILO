@@ -25,8 +25,8 @@ asserting they were impossible. That is the finding under the findings, and it i
 
 ::: tip Status since publication
 C-2 and M-1 are fixed and H-2 is closed. The settlement guard and renewals behind C-1, H-1, H-3 and
-M-4 no longer exist: positions now pay continuous funding instead of expiring. That redesign has not
-itself been audited. See [Security](./security#audit-status).
+M-4 no longer exist: positions now pay continuous funding instead of expiring. That redesign has had
+a single-pass follow-up review (R3), not a full round. See [Security](./security#audit-status).
 :::
 
 ::: warning About the method

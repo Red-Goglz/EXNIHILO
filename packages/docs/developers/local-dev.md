@@ -4,7 +4,7 @@ description: "Clone, install and run EXNIHILO locally — contract tests, a loca
 
 # Local Development
 
-Requires Node.js 18+ and npm 9+.
+Requires Node.js 20.19+ (Vite 7) and npm 9+.
 
 ```bash
 git clone https://github.com/Red-Goglz/EXNIHILO.git
@@ -79,7 +79,7 @@ packages/
 ├── indexer/      Ponder indexer and Hono API
 ├── sdk/          @exnihilio/sdk — typed client
 ├── abis/         @exnihilio/abis — shared ABIs
-├── arbbot/       Arbitrage bot between pools and other venues
+├── arbbot/       Read-only arbitrage scanner
 └── docs/         This site
 ```
 

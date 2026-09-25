@@ -131,9 +131,9 @@ export default function PoolCard({ poolAddress, onData }: PoolCardProps) {
   const price = priceRaw !== undefined ? formatPrice(priceRaw) : "—";
 
   const longPrice  = longPriceRaw !== undefined && longPriceRaw > 0n
-    ? decodeSpotPrice(longPriceRaw, decimals) : "—";
+    ? decodeSpotPrice(longPriceRaw) : "—";
   const shortPrice = shortPriceRaw !== undefined && shortPriceRaw > 0n
-    ? decodeSpotPrice(shortPriceRaw, decimals) : "—";
+    ? decodeSpotPrice(shortPriceRaw) : "—";
 
   const tokenValueRaw =
     backedAirToken !== undefined && priceRaw !== undefined

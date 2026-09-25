@@ -18,10 +18,10 @@ Nothing else. Position caps and funding are automatic and identical on every mar
 
 `createMarket(tokenAddress, usdcAmount, tokenAmount)` on `EXNIHILOFactory`, in one transaction:
 
-1. Reads the token's decimals (18 if unavailable) and deploys an `EXNIHILOPool`
-2. Mints the LP NFT to you
-3. Seeds your liquidity into the pool
-4. Emits `MarketCreated`
+1. Reads the token's decimals (18 if unavailable), rejects anything outside 6–18 with
+   `UnsupportedDecimals`, and deploys an `EXNIHILOPool`
+2. Mints the pool's LP NFT and seeds your liquidity
+3. Transfers the LP NFT to you and emits `MarketCreated`
 
 You are then the pool's sole LP — see [Running a Pool](/lp/ownership).
 
@@ -42,16 +42,42 @@ market is also expensive to hold positions on, by design — see
 
 ## Token compatibility
 
-Nothing vets your token beyond reading its decimals and rejecting fee-on-transfer. If it does not
-work, the failure is not a rejected transaction — it is liquidity that cannot move.
+Nothing vets your token beyond its decimals and rejecting fee-on-transfer at the moment it is
+pulled. Everything below that those two checks do not catch is on you: if the token does not work,
+the failure is not a rejected transaction — it is liquidity that cannot move.
 
 ### Hard requirements
 
 - **Standard ERC-20** `transfer`, `transferFrom` and `approve`.
 - **No fee-on-transfer.** The factory and pool compare balances around every pull and revert
   `FeeOnTransferNotSupported` if less arrived than was sent.
-- **A correct `decimals()`.** It is fixed into the pool at creation; a wrong value makes a
-  permanently mispriced market.
+- **A correct `decimals()`, between 6 and 18.** It is fixed into the pool at creation; a wrong
+  value makes a permanently mispriced market, and anything outside that range is rejected with
+  `UnsupportedDecimals`. Below 6, one unit of collateral is valuable enough that the sub-unit
+  residue funding leaves behind is worth trading against.
+- **A fixed balance.** A holder's balance must change only when that holder sends or receives.
+  Rebasing, elastic-supply and seizable tokens are **not supported** — see below.
+
+### Rebasing and elastic supply
+
+The fee-on-transfer check is a check **per transfer**, not a property of the token. It compares
+balances around each pull and rejects a token that credits less than it was told to. It cannot
+see what the token does afterwards.
+
+A token whose balances move on their own breaks the pool's central invariant — that its real
+balance covers its backed reserves, locked collateral, unclaimed fees and credited payouts:
+
+- **A balance that falls** (negative rebase, slashing, seizure, burn-from) puts the pool below
+  what it owes. Every reserve-touching call then reverts: swaps, opens, closes, sweeps, adding
+  and removing liquidity. The pool holds no admin key and has no recovery function, so that state
+  is **permanent** — holders cannot exit their positions and the LP cannot withdraw. `closePool`
+  still runs but achieves nothing, because the wind-down needs accruals that can no longer happen.
+- **A balance that rises** (positive rebase, reflection, or a plain donation to the pool address)
+  is never counted. `removeLiquidity` pays out the nominal backed reserves only, so the excess
+  stays in the contract and nothing can retrieve it.
+
+Neither case is detectable at creation, so nothing rejects such a market — it simply does not
+work. Do not seed one.
 
 ### Transfer restrictions
 
@@ -85,6 +111,8 @@ every open, close and swap moves tokens.
 | `maxTxAmount` / anti-whale with either-party exemption | Works — exempt the factory |
 | Pausable | Works while unpaused |
 | Fee-on-transfer / reflection | Rejected at creation |
+| Fewer than 6 or more than 18 decimals | Rejected at creation |
+| Rebasing / elastic supply / seizable balances | Cannot work — a fall freezes the pool permanently |
 | Default-deny allowlist, or `from`-only exemption | Cannot work |
 
 ### Pre-market launches

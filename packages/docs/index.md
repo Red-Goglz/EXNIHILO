@@ -3,7 +3,7 @@ layout: home
 hero:
   name: EXNIHILO
   text: Nothing here can liquidate you
-  tagline: Long or short any ERC-20 token on Avalanche. You pay a fee, not collateral — and that fee is the most you can ever lose.
+  tagline: Perpetual options on any ERC-20 token on Avalanche. Go long or short for a fee, not collateral — and that fee is the most you can ever lose.
   actions:
     - theme: brand
       text: Get Started
@@ -19,18 +19,19 @@ features:
   - title: Positions are NFTs
     details: Every position is a transferable ERC-721 with on-chain SVG art and live P&L. Sell the position without closing it.
   - title: No oracles, no token, no upgrade path
-    details: Price comes from the AMM's own curves. Contracts are immutable and there is no governance. One emergency role can wind a pool down; it cannot take funds.
-title: EXNIHILO Docs — long or short any ERC-20, no liquidation
+    details: Price comes from the AMM's own curves. Contracts are immutable, with no governance and no privileged role. Only a pool's own LP can wind it down.
+title: EXNIHILO Docs — perpetual options on any ERC-20, no liquidation
 titleTemplate: false
-description: "Documentation for EXNIHILO — go long or short any ERC-20 token with no collateral and no liquidation risk. Start here."
+description: "Documentation for EXNIHILO — perpetual options on any ERC-20 token: go long or short with no collateral and no liquidation risk. Start here."
 ---
 
 ## In one line
 
-**EXNIHILO positions are options.** A long is a call, a short is a put, the open fee is the
-premium, and the premium is the most you can lose. There is no strike to pick and no margin
-call. [Positions Are Options](/introduction/positions-are-options) is the fastest way to
-understand the protocol.
+**EXNIHILO positions are perpetual options.** A long is a call, a short is a put, the open fee is
+the premium, and the premium is the most you can lose. There is no strike to pick, no expiry and
+no margin call — funding charges for time instead. It trades like a perp and risks like an option.
+[Perpetual Options](/introduction/positions-are-options) is the fastest way to understand the
+protocol.
 
 ::: warning Every position decays
 Positions never expire, but [funding](/positions/funding) charges rent by shrinking them —
@@ -51,7 +52,7 @@ it has to recover before funding shrinks it away.
 
 **Start here**
 [What is EXNIHILO](/introduction/what-is-exnihilo) ·
-[Positions Are Options](/introduction/positions-are-options) ·
+[Perpetual Options](/introduction/positions-are-options) ·
 [vs Perpetual Futures](/introduction/vs-perpetuals) ·
 [Glossary](/introduction/glossary)
 

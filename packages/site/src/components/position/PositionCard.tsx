@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { formatUsdc, formatToken } from "../../lib/format.ts";
-import { usePositionState, type Position } from "../../hooks/usePositionState.ts";
+import { usePositionState, CLOSE_HELD_BACK_TIP, type Position } from "../../hooks/usePositionState.ts";
 import TxButton from "../shared/TxButton.tsx";
 import PnlCardModal from "./PnlCardModal.tsx";
 import FundingMeter from "./FundingMeter.tsx";
@@ -254,11 +254,31 @@ export default function PositionCard({
         Pool: {position.pool.slice(0, 10)}...{position.pool.slice(-6)}
       </p>
 
+      {/* Shown inline rather than as a tooltip: on a phone there is no hover. */}
+      {st.closeHeldBack && (
+        <div
+          style={{
+            padding: "8px 10px",
+            border: "1px solid rgba(255,140,0,0.25)",
+            background: "rgba(255,140,0,0.06)",
+          }}
+        >
+          <div style={{ fontSize: "var(--fs-nano)", letterSpacing: "0.15em", color: "var(--orange)", marginBottom: 2 }}>
+            PRICE JUST MOVED · RETRY SHORTLY
+          </div>
+          <p style={{ fontSize: "var(--fs-micro)", color: "var(--dim)", letterSpacing: "0.04em", margin: 0 }}>
+            {CLOSE_HELD_BACK_TIP}
+          </p>
+        </div>
+      )}
+
       {/* Actions */}
       <div className="flex gap-2">
         <WithTooltip tip="Close your position and receive USDC back.">
           <TxButton
-            idleLabel={position.isLong ? "Close Long" : "Close Short"}
+            idleLabel={
+              st.closeHeldBack ? "Retry shortly" : position.isLong ? "Close Long" : "Close Short"
+            }
             status={st.closeStatus}
             variant={position.isLong ? "red" : "green"}
             onClick={() => st.close()}

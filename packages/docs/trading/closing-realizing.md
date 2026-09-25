@@ -12,8 +12,10 @@ closeLong(nftId, minUsdcOut, to)
 closeShort(nftId, minUsdcOut, to)
 ```
 
-`minUsdcOut` protects the payout from slippage. `to` receives it — a separate parameter so a
-holder whose wallet cannot receive USDC (a blacklisted one, say) can still exit.
+`minUsdcOut` is the floor the payout must clear, and it is the only thing protecting it. `to`
+receives the payout — a separate parameter so a holder whose wallet cannot receive USDC (a
+blacklisted one, say) can still exit. **Always set `minUsdcOut`**; see
+[the clamp only moves one way](#the-clamp-only-moves-one-way) for why zero is not safe.
 
 ## What happens
 
@@ -27,12 +29,37 @@ Either way 1% of the profit goes to the protocol and the NFT is burned. The form
 [P&L Calculation](/trading/pnl). Quote a close with `quoteClose(nftId)`, which returns
 `(ready, pnl)` net of the close fee.
 
-::: tip Closing right after a big move
+## Closing right after a price move
+
 A close is priced against the worst of the last 5 block opens wherever that is worse than the
-live price. It stops a holder pumping the price and closing into their own move — and it means a
-close in the seconds after a sharp favourable move may pay the earlier price. `quoteClose`
-already accounts for it.
-:::
+live price, including the open of the block the position was opened in. It stops a holder moving
+the price and closing into their own move, even within one transaction. It has two consequences
+for an honest holder, and `quoteClose` accounts for both:
+
+- **A close right after a favourable move may pay the earlier price.**
+- **A close right after an unfavourable move may be refused.** If the position was underwater at
+  any of those block opens, the close reverts `PositionUnderwater` even though the live price
+  shows a profit. It clears on its own once the move is more than 5 blocks old — a few seconds.
+
+The refusal can also be caused on purpose: pushing the price down at the end of one block and back
+at the start of the next holds a close back for 5 blocks, repeatably. Nothing is taken, but
+funding keeps running, and only a position near break-even can be held back cheaply.
+
+`quoteCloseUnclamped(nftId)` returns the same `(ready, pnl)` at live reserves, without the clamp.
+When it shows a profit and `quoteClose` does not, the close is being held back rather than losing:
+retry shortly. The app labels the button **Retry shortly**.
+
+## The clamp only moves one way
+
+The clamp can lower a payout and never raise one — that is what stops a holder pricing a close
+against a move they just made — so it does nothing about a move made *at* you. Someone can sell
+into the pool just before your long closes, or buy just before your short does, and the close
+settles at that price.
+
+`minUsdcOut` is the answer: with a sensible floor the close reverts `InsufficientOutput` instead,
+and the position stays closeable once the move ages out. A close with `minUsdcOut = 0` takes
+whatever price it is handed. A move sustained long enough to push the position underwater holds
+the exit shut for as long as it lasts, while funding keeps running; no floor fixes that.
 
 ## Underwater positions
 

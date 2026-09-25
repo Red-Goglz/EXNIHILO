@@ -1,17 +1,17 @@
 ---
-description: "EXNIHILO lets you go long or short any ERC-20 token with no collateral and no liquidation. You pay a premium, and that premium is your entire downside."
+description: "EXNIHILO is perpetual options on any ERC-20 token: go long or short with no collateral and no liquidation. You pay a premium, and that premium is your entire downside."
 ---
 
 # What is EXNIHILO
 
-EXNIHILO ("out of thin air") lets you go long or short any ERC-20 token without posting
-collateral and without any risk of liquidation.
+EXNIHILO ("out of thin air") is **perpetual options on any ERC-20 token**: go long or short
+without posting collateral and without any risk of liquidation.
 
-**Positions are options.** You pay a premium — the open fee, roughly 5% of position size — and
-that premium is the most you can lose. A long behaves like a call, a short like a put.
-[Positions Are Options](./positions-are-options) covers the whole mapping.
+You pay a premium — the open fee, roughly 5% of position size — and that premium is the most you
+can lose. A long behaves like a call, a short like a put, neither expires, and funding charges for
+time while you hold. [Perpetual Options](./positions-are-options) covers the whole mapping.
 
-| Perpetual futures | EXNIHILO |
+| Perpetual futures | EXNIHILO perpetual options |
 |---|---|
 | Collateral and margin | Only the open fee |
 | Liquidation engine | No liquidations — nothing was borrowed |

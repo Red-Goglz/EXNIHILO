@@ -11,14 +11,15 @@ description: "Definitions for every EXNIHILO term — airToken and airUsd counte
 | **Claimable balance** | USDC credited to a holder when their position is swept with a residual claim. Withdrawn with `claimPayout(to)`. |
 | **Close-price clamp** | A close is priced against the worst of the last 5 block opens wherever that is worse than live, so a holder cannot close at a price they just moved. |
 | **Constant-product** | `x * y = k`, used by all three curves. |
-| **EXNIHILOFactory** | Creates markets. Permissionless, with no owner; its one role, `deployer`, can wind a pool down. |
+| **EXNIHILOFactory** | Creates markets. Permissionless, with no owner and no privileged role. |
 | **EXNIHILOPool** | One per market: the curves, swaps, positions, funding and liquidity. Holds all tokens and collateral. |
-| **Funding** | Continuous rent on an open position, charged by shrinking it — collateral, debt and notional together. Paid entirely to the LP. See [Funding](/positions/funding). |
+| **Funding** | The option's theta: charged continuously by shrinking the position — collateral, debt and notional together. Paid entirely to the LP. See [Funding](/positions/funding). |
 | **Funding index** | One number per side, in RAY, describing the decay of the whole book. A position's live size is `atOpen × index / fundingIndexAtOpen`. |
 | **Funding window** | The period one funding charge is levied over: one hour at market creation, widening to 30 days. |
 | **Impact fee** | The part of the open fee that grows with position size and same-side open interest. Paid to the LP. |
 | **LP NFT** | ERC-721 carrying sole control of one pool's liquidity. Transferable. |
 | **Open interest** | `longOpenInterest` / `shortOpenInterest` — the live notional on each side. Decays with funding. |
+| **Perpetual option** | An option with no expiry that pays for time through funding. Every EXNIHILO position is one: a long is a call, a short a put. See [Perpetual Options](/introduction/positions-are-options). |
 | **pokeFunding** | Write accrued funding into the reserves without trading. Permissionless, never required. |
 | **Position cap** | The largest position a pool accepts: 1% of its USDC at creation, 20% after 24 hours. |
 | **Position NFT** | ERC-721 recording a position's terms at open. The pool holds the collateral and knows the live size. |

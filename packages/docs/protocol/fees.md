@@ -19,7 +19,7 @@ Every fee is a contract constant — identical on every market and changeable by
 5% looks enormous next to a perp's 0.05% taker fee, but it is a different charge. A perp's fee sits
 on top of collateral you can lose entirely; EXNIHILO's open fee **replaces** collateral and is your
 whole downside. Compare it to an at-the-money option on a volatile token. See
-[Positions Are Options](/introduction/positions-are-options).
+[Perpetual Options](/introduction/positions-are-options).
 :::
 
 ## Open fee

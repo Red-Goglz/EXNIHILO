@@ -1,18 +1,20 @@
 ---
-description: "Leveraged exposure with no liquidation, because EXNIHILO lends you nothing. The full comparison against perpetual futures — including where a perp wins."
+description: "Perpetual options versus perpetual futures: exposure with no liquidation, because EXNIHILO lends you nothing. The full comparison — including where a perp wins."
 ---
 
 # EXNIHILO vs Perpetual Futures
 
 **The short version:** a perpetual future *lends* you exposure against collateral, so it must be
-able to recall the loan — that is liquidation. EXNIHILO lends you nothing; it mints synthetic
-units against an AMM curve. Nothing was borrowed, so nothing can be recalled. The price is paid
-up front: the premium is non-refundable, and a losing position cannot be closed early.
+able to recall the loan — that is liquidation. EXNIHILO sells you a perpetual option instead: it
+mints synthetic units against an AMM curve, so nothing was borrowed and nothing can be recalled.
+The price is paid up front: the premium is non-refundable, and a losing position cannot be closed
+early.
 
 ## Side by side
 
 | | Perpetual future | EXNIHILO |
 |---|---|---|
+| **Instrument** | Linear future | Perpetual call or put |
 | **Exposure from** | Borrowing against collateral | Synthetic units minted against a curve |
 | **Collateral** | Margin | None |
 | **Maximum loss** | Your margin, sometimes more | The premium, always |
@@ -58,11 +60,12 @@ break-even; it shrinks the position behind it.
   unchanged terms.
 - **You are trading small.** The fee floor is 0.05 USDC, so a $1 position is real.
 
-## It is not a perp
+## A perpetual option, not a perpetual future
 
-EXNIHILO has no maintenance margin, no liquidation engine, no order book and no leverage
-multiple. Its funding never pays you and never balances longs against shorts — it is rent on LP
-capital. A long is a **call**, a short is a **put**, and funding takes the place of theta.
+It trades like a perp — long or short, no expiry, funding — but has no maintenance margin, no
+liquidation engine, no order book and no leverage multiple. Its funding never pays you and never
+balances longs against shorts: it is the option's theta, paid to the LP. A long is a **call**, a
+short is a **put**. See [Perpetual Options](./positions-are-options).
 
 The no-liquidation property is structural, but it is not the same as safety. Every audit round
 so far has been performed by AI models, not a human firm — read [Risk Disclosure](/faq/risks)

@@ -9,15 +9,9 @@ import { useSeo } from "../lib/seo.ts";
 export default function LandingPage() {
   useSeo({
     title: "EXNIHILO",
-    // Kept under 160 characters: Google truncates past roughly that, and the
-    // clause that gets cut is the one doing the persuading.
-    //
-    // Must stay byte-identical to the static one in index.html. That copy is
-    // what every non-JS crawler and link unfurler reads; this one is what
-    // Googlebot sees after render. Two descriptions that disagree is a change
-    // nothing warns you about.
+    // Under 160 characters, and byte-identical to the static copy in index.html.
     description:
-      "Leveraged long or short exposure to any ERC-20 token, with no collateral and no liquidation. You pay a fee instead — and that fee is the most you can lose.",
+      "Perpetual options on any ERC-20 token: go long or short with no collateral and no liquidation. You pay a premium, and that premium is the most you can lose.",
     path: "/",
   });
 
@@ -57,14 +51,7 @@ export default function LandingPage() {
 
       {/* ── HERO ─────────────────────────────────────────────────────────── */}
       <section className="min-h-screen flex flex-col items-center justify-center text-center px-6 pt-20">
-        {/*
-          The wordmark is a div, not the h1. It renders identically — every
-          .logo-glitch rule is class-based, and Tailwind's preflight strips the
-          h1 defaults anyway — but "EXNIHILO" is a brand name nobody searches
-          for, so spending the page's single h1 on it wasted the strongest
-          on-page signal we have. The h1 is now the line below, which is both
-          the actual proposition and the phrase people search ("liquidate").
-        */}
+        {/* The wordmark is a div so the page's one h1 is the searchable proposition below. */}
         <div className="fade-up">
           <p className="section-label mb-4">Out of Thin Air</p>
           <div
@@ -81,19 +68,13 @@ export default function LandingPage() {
         >
           Nothing here can liquidate you.
         </h1>
-        {/*
-          "Leveraged" earns its place here: it is the word people actually
-          search with, and the docs back it up (roughly 20× notional per dollar
-          at risk). It is not a claim to be a perp — the comparison section
-          below says so outright, and /docs/introduction/vs-perpetuals spells
-          out where a perp is the better instrument.
-        */}
+        {/* "Leveraged" stays: it is the word people search with. */}
         <p
           className="fade-up fade-up-d2 font-mono text-base md:text-lg max-w-2xl mb-10"
           style={{ color: "var(--muted)" }}
         >
-          Leveraged exposure to any ERC-20 token, long or short. You pay a fee,
-          not collateral &mdash; and that fee is the most you can ever lose.
+          Perpetual options on any ERC-20 token &mdash; leveraged, long or short.
+          You pay a fee, not collateral, and that fee is the most you can ever lose.
         </p>
 
         <div className="fade-up fade-up-d3 flex flex-col sm:flex-row gap-4">
@@ -237,26 +218,19 @@ export default function LandingPage() {
               </svg>
             }
             iconColor="var(--cyan)"
-            title="Positions are options"
-            desc="A long is a call, a short is a put, the open fee is the premium. No strike to pick, no implied volatility, no Greeks — just a direction, and funding that trims the position while you hold it."
+            title="Perpetual options"
+            desc="A long is a call, a short is a put, the open fee is the premium, and nothing expires. No strike to pick, no implied volatility, no Greeks — just a direction, and funding that trims the position while you hold it."
           />
         </div>
       </section>
 
       {/* ── VS PERPS ─────────────────────────────────────────────────────── */}
-      {/*
-        Most people arriving here are comparing against a perp, and until now
-        the page never used the word — so the one question every visitor was
-        actually holding went unanswered above the fold and unsearchable in the
-        copy. The "cannot close a loser" column is not a hedge bolted on for
-        balance: someone who wants to cut losers should bounce here rather than
-        after paying a premium, and saying so is the same posture as the
-        privileged-role panel below.
-      */}
+      {/* Most visitors compare against a perp. Say plainly where a perp wins,
+          so someone who wants to cut losers leaves before paying a premium. */}
       <section className="max-w-4xl mx-auto px-6 py-24">
         <p className="section-label mb-2 text-center">Coming from perps?</p>
         <h2 className="font-display text-4xl md:text-5xl text-white text-center mb-4 tracking-wide">
-          No loan. Nothing to recall.
+          Trades like a perp. Risks like an option.
         </h2>
         <p
           className="text-center text-sm max-w-xl mx-auto mb-16"
@@ -264,8 +238,9 @@ export default function LandingPage() {
         >
           A perpetual future lends you exposure against collateral, so it has to
           be able to recall that loan &mdash; a liquidation is not a design flaw,
-          it is what borrowing costs. EXNIHILO lends you nothing. It mints
-          synthetic units against an AMM curve, so there is nothing to call back.
+          it is what borrowing costs. EXNIHILO sells you a perpetual option
+          instead: it mints synthetic units against an AMM curve, so there is no
+          loan and nothing to recall.
         </p>
 
         <div className="grid sm:grid-cols-2 gap-6">
@@ -285,7 +260,7 @@ export default function LandingPage() {
           </div>
 
           <div className="cyber-panel p-6">
-            <p className="section-label mb-3">EXNIHILO</p>
+            <p className="section-label mb-3">EXNIHILO perpetual option</p>
             <ul className="text-sm space-y-2" style={{ color: "var(--muted)" }}>
               <li>No collateral &mdash; pay a premium instead</li>
               <li>No liquidation engine, no margin calls</li>
@@ -326,7 +301,7 @@ export default function LandingPage() {
             className="section-label"
             style={{ color: "var(--cyan)" }}
           >
-            Why a long is a call &rarr;
+            Perpetual options explained &rarr;
           </a>
         </div>
       </section>
@@ -347,33 +322,32 @@ export default function LandingPage() {
         </p>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatBox label="Tests passing" value="414" />
-          <StatBox label="Audit rounds" value="4" />
+          <StatBox label="Tests passing" value="673" />
+          <StatBox label="Audit rounds" value="5" />
           <StatBox label="Upgrade paths" value="0" />
           <StatBox label="Governance tokens" value="0" />
         </div>
 
         <div className="cyber-panel p-6 mt-6">
-          <p className="section-label mb-3">The one privileged role</p>
+          <p className="section-label mb-3">No privileged role</p>
           <p className="text-sm mb-4" style={{ color: "var(--muted)" }}>
-            The factory deployer can force any pool into wind-down. That is the
-            entire extent of it: it cannot move funds, cannot block a
-            settlement, and cannot take LP liquidity. Positions still settle and
-            LPs still withdraw on their own terms. The role is renounceable by
-            setting it to the zero address.
+            Nobody can move funds, change a parameter or close someone else&apos;s
+            market. Only a pool&apos;s own LP can start its wind-down, and a
+            launchpad market, whose LP NFT is locked in a vault, can never be
+            wound down at all.
           </p>
           <p className="text-sm" style={{ color: "var(--muted)" }}>
-            We list it because you would find it anyway &mdash; and anyone
-            claiming a protocol has zero privileged roles is usually hoping you
-            will not look.
+            Earlier versions kept one emergency role that could wind any pool
+            down. We removed it: a key that can force every trader out of every
+            market is more power than an emergency brake needs. Check the
+            factory yourself &mdash; it has no admin function to find.
           </p>
         </div>
 
         <div className="cyber-panel p-6 mt-4">
           <p className="section-label mb-3">About those audits</p>
           <p className="text-sm mb-4" style={{ color: "var(--muted)" }}>
-            Four rounds, each across 11 independent analysis passes &mdash;
-            performed by AI models, <em style={{ color: "var(--body)" }}>not</em>{" "}
+            Five rounds, performed by AI models, <em style={{ color: "var(--body)" }}>not</em>{" "}
             a human security firm. Each round surfaced findings the previous one
             missed, which tells you none of them should be treated as final.
             Every finding and remediation is published.

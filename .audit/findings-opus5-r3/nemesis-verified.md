@@ -170,6 +170,16 @@ position's live valuation only, and never classify a sweep as underwater on a sn
 
 ## NM-R3-004 — LOW — The close clamp is a denial lever on the holder's own close
 
+**Status: DOCUMENTED and surfaced in the app 2026-09-16, by owner decision; clamp unchanged.**
+Now measured, not only traced: a long +$2,821.89 at live reserves, pushed by 10,000 tokens (10 %
+of the reserve) at one block boundary and pulled back at the next, quotes live +$2,775.47 but
+clamped −$921.98, and `closeLong` reverts `PositionUnderwater` until `CLAMP_BLOCKS` pass
+(`ManipulationSafety.ts`, "holds a close back after a dip held across a block boundary"). New pool
+view `quoteCloseUnclamped(nftId)` prices at live reserves; the site shows **Retry shortly** and
+the live PnL when it is in profit and `quoteClose` is not, and re-reads every 3 s until it clears.
+The SDK gains `quoteCloseUnclamped` and `PositionState.closeHeldBack`. Docs: closing-realizing,
+security, faq/risks, faq/questions, reference, sdk.
+
 `EXNIHILOPool.sol:884-885`: "Underwater at any open in the window wins outright." A
 snapshot is written by the first mutation of a block, so a price push that survives one
 block boundary is recorded, and the push can be unwound in that same block. Repeating the
@@ -180,6 +190,15 @@ one block of arbitrage exposure per repetition. Successor to R2 M-4 in a weaker 
 alone flip the verdict to underwater.
 
 ## NM-R3-005 — LOW — `closePool` became confiscatory, and the emergency role holds it on every pool
+
+**Status: FIXED 2026-09-16, by owner decision — role removed.** `EXNIHILOFactory` loses
+`deployer`, `setDeployer` and `OnlyDeployer`; `EXNIHILOPool.closePool` is `onlyLpHolder` and
+`OnlyLpHolderOrDeployer` is gone. The pool keeps `factory` as a plain address with no authority.
+A launchpad market (LP NFT in `LockedLpVault`) can now never be wound down. Test in `Funding.ts`:
+the factory's deploying account reverts `OnlyLpHolder`, and the factory ABI has no `deployer` /
+`setDeployer`. `deployMainnet.ts` no longer reads the role. Site landing page and docs (security,
+ownership, risks, questions, glossary, architecture, reference, index, addresses) updated;
+`addresses.md` notes the still-live 2026-07-28 deployment keeps the role until the redeploy.
 
 `EXNIHILOPool.sol:287-303`, `:1152-1175`, `:1210-1214`. Before the redesign, closing a pool
 blocked opens and renewals; holders kept their positions to deadline. Now it starts a

@@ -25,10 +25,11 @@ import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
  * touched the pool. Leftover tokens are therefore NOT dumped (dumping just pays
  * slippage back to the pool and masks the extraction) — they are valued at P0.
  *
- * Result: no configuration is profitable. The OI-integral impact fee is
- * quadratic in position size and provably dominates both the manipulation
- * profit and the round-trip slippage, on both sides. This suite locks that
- * property in so a future fee/curve change that breaks it fails loudly.
+ * Scope: separate transactions and single swaps, so the close clamp is in play
+ * and the spot-value swap fee bites. It is NOT evidence that the impact fee
+ * alone prevents manipulation: done in one transaction with split swaps it did
+ * not (audit R4). The atomic, split-swap and entry cases live in
+ * AtomicManipulation.ts.
  *
  * NOTE on scope: this proves single-actor manipulation is unprofitable. It does
  * NOT (and cannot) remove the LP's inherent directional exposure — an actor who
@@ -957,5 +958,153 @@ describe("Settlement clamp window", function () {
 
     // Still fully clamped: the pump bought nothing and the dust was pure cost.
     expect(await closeFor(fix, fix.nftId)).to.equal(plain);
+  });
+
+  it("holds a close back after a dip held across a block boundary, and quoteCloseUnclamped says so", async function () {
+    // The cost of the clamp, stated as a test (audit R3, NM-R3-004). Anyone can
+    // push the price at the end of one block and pull it back at the start of
+    // the next: the next block's open is recorded at the pushed price, and a
+    // position that is underwater at ANY open in the window cannot close. The
+    // holder is delayed, not robbed, and the delay ends with the window.
+    //
+    // Sized to be undone: the swap fee is charged at the pre-trade price, so a
+    // push many times the reserve cannot be reversed and would really sink the
+    // position. Here a long ~$2,800 in profit is pushed to ~−$920 by 10 % of the
+    // token reserve, and the pull-back restores ~$2,775.
+    const base = await deployPool(POOL_USDC, POOL_TOKEN, 0n);
+    const nftId = await openSide(base.pool, base.attacker, true, NOTIONAL);
+    if (nftId === null) throw new Error("open reverted");
+    const mover = (await ethers.getSigners())[5];
+    const drift = ethers.parseUnits("20000", 6);
+    await base.usdc.mint(mover.address, drift);
+    await base.usdc.connect(mover).approve(base.poolAddr, ethers.MaxUint256);
+    await base.pool.connect(mover).swap(drift, 0n, false, mover.address);
+    await mine(CLAMP_BLOCKS);
+    const fix = { ...base, nftId };
+
+    const [, liveBefore] = await fix.pool.quoteClose(fix.nftId);
+    expect(liveBefore).to.be.gt(0n);
+
+    const griefer = (await ethers.getSigners())[6];
+    const dump = ethers.parseEther("10000");
+    await fix.baseToken.mint(griefer.address, dump);
+    await fix.baseToken.connect(griefer).approve(fix.poolAddr, ethers.MaxUint256);
+    await fix.usdc.connect(griefer).approve(fix.poolAddr, ethers.MaxUint256);
+
+    // Block B: push the price down. Block B+1: pull it back; B+1's open is the pushed state.
+    const usdcBefore = await fix.usdc.balanceOf(griefer.address);
+    await fix.pool.connect(griefer).swap(dump, 0n, true, griefer.address);
+    const got = (await fix.usdc.balanceOf(griefer.address)) - usdcBefore;
+    await fix.pool.connect(griefer).swap(got, 0n, false, griefer.address);
+
+    // Live reserves are back near where they were, so the position is in profit...
+    const [liveReady, livePnl] = await fix.pool.quoteCloseUnclamped(fix.nftId);
+    expect(liveReady).to.equal(true);
+    expect(livePnl).to.be.gt(0n);
+    // ...but the clamped quote, and a close, still see the pushed open.
+    const [clampReady, clampPnl] = await fix.pool.quoteClose(fix.nftId);
+    expect(clampReady && clampPnl > 0n).to.equal(false);
+    await expect(
+      fix.pool.connect(fix.attacker).closeLong(fix.nftId, 0n, fix.attacker.address),
+    ).to.be.revertedWithCustomError(fix.pool, "PositionUnderwater");
+
+    // Once the window has passed, both quotes agree and the close goes through.
+    await mine(CLAMP_BLOCKS);
+    const [, clampAfter] = await fix.pool.quoteClose(fix.nftId);
+    expect(clampAfter).to.be.gt(0n);
+    expect(await closeFor(fix, fix.nftId)).to.be.gt(0n);
+  });
+});
+
+/**
+ * Sandwiching SOMEONE ELSE's close.
+ *
+ * Every case above is a holder sandwiching their own exit, which the clamp
+ * exists to stop. The reverse is not symmetric: the clamp seeds from the live
+ * price and only ever narrows, so a valuation moved AGAINST a holder stands,
+ * and no earlier snapshot can restore it.
+ *
+ * Nothing here is a claim that the clamp is wrong — taking the maximum instead
+ * would just re-open the attack the tests above close. These pin what the
+ * exposure actually is, and that `minUsdcOut` is what answers it. A close sent
+ * without one takes whatever price it is handed.
+ */
+describe("Manipulation: sandwiching someone else's close", function () {
+  this.timeout(120_000);
+
+  const POOL_USDC  = 100_000n * 10n ** 6n;
+  const POOL_TOKEN = 100_000n * 10n ** 18n;
+  const NOTIONAL   = 5_000n * 10n ** 6n;
+
+  /**
+   * A victim long, in profit and past the clamp window, plus a separate
+   * attacker holding the other side of the book.
+   */
+  async function victimLong() {
+    const fix = await deployPool(POOL_USDC, POOL_TOKEN, 0n);
+    const victim = (await ethers.getSigners())[6];
+    await fix.usdc.mint(victim.address, POOL_USDC);
+    await fix.usdc.connect(victim).approve(fix.poolAddr, ethers.MaxUint256);
+
+    const nftId = await openSide(fix.pool.connect(victim) as EXNIHILOPool, victim, true, NOTIONAL);
+    if (nftId === null) throw new Error("open reverted");
+
+    // Unrelated drift into profit, then out of the clamp window so the position
+    // has a real, settled payout to be robbed of.
+    const mover = (await ethers.getSigners())[5];
+    await fix.usdc.mint(mover.address, 40_000n * 10n ** 6n);
+    await fix.usdc.connect(mover).approve(fix.poolAddr, ethers.MaxUint256);
+    await fix.pool.connect(mover).swap(40_000n * 10n ** 6n, 0n, false, mover.address);
+    await mine(CLAMP_BLOCKS);
+
+    return { ...fix, victim, nftId };
+  }
+
+  it("an attacker can cut the payout of a close that carries no floor", async function () {
+    const honest = await victimLong();
+    const [, quoted] = await honest.pool.quoteClose(honest.nftId);
+    expect(quoted).to.be.gt(0n);
+
+    // Same position, same moment — but the attacker sells token first.
+    const sandwiched = await victimLong();
+    await sandwiched.pool
+      .connect(sandwiched.attacker)
+      .swap(20_000n * 10n ** 18n, 0n, true, sandwiched.attacker.address);
+
+    const before = await sandwiched.usdc.balanceOf(sandwiched.victim.address);
+    await sandwiched.pool
+      .connect(sandwiched.victim)
+      .closeLong(sandwiched.nftId, 0n, sandwiched.victim.address);
+    const paid = (await sandwiched.usdc.balanceOf(sandwiched.victim.address)) - before;
+
+    // The clamp did not restore the pre-attack valuation.
+    expect(paid).to.be.lt(quoted);
+  });
+
+  it("a floor turns that into a failed transaction instead of a loss", async function () {
+    const fix = await victimLong();
+    const [, quoted] = await fix.pool.quoteClose(fix.nftId);
+    const floor = (quoted * 9_900n) / 10_000n; // the site's 1 % tolerance
+
+    await fix.pool
+      .connect(fix.attacker)
+      .swap(20_000n * 10n ** 18n, 0n, true, fix.attacker.address);
+
+    await expect(
+      fix.pool.connect(fix.victim).closeLong(fix.nftId, floor, fix.victim.address),
+    ).to.be.revertedWithCustomError(fix.pool, "InsufficientOutput");
+
+    // The position is untouched and still closeable once the move passes.
+    expect(await fix.pool.openPositionCount()).to.equal(1n);
+  });
+
+  it("the floor does not block an honest close", async function () {
+    const fix = await victimLong();
+    const [, quoted] = await fix.pool.quoteClose(fix.nftId);
+    const floor = (quoted * 9_900n) / 10_000n;
+
+    const before = await fix.usdc.balanceOf(fix.victim.address);
+    await fix.pool.connect(fix.victim).closeLong(fix.nftId, floor, fix.victim.address);
+    expect((await fix.usdc.balanceOf(fix.victim.address)) - before).to.be.gte(floor);
   });
 });

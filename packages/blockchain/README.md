@@ -1,13 +1,17 @@
-# Sample Hardhat Project
+# packages/blockchain
 
-This project demonstrates a basic Hardhat use case. It comes with a sample contract, a test for that contract, and a Hardhat Ignition module that deploys that contract.
+EXNIHILO's Solidity contracts (0.8.24, viaIR, `cancun`) and their Hardhat tests and scripts.
 
-Try running some of the following tasks:
-
-```shell
-npx hardhat help
-npx hardhat test
+```bash
+npx hardhat test                                   # full suite
 REPORT_GAS=true npx hardhat test
-npx hardhat node
-npx hardhat ignition deploy ./ignition/modules/Lock.ts
+npx hardhat coverage
+
+npx hardhat node                                   # local chain, then:
+npx hardhat run scripts/deployLocal.ts --network localhost
+
+FORK_AVALANCHE=1 DRY_RUN=1 npx hardhat run scripts/deployMainnet.ts   # rehearse on a fork
 ```
+
+What each contract does: [Architecture](../docs/protocol/architecture.md). Deployments and the
+redeploy checklist: [Contract Addresses](../docs/protocol/addresses.md).

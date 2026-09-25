@@ -3,7 +3,9 @@ pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
-/// @notice Test-only ERC-20 with open minting and configurable decimals.
+/// @notice Test-only ERC-20 with open minting and burning and configurable decimals.
+///         Burning from an arbitrary holder stands in for a seizure or a negative
+///         rebase: a balance that falls without the holder spending it.
 contract MockERC20 is ERC20 {
     uint8 private immutable _dec;
 
@@ -21,5 +23,9 @@ contract MockERC20 is ERC20 {
 
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
+    }
+
+    function burn(address from, uint256 amount) external {
+        _burn(from, amount);
     }
 }

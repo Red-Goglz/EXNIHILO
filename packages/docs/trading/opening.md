@@ -1,11 +1,11 @@
 ---
-description: "Open a long (a call) or a short (a put): pay the premium, post no collateral, and lose no more than you paid. What it costs, what happens on-chain, and the limits that apply."
+description: "Open a long (a perpetual call) or a short (a perpetual put): pay the premium, post no collateral, and lose no more than you paid. What it costs, what happens on-chain, and the limits that apply."
 ---
 
 # Opening a Position
 
-A **long** profits when the token rises against USDC — in option terms, a call. A **short**
-profits when it falls — a put. Either way you pay a premium (the open fee), post no collateral,
+A **long** profits when the token rises against USDC — in option terms, a perpetual call. A
+**short** profits when it falls — a perpetual put. Either way you pay a premium (the open fee), post no collateral,
 and cannot lose more than that premium. For a short this matters most: a squeeze that would wreck
 a margin short cannot cost you more than you paid.
 
@@ -45,7 +45,12 @@ one USDC approval for every pool.
 
 ## Limits
 
-- **Slippage** — `minAirTokenOut` / `minAirUsdOut` revert the open if the curve gives less.
+- **Entry price** — an open is priced at the worst of live reserves and the last 5 block opens,
+  so it can never be priced against a move made in the same transaction. Right after a move in
+  your favour it pays the earlier price for a few seconds. `quoteOpen(notional, isLong)` returns
+  `(locked, debt)` exactly as the open will be priced.
+- **Slippage** — `minAirTokenOut` / `minAirUsdOut` revert the open if it locks less. Take them
+  from `quoteOpen`, not from the live reserves.
 - **Position cap** — at most 1% of the pool's USDC on day one, rising to 20% after 24 hours.
   Above it the open reverts `LeverageCapExceeded`; read the live maximum with
   `effectiveLeverageCap()`. See [Position Caps](/lp/position-caps).

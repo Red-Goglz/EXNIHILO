@@ -3,37 +3,14 @@ import type { Address, Hash } from "viem";
 import { requireAccount, requireWallet, type Ctx } from "./client.js";
 
 /**
- * Maintenance operations. Not part of the partner-facing surface, but shipped
- * because someone has to run them.
- *
- * This module used to be the keeper interface: positions expired, and somebody
- * had to settle them or open interest never decremented and the impact fee
- * priced off a book that was no longer real. Positions no longer expire, and
- * funding retires them continuously instead, so nothing here is on a clock.
- *
- * What is left is two chores, neither urgent:
- *
- *   pokeFunding  realises accrued funding into the reserves. Never required —
- *                every trade does it — but a pool that has not traded for a
- *                while is carrying funding the LP is owed and the holders have
- *                not yet paid, and anyone may realise it without trading.
- *
- *   sweepDust    clears a position funding has decayed to dust. Its debt
- *                decays with it, so it no longer distorts anyone's price, but it
- *                still holds a slot in openPositionCount — and the LP cannot
- *                withdraw until every slot is released.
- *
- * Both are unpaid. The party with the motive is the LP, whose withdrawal a dead
- * position blocks — which is why neither needs a bounty to be run.
+ * Maintenance: unpaid, never urgent, permissionless. The LP has the motive —
+ * a position that is still open blocks removeLiquidity.
  */
 
 /**
- * Charge funding to both sides up to the current block.
- *
- * Idempotent in effect: calling it twice in a block does nothing the second
- * time, and never calling it costs nobody anything, because the next trade
- * charges the same total. The charge for a stretch of time is the same however
- * many pieces it is accrued in.
+ * Write accrued funding into the reserves without trading. Never required:
+ * every trade accrues first. Accruing more often can only lower a side's
+ * charge slightly, never raise it (see docs: Funding).
  */
 export async function pokeFunding(ctx: Ctx, pool: Address): Promise<Hash> {
   const wallet = requireWallet(ctx, "pokeFunding");
@@ -49,17 +26,9 @@ export async function pokeFunding(ctx: Ctx, pool: Address): Promise<Hash> {
 }
 
 /**
- * Clear a position whose collateral has decayed to dust. Anyone may call it.
- *
- * Reverts `PositionNotDust` until the position has fallen below 0.1 % of the
- * collateral it opened with. That threshold is measured against the position's
- * own opening size rather than against its claim, so it cannot be reached by
- * pushing the mark down — only by funding, which no caller controls.
- *
- * A residual claim is credited to the holder as a pull payment rather than
- * transferred, so the sweep cannot be blocked by the holder's wallet. The claim
- * is priced at sweep time, so a caller who moves the price first can make it
- * price underwater and credit nothing; what that denies is at most the dust.
+ * Clear a position funding has decayed to 0.1 % of its opening collateral;
+ * reverts `PositionNotDust` before that. Any residual payout is credited to the
+ * holder (`claimPayout`), priced at sweep time.
  */
 export async function sweepDust(
   ctx: Ctx,
@@ -74,6 +43,28 @@ export async function sweepDust(
     abi: exnihiloPoolAbi,
     functionName: "sweepDust",
     args: [tokenId],
+    account,
+  });
+  return wallet.writeContract(request);
+}
+
+/**
+ * sweepDust over a list. Entries already gone, from another pool or not yet
+ * dust are skipped, not reverted. Work is linear, so chunk large books.
+ */
+export async function sweepDustBatch(
+  ctx: Ctx,
+  pool: Address,
+  tokenIds: readonly bigint[]
+): Promise<Hash> {
+  const wallet = requireWallet(ctx, "sweepDustBatch");
+  const account = requireAccount(ctx, "sweepDustBatch");
+
+  const { request } = await ctx.publicClient.simulateContract({
+    address: pool,
+    abi: exnihiloPoolAbi,
+    functionName: "sweepDustBatch",
+    args: [tokenIds],
     account,
   });
   return wallet.writeContract(request);

@@ -4,9 +4,9 @@ description: "Each pool has exactly one LP, identified by a transferable LP NFT.
 
 # Running a Pool
 
-Each pool has exactly one liquidity provider: whoever holds its **LP NFT**. The NFT is minted to
-the market creator along with the initial liquidity, and transferring it transfers every LP right
-at once — to sell a pool, move it to a multisig, or build on top of it.
+Each pool has exactly one liquidity provider: whoever holds its **LP NFT**. The NFT goes to the
+market creator along with the initial liquidity, and transferring it transfers every LP right at
+once — to sell a pool, move it to a multisig, or build on top of it.
 
 ## What the LP can do
 
@@ -27,8 +27,9 @@ the funding rate doubles every day. Trading and closes continue and nothing is f
 positions nobody closes decay into sweep range within about eleven days of the grace period
 ending. Once every position is closed or swept, `removeLiquidity()` works.
 
-The factory's emergency `deployer` role can also close any pool. Announce a closure before calling
-it — holders need the grace period to exit.
+Only the LP can close a pool; the factory has no role that can. Announce a closure before calling
+it — holders need the grace period to exit. A launchpad market's LP NFT is locked in a
+`LockedLpVault`, which has no path to `closePool`, so such a market can never be wound down.
 
 ## Why one LP
 

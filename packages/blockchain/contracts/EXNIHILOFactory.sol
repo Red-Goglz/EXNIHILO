@@ -33,6 +33,12 @@ interface IERC20Decimals {
 contract EXNIHILOFactory is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
+    // ── Constants ─────────────────────────────────────────────────────────────
+
+    /// @notice Supported token precision. Covers USDC-like 6 through the usual 18.
+    uint8 public constant MIN_TOKEN_DECIMALS = 6;
+    uint8 public constant MAX_TOKEN_DECIMALS = 18;
+
     // ── Immutables ────────────────────────────────────────────────────────────
 
     address public immutable positionNFT;
@@ -42,11 +48,6 @@ contract EXNIHILOFactory is ReentrancyGuard {
     address public immutable protocolTreasury;
     IPoolDeployer public immutable poolDeployer;
 
-    // ── Emergency admin ───────────────────────────────────────────────────────
-
-    /// @notice May close any pool. Set to zero to renounce.
-    address public deployer;
-
     // ── Registry ──────────────────────────────────────────────────────────────
 
     mapping(address => bool) public isPool;
@@ -54,11 +55,11 @@ contract EXNIHILOFactory is ReentrancyGuard {
 
     // ── Errors ────────────────────────────────────────────────────────────────
 
-    error OnlyDeployer();
     error ZeroAddress();
     error ZeroAmount();
     error TokenIsUsdc();
     error LpNftIdMismatch();
+    error UnsupportedDecimals();
 
     // ── Events ────────────────────────────────────────────────────────────────
 
@@ -89,7 +90,6 @@ contract EXNIHILOFactory is ReentrancyGuard {
         usdc              = usdc_;
         protocolTreasury  = protocolTreasury_;
         poolDeployer      = IPoolDeployer(poolDeployer_);
-        deployer          = msg.sender;
     }
 
     // ── Market creation ───────────────────────────────────────────────────────
@@ -109,11 +109,16 @@ contract EXNIHILOFactory is ReentrancyGuard {
         IERC20(usdc).safeTransferFrom(msg.sender, address(this), usdcAmount);
         IERC20(tokenAddress).safeTransferFrom(msg.sender, address(this), tokenAmount);
 
+        // Below MIN_TOKEN_DECIMALS a unit is worth enough that funding's rounding
+        // residue can be traded against. No answer is taken as 18.
         uint8 tokenDecimals;
         try IERC20Decimals(tokenAddress).decimals() returns (uint8 d) {
             tokenDecimals = d;
         } catch {
             tokenDecimals = 18;
+        }
+        if (tokenDecimals < MIN_TOKEN_DECIMALS || tokenDecimals > MAX_TOKEN_DECIMALS) {
+            revert UnsupportedDecimals();
         }
 
         uint256 predictedLpNftId = allPools.length;
@@ -149,14 +154,6 @@ contract EXNIHILOFactory is ReentrancyGuard {
         allPools.push(pool);
 
         emit MarketCreated(pool, tokenAddress, msg.sender, lpNftId);
-    }
-
-    // ── Emergency admin ───────────────────────────────────────────────────────
-
-    /// @notice Hand over the emergency role; address(0) renounces it permanently.
-    function setDeployer(address newDeployer) external {
-        if (msg.sender != deployer) revert OnlyDeployer();
-        deployer = newDeployer;
     }
 
     function allPoolsLength() external view returns (uint256) {

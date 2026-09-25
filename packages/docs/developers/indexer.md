@@ -83,7 +83,7 @@ All routes take `?chainId=`.
 | Route | Returns |
 |---|---|
 | `/api-status` | `{ status, chainId }` |
-| `/prices/:pool?limit=` | Price snapshots (spot, long, short) with funding indices |
+| `/prices/:pool?limit=` | Price snapshots: spot, long and short price, both funding indices (RAY), and the triggering event |
 | `/positions/:pool?status=` | Positions in a pool, with live size |
 | `/positions/user/:address` | Positions held by an address |
 | `/position/:nftId` | One position, with live collateral, debt and notional |

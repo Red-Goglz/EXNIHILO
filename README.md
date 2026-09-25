@@ -34,7 +34,7 @@ packages/
 | Contract | Description |
 |---|---|
 | `EXNIHILOPool` | Swaps, positions, funding, liquidity and fees for one market |
-| `EXNIHILOFactory` | Creates and seeds markets; holds the emergency `closePool` role |
+| `EXNIHILOFactory` | Creates and seeds markets; no owner, no privileged role |
 | `EXNIHILORouter` | One USDC approval for opens and swaps on every pool |
 | `PoolDeployer` | Holds the pool bytecode for the factory |
 | `PositionNFT` / `LpNFT` | ERC-721 position records (on-chain SVG) and pool ownership |
@@ -46,14 +46,14 @@ See [Architecture](packages/docs/protocol/architecture.md) and [Security](packag
 
 ## Getting started
 
-Requires Node.js 18+ and npm 9+.
+Requires Node.js 20.19+ (Vite 7) and npm 9+.
 
 ```bash
 npm install
 
 # Contracts
 cd packages/blockchain
-npx hardhat test                    # 630 tests
+npx hardhat test                    # 673 tests
 REPORT_GAS=true npx hardhat test
 npx hardhat coverage
 

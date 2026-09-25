@@ -164,10 +164,7 @@ async function main() {
 
   // ── 6. Create markets ────────────────────────────────────────────────────────
   //    Seed sizes chosen to give varied TVLs and prices similar to localhost.
-  //   format: [symbol, usdcSeed, tokenSeed]
-  //
-  //   Caps and lifetime now ramp from the pool's own age, so seed size is the
-  //   only per-market knob left.
+  //   format: [symbol, usdcSeed, tokenSeed] — seed size is the only per-market knob.
   const marketSpecs: [string, bigint, bigint][] = [
     // ARENA — small pool, ~$0.001/token
     ["ARENA",   500n   * 1_000_000n,  500_000n * 10n ** 18n],
@@ -190,8 +187,6 @@ async function main() {
     await (await usdc.connect(deployer).approve(factoryAddress, usdcSeed)).wait();
     await (await baseToken.contract.connect(deployer).approve(factoryAddress, tokenSeed)).wait();
 
-    // Position caps and lifetime are no longer parameters — the pool ramps both
-    // from its own age (currentMaxPositionBps / currentPositionDuration).
     const tx = await factory.connect(deployer).createMarket(
       baseToken.address,
       usdcSeed,

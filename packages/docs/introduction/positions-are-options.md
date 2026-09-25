@@ -1,10 +1,12 @@
 ---
-description: "An EXNIHILO long is a call and a short is a put. The full mapping from option mechanics onto the protocol — and the four places the analogy breaks down."
+description: "EXNIHILO positions are perpetual options: a long is a call, a short is a put, neither expires, and funding charges for time. The mapping from option mechanics, and where it differs."
 ---
 
-# Positions Are Options
+# Perpetual Options
 
-If you know how options work, you already know how EXNIHILO works.
+EXNIHILO positions are **perpetual options**: a long is a call, a short is a put, and neither
+expires. It trades like a perp — long or short, no expiry, funding — and risks like an option: the
+premium you pay to open is the most you can lose, and nothing can liquidate you.
 
 ## The mapping
 
@@ -13,15 +15,21 @@ If you know how options work, you already know how EXNIHILO works.
 | **Premium** — paid upfront, non-refundable | The open fee: 5% of notional + impact fee |
 | **Maximum loss = premium** | Maximum loss = the fee you paid |
 | **Strike** | The pool price at open — always at-the-money |
-| **Expiry** | None — a perpetual option |
+| **Expiry** | None |
 | **Theta** | Funding: a fraction of the position goes to the LP every second |
 | **Expiring worthless** | An underwater position decays to nothing |
 | **Exercise** | `closeLong` / `closeShort` — settle in USDC any time you are in profit |
 | **Call / put** | **Long** / **short** |
 
-There is no strike to choose, no implied volatility to model, and no Greeks. You pick a
-direction and pay the premium; the position runs until you close it, shrinking a little every
-second.
+There is no strike to choose, no expiry to roll, and no Greeks to model. You pick a direction and
+pay the premium; the position runs until you close it, shrinking a little every second.
+
+## Why it pays funding
+
+An option that never expired and cost nothing to hold would be worth close to its whole notional,
+not a 5% premium, so a perpetual option pays for time as it goes. EXNIHILO takes that payment in
+size, not cash: collateral and debt shrink by the same fraction, so your break-even never moves —
+there is just less position behind it. See [Funding](/positions/funding).
 
 ## Why there are no liquidations
 
@@ -54,14 +62,13 @@ Settlement runs through the pool's curves, so real payouts are lower — mildly 
 Below $1 of notional the 0.05 USDC floor exceeds 5%, so tiny positions pay proportionally more.
 See [P&L Calculation](/trading/pnl).
 
-## Where the analogy breaks
+## Where it differs from a listed option
 
 1. **No salvage value.** A losing option can be sold for its remaining time value. An
    underwater EXNIHILO position cannot be closed at all — it recovers or decays.
-2. **The premium recurs.** An option's premium is paid once; here funding is charged for as long
-   as you hold, because a perpetual option with a single premium would be worth an unbounded
-   amount. It is charged in size, not value: collateral and debt shrink together, so your
-   break-even never moves — there is just less position behind it.
+2. **The premium is not quoted from volatility.** There is no oracle and no volatility feed: the
+   premium is 5% plus an impact fee for size and crowding, and funding is steepest on young and
+   crowded markets.
 3. **Payoff is not linear in spot.** Entry and exit both run through constant-product curves, so
    P&L bends with position size.
 4. **The writer is one party.** Each pool's single LP is the counterparty to every position in

@@ -402,8 +402,9 @@ describe("EXNIHILOFactory", function () {
 //
 // The pool it builds is inert unless the factory registers it, so the risk was
 // never a usable orphan pool. It was that anyone could build one NAMING the
-// real factory — a pool that reads factory.deployer() for its emergency-close
-// authority while that factory has never heard of it.
+// real factory while that factory has never heard of it. (The pool then read
+// factory.deployer() for emergency-close authority; that role is gone, but a
+// pool's `factory` should still name its real creator.)
 // ═════════════════════════════════════════════════════════════════════════════
 
 describe("PoolDeployer — caller must name itself", () => {

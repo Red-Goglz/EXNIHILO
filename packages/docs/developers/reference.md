@@ -15,6 +15,7 @@ description: "Function reference for EXNIHILOPool, the factory, router, NFTs and
 | `openShort(usdcNotional, minAirUsdOut, recipient)` | Anyone | Open a short |
 | `closeLong(nftId, minUsdcOut, to)` / `closeShort(nftId, minUsdcOut, to)` | Holder | Close in profit; payout to `to` |
 | `sweepDust(nftId)` | Anyone | Clear a position below 0.1% of its opening collateral; otherwise reverts `PositionNotDust`. A residual is credited if the sweep prices it in profit |
+| `sweepDustBatch(nftIds[])` | Anyone | The same over a list, returning how many were released. Entries already gone, from another pool, or not yet dust are skipped rather than reverting, so a race does not cost the batch |
 | `claimPayout(to)` | Credited holder | Withdraw a payout credited by a sweep |
 | `pokeFunding()` | Anyone | Write accrued funding without trading |
 
@@ -26,7 +27,7 @@ description: "Function reference for EXNIHILOPool, the factory, router, NFTs and
 | `removeLiquidity()` | LP | Withdraw everything; requires no open positions |
 | `claimFees(to)` | LP | Claim LP fees |
 | `claimProtocolFees(to)` | Treasury | Claim protocol fees |
-| `closePool()` | LP or factory `deployer` | Irreversible. Blocks opens now; after `closeDate` (now + 7 days) funding doubles daily |
+| `closePool()` | LP | Irreversible. Blocks opens now; after `closeDate` (now + 7 days) funding doubles daily |
 
 ### Views
 
@@ -38,7 +39,9 @@ description: "Function reference for EXNIHILOPool, the factory, router, NFTs and
 | `totalLongCollateral()` / `totalShortCollateral()` / `totalShortDebt()` | Aggregates behind the reserve identities |
 | `openPositionCount()` | Number of open positions |
 | `quoteOpenFee(notional, isLong)` | The exact open fee now |
+| `quoteOpen(notional, isLong)` | `(locked, debt)` for an open in the next block: the worst of live reserves and the last 5 block opens. A floor, since unaccrued funding only improves it — derive `minAirTokenOut` / `minAirUsdOut` from `locked` |
 | `quoteClose(nftId)` | `(ready, pnl)` for a close in the next block, clamp included; `pnl` is net of the close fee, negative when underwater (an estimate when `ready` is false) |
+| `quoteCloseUnclamped(nftId)` | The same at live reserves, without the clamp. Not what a close pays: in profit here but not in `quoteClose` means a recent price move is holding the close back — retry within a few blocks |
 | `liveAmountsOf(nftId)` | `(locked, debt, notional)` now, net of funding |
 | `effectiveLockedOf(nftId)` / `remainingSizeBps(nftId)` | Live collateral; what is left of the opening size, in bps |
 | `fundingRatePerSecond(isLong)` | Current rate in RAY per second, including any wind-down multiplier |
@@ -50,7 +53,7 @@ description: "Function reference for EXNIHILOPool, the factory, router, NFTs and
 | `claimable(address)` / `totalClaimable()` | Credited payouts |
 | `closeDate()` / `isClosing()` | Wind-down state |
 | `createdAt()` / `tokenDecimals()` / `swapFeeBps()` | Market creation time, token decimals, the 1% fee |
-| `indexerState()` | Reserves, prices, lifetime fees, and projected funding indices and rates, in one call |
+| `indexerState()` | Reserves, prices, lifetime fees, and projected funding indices and rates, in one call. The rates match `fundingRatePerSecond`, wind-down multiplier included |
 
 ### Events
 
@@ -78,10 +81,13 @@ different units, never summed.
 
 | Function | Description |
 |---|---|
-| `createMarket(tokenAddress, usdcAmount, tokenAmount)` | Deploy and seed a market; returns `(pool, lpNftId)` |
+| `createMarket(tokenAddress, usdcAmount, tokenAmount)` | Deploy and seed a market; returns `(pool, lpNftId)`. Reverts `UnsupportedDecimals` outside 6–18 |
 | `allPools(i)` / `allPoolsLength()` / `isPool(address)` | Enumerate and check markets |
-| `deployer()` / `setDeployer(address)` | The emergency role that can call `closePool`; set `address(0)` to renounce |
+| `MIN_TOKEN_DECIMALS()` / `MAX_TOKEN_DECIMALS()` | The accepted range, 6 and 18 |
 | `usdc()` / `protocolTreasury()` / `positionNFT()` / `lpNftContract()` / `poolDeployer()` | Immutables |
+
+The factory has no owner and no admin function. The July 2026 deployment still has a `deployer`
+role; see [Contract Addresses](/protocol/addresses).
 
 ## EXNIHILORouter
 

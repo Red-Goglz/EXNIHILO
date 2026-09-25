@@ -11,10 +11,10 @@ EXNIHILO is experimental software. Only use funds you can afford to lose.
 ## Smart contract risk
 
 **No human security firm has audited the protocol.** Five AI audit rounds have been published; the
-latest (2026-08-20) found critical issues, and the continuous-funding model the contracts now use was
-built after it and has not been audited. The code uses reentrancy guards, exact reserve invariants
-and a 630-test suite, but undiscovered vulnerabilities may exist, and nothing can be patched once
-deployed. See [Security](/protocol/security).
+latest (2026-08-20) found critical issues. Continuous funding came after it and has had one
+single-pass review (R3), whose High is fixed; the fixes made since are unaudited. The code uses reentrancy guards, exact
+reserve invariants and a 673-test suite, but undiscovered vulnerabilities may exist, and nothing can
+be patched once deployed. See [Security](/protocol/security).
 
 ## As a trader
 
@@ -30,11 +30,18 @@ deployed. See [Security](/protocol/security).
 
   A crowded side pays several times more. A position held through a long flat stretch can lose most
   of its size without the price ever moving against you. Check `remainingSizeBps(nftId)`.
-- **Markets can be wound down.** If the LP or the factory's emergency role closes a pool, no new
-  positions open, and after 7 days funding doubles daily — a position you do not close decays away
-  within about eleven more days.
+- **Markets can be wound down.** If the pool's LP closes it, no new positions open, and after 7
+  days funding doubles daily — a position you do not close decays away within about eleven more
+  days. Nobody but that LP can do this.
 - **Settlement runs through the pool's curves.** Large positions in small pools lose a lot to
   slippage, and a close right after a sharp favourable move may be priced at the earlier price.
+- **Always set `minUsdcOut` on a close.** The close-price clamp only ever lowers a payout, so it
+  does nothing about someone moving the price against you in the block before yours lands. A floor
+  turns that into a failed transaction; without one the close takes whatever price it is handed.
+- **A close can be held back for a few seconds.** A close is priced against the worst of the last
+  5 block opens, so after a sharp dip — or someone pushing the price down at a block boundary — a
+  position in profit can refuse to close until the dip ages out. Retry shortly. Someone repeating
+  the push can keep a position near break-even from closing for as long as they keep it up.
 - There are no stop-losses.
 
 ## As an LP

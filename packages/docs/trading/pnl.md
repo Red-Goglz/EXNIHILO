@@ -28,20 +28,20 @@ The position's own collateral is excluded from the reserve it sells into.
 ## Short
 
 ```
-totalBuyable = cpAmountOut(locked, airUsdSupply − locked, backedAirToken)
-cost         = ceil(locked × debt / totalBuyable)
-surplus      = locked − cost
-payout       = surplus − 1% close fee
+cost    = min x such that cpAmountOut(x, airUsdSupply − locked, backedAirToken) ≥ debt
+surplus = locked − cost
+payout  = surplus − 1% close fee
 ```
 
-`cost` is the airUsd needed to buy back the airToken debt, rounded up in the pool's favour.
+`cost` is the airUsd that buys back the airToken debt: the exact inverse of the curve, found by
+bisection. If the whole collateral cannot cover the debt, the position is underwater.
 
 ## Notes
 
-- `surplus ≤ 0` means underwater: the position cannot be closed.
+- A negative surplus means underwater: the position cannot be closed.
 - The payout depends on reserves when you close, clamped as described in
   [Closing Positions](/trading/closing-realizing).
 - Large positions relative to the pool lose more to slippage, and long and short P&L are not
   perfectly symmetric.
-- `quoteClose(nftId)` returns exactly what a close would pay, and the NFT's artwork shows the same
-  number.
+- `quoteClose(nftId)` quotes what a close sent now would pay. The NFT's artwork shows that payout
+  less the premium paid.

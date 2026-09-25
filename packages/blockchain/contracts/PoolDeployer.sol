@@ -21,8 +21,8 @@ contract PoolDeployer {
         address protocolTreasury,
         address factory
     ) external returns (address) {
-        // A caller can only name itself as the pool's factory, so nobody can deploy
-        // a pool that borrows the real factory's emergency deployer.
+        // A caller can only name itself as the pool's factory, so a pool's
+        // `factory` always names the contract that created it.
         if (msg.sender != factory) revert FactoryMismatch();
 
         EXNIHILOPool pool = new EXNIHILOPool(

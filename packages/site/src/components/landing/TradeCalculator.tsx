@@ -4,26 +4,13 @@ import { useReadContract, useReadContracts } from "wagmi";
 import { exnihiloFactoryAbi, exnihiloPoolAbi, erc20Abi } from "@exnihilio/abis";
 import { DEFAULT_CHAIN } from "../../lib/chains.ts";
 import { ADDRESSES } from "../../contracts/addresses.ts";
+import { formatDuration } from "../../lib/format.ts";
 
 /**
- * Live trade calculator for the landing page.
- *
- * Exists because the headline numbers are a function of pool depth, and pool
- * depth changes. Rather than hardcoding "$5 buys $100 of exposure" — which is
- * false whenever caps are tighter than the copy assumes — this reads each
- * pool's actual reserves and caps and shows what is genuinely openable *now*.
- * It scales on its own as liquidity is added; nobody has to remember to
- * update marketing copy.
- *
- * Two different standards of accuracy are deliberately mixed:
- *
- *   - The **fee** comes from `quoteOpenFee` on-chain. It is the number the
- *     user will actually be charged, it has a floor and an open-interest
- *     term, and `useOpenFee` documents why frontends must not re-derive it.
- *   - The **payoff** is simulated client-side in floating point. It is an
- *     estimate by nature (it assumes a price move with no other flow), so
- *     bigint exactness would imply a precision the model does not have. It is
- *     labelled as an estimate in the UI.
+ * Live trade calculator for the landing page: reads each pool's reserves and
+ * cap and shows what is openable now. The fee is quoted on-chain
+ * (`quoteOpenFee`); the payoff is a floating-point estimate of a price move
+ * with no other flow, labelled as such in the UI.
  */
 
 const CHAIN_ID = DEFAULT_CHAIN.chain.id;
@@ -37,7 +24,7 @@ const POOL_FIELDS = [
   "airUsdSupply",
   "swapFeeBps",
   "currentMaxPositionBps",
-  "currentPositionDuration",
+  "fundingWindow",
   "tokenDecimals",
   // NOT "token" — that name exists only as a parameter of the
   // SafeERC20FailedOperation error, so reading it reverts and every pool falls
@@ -54,7 +41,7 @@ interface PoolState {
   airUsdSupply: number;   // USDC
   swapFee: number;        // fraction
   maxPosition: number | null; // USDC, null = uncapped
-  durationDays: number;
+  fundingWindow: bigint;      // seconds
 }
 
 /** SWAP-1/2/3 constant-product output net of the pool's spot-value fee. */
@@ -144,7 +131,14 @@ function simulateShort(p: PoolState, notional: number, m: number): number {
   const totalBuyable = cpOut(locked, airUsdSupply2 - locked, backedToken2, p.swapFee);
   if (totalBuyable <= 0 || totalBuyable < airTokenMinted) return 0;
 
-  const cost = (locked * airTokenMinted) / totalBuyable;
+  // Smallest input that buys the debt back, as the pool's _buybackCost bisects.
+  let lo = 0;
+  let cost = locked;
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + cost) / 2;
+    if (cpOut(mid, airUsdSupply2 - locked, backedToken2, p.swapFee) >= airTokenMinted) cost = mid;
+    else lo = mid;
+  }
   const surplus = locked - cost;
   if (surplus <= 0) return 0;
   return surplus * (1 - CLOSE_FEE);
@@ -347,7 +341,7 @@ export default function TradeCalculator() {
           airUsdSupply: Number(g("airUsdSupply") ?? 0n) / 1e6,
           swapFee: Number(g("swapFeeBps") ?? 0n) / 10_000,
           maxPosition: caps.length ? Math.min(...caps) : null,
-          durationDays: Number(g("currentPositionDuration") ?? 0n) / 86_400,
+          fundingWindow: (g("fundingWindow") as bigint | undefined) ?? 0n,
         } satisfies PoolState;
       })
       .filter((p): p is PoolState => p !== null);
@@ -457,9 +451,9 @@ export default function TradeCalculator() {
               </p>
             </div>
             <div>
-              <p className="section-label mb-1">Term</p>
+              <p className="section-label mb-1">Funding window</p>
               <p className="font-display text-2xl text-white">
-                {pool.durationDays}d
+                {formatDuration(pool.fundingWindow)}
               </p>
             </div>
           </div>

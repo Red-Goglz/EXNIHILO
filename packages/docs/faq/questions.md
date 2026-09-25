@@ -1,5 +1,5 @@
 ---
-description: "Common questions about EXNIHILO — whether positions are genuinely options, who pays a winning trade, how the fees work, and what funding does to a position you hold."
+description: "Common questions about EXNIHILO — why positions are perpetual options, who pays a winning trade, how the fees work, and what funding does to a position you hold."
 ---
 
 # Common Questions
@@ -11,10 +11,10 @@ Latin for "out of nothing". Exposure is created out of thin air: opening a posit
 units against the pool's curves instead of borrowing anything.
 
 ### Is this actually an option?
-Structurally, yes. You pay a non-refundable premium, post no collateral, can lose at most the
-premium, and hold nothing of value while underwater. A long is a call and a short a put, struck at
-the price when you open. [Positions Are Options](/introduction/positions-are-options) covers where
-the analogy breaks.
+Yes, a perpetual one. You pay a non-refundable premium, post no collateral and can lose at most the
+premium; nothing expires, and funding charges for time instead. A long is a call and a short a put,
+struck at the price when you open. [Perpetual Options](/introduction/positions-are-options) covers
+where it differs from a listed option.
 
 ### No collateral and no liquidations — who eats the loss?
 The pool's LP, by design. Each pool has one LP who is the counterparty to every position in it: they
@@ -33,13 +33,14 @@ the pool's price up — directly, or through arbitrage with other venues where t
 short wins when sellers push it down.
 
 ### How is this different from a perp?
-No collateral, no liquidation, and a maximum loss fixed at open. Funding here never pays you and
-never balances longs against shorts: it is rent on the LP's capital, taken by shrinking your
-position. See [vs Perpetual Futures](/introduction/vs-perpetuals).
+It is a perpetual option, not a perpetual future: no collateral, no liquidation, and a maximum loss
+fixed at open. Funding never pays you and never balances longs against shorts: it is the option's
+theta, paid to the LP by shrinking your position. See
+[vs Perpetual Futures](/introduction/vs-perpetuals).
 
 ### Has it been audited?
-Not by a human firm. Five AI audit rounds have been published, and the move to continuous funding
-came after the latest one and has not been audited. See [Security](/protocol/security).
+Not by a human firm. Five AI audit rounds have been published, plus a single-pass review (R3) of
+continuous funding; the fixes since that review are unaudited. See [Security](/protocol/security).
 
 ### Is there a token?
 No, and no governance. The contracts are immutable.
@@ -67,7 +68,9 @@ The fee has a 0.05 USDC floor, so a $1 position is real. The binding limit is th
 - **`InsufficientOutput`** — slippage; widen your tolerance.
 - **`LeverageCapExceeded`** — over the position cap (1% of the pool on day one, 20% after 24 hours).
 - **`PoolClosing`** — the market is winding down and accepts no new positions.
-- **`PositionUnderwater`** — the position is not in profit, so it cannot be closed.
+- **`PositionUnderwater`** — the position is not in profit, so it cannot be closed. If it shows a
+  profit, the price moved in the last few blocks and the close is priced against that move: retry
+  in a few seconds. See [Closing Positions](/trading/closing-realizing#closing-right-after-a-price-move).
 - **Allowance** — approve USDC to the router (or the pool) first.
 
 ## Positions
@@ -91,7 +94,7 @@ The 4% open fee, the impact fee, funding on every open position, and swap fees. 
 stay in the pool's reserves rather than becoming claimable. See [Fee Earnings](/lp/fees).
 
 ### Can the LP rug the pool?
-The LP can withdraw only when no position is open. Closing the pool — which the LP or the factory's
-emergency role can do — blocks new positions and, after 7 days, doubles funding daily, so open
+The LP can withdraw only when no position is open. Closing the pool — which only the LP can do —
+blocks new positions and, after 7 days, doubles funding daily, so open
 positions have to be closed or decay away within about two and a half weeks. Nothing is force-closed
 at a price the holder did not choose.
