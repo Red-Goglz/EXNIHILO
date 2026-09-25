@@ -116,12 +116,18 @@ All proxy to the pool.
 
 ```ts
 const fee   = await exnihilo.quoteOpenFee(pool, notional, true);       // isLong
+const open  = await exnihilo.quoteOpen(pool, notional, true);          // { locked, debt }
 const close = await exnihilo.quoteClose(pool, tokenId);                // { ready, pnl }
 const live  = await exnihilo.quoteCloseUnclamped(pool, tokenId);       // { ready, pnl }
 ```
 
 When `close.ready` is false the position cannot be settled at current reserves
 and `pnl` is a display-only estimate of the shortfall.
+
+`quoteOpen` prices an open as the pool will: at the worst of live reserves and
+the last few block opens. Derive `minAmountOut` from `open.locked`; a figure
+computed from live reserves overstates it right after a price move, and the open
+reverts.
 
 `quoteClose` is what a close pays, clamped to the worst of the last few block
 opens. `quoteCloseUnclamped` prices at live reserves only. When `live` is in

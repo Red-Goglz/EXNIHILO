@@ -375,12 +375,8 @@ contract EXNIHILOPool is ReentrancyGuard {
         (uint256 totalFee, uint256 protocolFee, uint256 lpFee) =
             _openFees(usdcAmount, longOpenInterest);
 
-        // SWAP-2 against airUsdSupply before the synthetic mint.
-        uint256 airTokenOut = _cpAmountOut(
-            usdcAmount,
-            airUsdSupply,
-            backedAirToken
-        );
+        // SWAP-2 against airUsdSupply before the synthetic mint, clamped.
+        uint256 airTokenOut = _openLongOut(usdcAmount, block.number);
 
         if (airTokenOut == 0) revert ZeroAmount();
         if (airTokenOut < minAirTokenOut) revert InsufficientOutput();
@@ -446,15 +442,11 @@ contract EXNIHILOPool is ReentrancyGuard {
         (uint256 totalFee, uint256 protocolFee, uint256 lpFee) =
             _openFees(usdcNotional, shortOpenInterest);
 
-        uint256 airTokenSupplyBefore = airTokenSupply;
-        if (airTokenSupplyBefore == 0) revert InsufficientBackedReserves();
+        if (airTokenSupply == 0) revert InsufficientBackedReserves();
 
-        // Debt worth usdcNotional at shortPrice.
-        uint256 airTokenMinted = (usdcNotional * airTokenSupplyBefore) / backedAirUsd;
+        // Debt worth usdcNotional at shortPrice, sold via SWAP-3 before the mint; clamped.
+        (uint256 airTokenMinted, uint256 airUsdOut) = _openShortTerms(usdcNotional, block.number);
         if (airTokenMinted == 0) revert ZeroAmount();
-
-        // SWAP-3 against airTokenSupply before the synthetic mint.
-        uint256 airUsdOut = _cpAmountOut(airTokenMinted, airTokenSupplyBefore, backedAirUsd);
 
         if (airUsdOut == 0) revert ZeroAmount();
         if (airUsdOut < minAirUsdOut) revert InsufficientOutput();
@@ -555,8 +547,8 @@ contract EXNIHILOPool is ReentrancyGuard {
         lpFeesPaidTotal += amount;
 
         underlyingUsdc.safeTransfer(to, amount);
-        // Fails here rather than freezing the next reserve mutation.
-        _assertReserveInvariant();
+        // USDC only: fails here rather than freezing the next reserve mutation.
+        _assertUsdcCovered();
         emit LpFeesPaid(to, amount);
     }
 
@@ -571,8 +563,8 @@ contract EXNIHILOPool is ReentrancyGuard {
         protocolFeesPaidTotal += amount;
 
         underlyingUsdc.safeTransfer(to, amount);
-        // Fails here rather than freezing the next reserve mutation.
-        _assertReserveInvariant();
+        // USDC only: fails here rather than freezing the next reserve mutation.
+        _assertUsdcCovered();
         emit ProtocolFeesPaid(to, amount);
     }
 
@@ -586,8 +578,8 @@ contract EXNIHILOPool is ReentrancyGuard {
         totalClaimable -= amount;
 
         underlyingUsdc.safeTransfer(to, amount);
-        // Fails here rather than freezing the next reserve mutation.
-        _assertReserveInvariant();
+        // USDC only: fails here rather than freezing the next reserve mutation.
+        _assertUsdcCovered();
         emit PayoutClaimed(msg.sender, to, amount);
     }
 
@@ -726,6 +718,22 @@ contract EXNIHILOPool is ReentrancyGuard {
         (totalFee,,) = _openFees(notional, _projectedOpenInterest(isLong));
     }
 
+    /// @notice What an open of `notional` sent now locks, priced for the next block as
+    ///         the entry clamp will price it: airToken for a long, airUsd for a short.
+    ///         Unaccrued funding only improves an open, so this is a floor.
+    /// @return locked Collateral the position would hold.
+    /// @return debt   airUsd (long) or airToken (short) it would owe.
+    function quoteOpen(uint256 notional, bool isLong)
+        external
+        view
+        returns (uint256 locked, uint256 debt)
+    {
+        if (notional == 0 || backedAirToken == 0 || backedAirUsd == 0) return (0, 0);
+        if (isLong) return (_openLongOut(notional, block.number + 1), notional);
+        if (airTokenSupply == 0) return (0, 0);
+        (debt, locked) = _openShortTerms(notional, block.number + 1);
+    }
+
     /// @notice Close quote for display, clamped as a close sent now would be.
     /// @return ready False when the settlement math cannot price the position.
     /// @return pnl   Net payout when non-negative; otherwise the (estimated) shortfall.
@@ -801,6 +809,46 @@ contract EXNIHILOPool is ReentrancyGuard {
             fundingShort: fundingIndexShort
         });
         priceRingHead = next;
+    }
+
+    /// @dev Whether a ring entry is a block open still within CLAMP_BLOCKS of
+    ///      `asOfBlock` and taken while the pool had reserves.
+    function _inWindow(PriceSnapshot storage e, uint256 asOfBlock) internal view returns (bool) {
+        uint256 at = e.blockNumber;
+        return at != 0 && at + CLAMP_BLOCKS > asOfBlock && e.backedUsd != 0;
+    }
+
+    /// @dev airToken a long of `notional` locks: the least of live reserves and every
+    ///      block open in the window, so an open cannot be priced against a move made
+    ///      in the same transaction. Mirrors the close clamp.
+    function _openLongOut(uint256 notional, uint256 asOfBlock) internal view returns (uint256 out) {
+        out = _cpAmountOut(notional, airUsdSupply, backedAirToken);
+        for (uint256 i = 0; i < CLAMP_BLOCKS; i++) {
+            PriceSnapshot storage e = priceRing[i];
+            if (!_inWindow(e, asOfBlock)) continue;
+            uint256 o = _cpAmountOut(notional, e.usdSupply, e.backedToken);
+            if (o < out) out = o;
+        }
+    }
+
+    /// @dev Debt and collateral of a short of `notional`: the most debt and the least
+    ///      collateral across live reserves and every block open in the window.
+    ///      Requires airTokenSupply and backedAirUsd non-zero.
+    function _openShortTerms(uint256 notional, uint256 asOfBlock)
+        internal
+        view
+        returns (uint256 debt, uint256 collateral)
+    {
+        debt = (notional * airTokenSupply) / backedAirUsd;
+        collateral = _cpAmountOut(debt, airTokenSupply, backedAirUsd);
+        for (uint256 i = 0; i < CLAMP_BLOCKS; i++) {
+            PriceSnapshot storage e = priceRing[i];
+            if (!_inWindow(e, asOfBlock)) continue;
+            uint256 d = (notional * e.tokenSupply) / e.backedUsd;
+            uint256 c = _cpAmountOut(d, e.tokenSupply, e.backedUsd);
+            if (d > debt) debt = d;
+            if (c < collateral) collateral = c;
+        }
     }
 
     // ── Swap helpers ──────────────────────────────────────────────────────────
@@ -920,18 +968,20 @@ contract EXNIHILOPool is ReentrancyGuard {
 
         for (uint256 i = 0; i < CLAMP_BLOCKS; i++) {
             PriceSnapshot storage e = priceRing[i];
-            uint256 at = e.blockNumber;
+            if (!_inWindow(e, asOfBlock)) continue;
 
-            // Unwritten slot, or outside the window.
-            if (at == 0 || at + CLAMP_BLOCKS <= asOfBlock) continue;
+            // Older than the position's own block. The open block's snapshot is kept:
+            // without it a position opened in this transaction has no reference at all.
+            if (e.timestamp < pos.openedAt) continue;
 
-            // Snapshots precede their block's first mutation, so one at or before
-            // openedAt predates the position.
-            if (e.timestamp <= pos.openedAt) continue;
-
-            // Size the position at the snapshot's funding index, not today's.
-            (uint256 lockedThen, uint256 debtThen,) =
-                _liveAt(pos, pos.isLong ? e.fundingLong : e.fundingShort);
+            // Sized at the snapshot's index; one from the open block at opening size,
+            // since a flush earlier in that block may have rebased the index.
+            (uint256 lockedThen, uint256 debtThen,) = _liveAt(
+                pos,
+                e.timestamp == pos.openedAt
+                    ? pos.fundingIndexAtOpen
+                    : (pos.isLong ? e.fundingLong : e.fundingShort)
+            );
             (bool p, uint256 s, uint256 d, uint256 r) = _priceCloseAt(
                 pos.isLong,
                 lockedThen,
@@ -1527,6 +1577,12 @@ contract EXNIHILOPool is ReentrancyGuard {
             < backedAirToken + totalLongCollateral) {
             revert ReserveInvariantViolated();
         }
+        _assertUsdcCovered();
+    }
+
+    /// @dev The USDC balance covers every USDC liability. All a claim needs: it moves
+    ///      nothing else, so a token-side shortfall must not lock USDC in.
+    function _assertUsdcCovered() internal view {
         if (underlyingUsdc.balanceOf(address(this))
             < backedAirUsd
             + totalShortCollateral

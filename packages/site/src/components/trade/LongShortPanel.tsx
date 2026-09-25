@@ -4,9 +4,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useFormo } from "@formo/analytics";
 import { exnihiloPoolAbi, exnihiloRouterAbi, erc20Abi } from "@exnihilio/abis";
 import { parseUnits, formatToken, formatUsdc, formatDuration } from "../../lib/format.ts";
-import { quoteLong, quoteShort } from "../../lib/amm.ts";
 import { useRouterApproval } from "../../hooks/useRouterApproval.ts";
 import { useOpenFee } from "../../hooks/useOpenFee.ts";
+import { useOpenQuote } from "../../hooks/useOpenQuote.ts";
 import { useNeedsPerTradeApproval } from "../../hooks/useRouterApprovalPrompt.ts";
 import { useTx } from "../../hooks/useTx.ts";
 import { useAppChain } from "../../hooks/useAppChain.ts";
@@ -51,7 +51,6 @@ export default function LongShortPanel({
       { ...poolContract, functionName: "backedAirUsd" },
       { ...poolContract, functionName: "spotPrice" },
       { ...poolContract, functionName: "effectiveLeverageCap" },
-      { ...poolContract, functionName: "swapFeeBps" },
       { ...poolContract, functionName: "airTokenSupply" },
       { ...poolContract, functionName: "airUsdSupply" },
       {
@@ -71,14 +70,13 @@ export default function LongShortPanel({
   const backedAirToken = data?.[0]?.result as bigint | undefined;
   const backedAirUsd = data?.[1]?.result as bigint | undefined;
   const leverageCap = data?.[3]?.result as bigint | undefined;
-  const swapFeeBps = data?.[4]?.result as bigint | undefined;
-  const airTokenTotalSupply = data?.[5]?.result as bigint | undefined;
-  const airUsdTotalSupply = data?.[6]?.result as bigint | undefined;
-  const allowance = data?.[7]?.result as bigint | undefined;
-  const currentMaxPositionBps = data?.[8]?.result as bigint | undefined;
-  const createdAt = data?.[9]?.result as bigint | undefined;
-  const closeDate = data?.[10]?.result as bigint | undefined;
-  const fundingWindow = data?.[11]?.result as bigint | undefined;
+  const airTokenTotalSupply = data?.[4]?.result as bigint | undefined;
+  const airUsdTotalSupply = data?.[5]?.result as bigint | undefined;
+  const allowance = data?.[6]?.result as bigint | undefined;
+  const currentMaxPositionBps = data?.[7]?.result as bigint | undefined;
+  const createdAt = data?.[8]?.result as bigint | undefined;
+  const closeDate = data?.[9]?.result as bigint | undefined;
+  const fundingWindow = data?.[10]?.result as bigint | undefined;
   const isClosed = closeDate !== undefined && closeDate > 0n;
   const isInactive =
     !isClosed &&
@@ -91,21 +89,9 @@ export default function LongShortPanel({
   // position has either been closed or decayed away. Show the on-chain value —
   // it is the date that actually matters to someone holding.
 
-  let previewOut: bigint | undefined;
-  if (
-    usdcRaw > 0n &&
-    backedAirToken !== undefined &&
-    backedAirUsd !== undefined &&
-    airTokenTotalSupply !== undefined &&
-    airUsdTotalSupply !== undefined &&
-    swapFeeBps !== undefined
-  ) {
-    if (isLong) {
-      previewOut = quoteLong(usdcRaw, airUsdTotalSupply, backedAirToken, swapFeeBps);
-    } else {
-      previewOut = quoteShort(usdcRaw, airTokenTotalSupply, backedAirUsd, swapFeeBps);
-    }
-  }
+  // From the pool: it prices an open at the worst recent block open, which local
+  // reserve maths cannot see.
+  const { locked: previewOut } = useOpenQuote(poolAddress, chainId, usdcRaw, isLong);
 
   // Price impact: amountIn / (reserveIn + amountIn), in bps
   // Long: reserveIn = airUsd.totalSupply (SWAP-2 virtual reserve)

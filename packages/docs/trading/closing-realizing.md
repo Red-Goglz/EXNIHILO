@@ -32,8 +32,9 @@ Either way 1% of the profit goes to the protocol and the NFT is burned. The form
 ## Closing right after a price move
 
 A close is priced against the worst of the last 5 block opens wherever that is worse than the
-live price. It stops a holder pumping the price and closing into their own move. It has two
-consequences for an honest holder, and `quoteClose` accounts for both:
+live price, including the open of the block the position was opened in. It stops a holder moving
+the price and closing into their own move, even within one transaction. It has two consequences
+for an honest holder, and `quoteClose` accounts for both:
 
 - **A close right after a favourable move may pay the earlier price.**
 - **A close right after an unfavourable move may be refused.** If the position was underwater at

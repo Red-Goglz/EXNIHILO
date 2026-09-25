@@ -1200,6 +1200,35 @@ export const exnihiloPoolAbi = [
         "type": "bool"
       }
     ],
+    "name": "quoteOpen",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "locked",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "debt",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "notional",
+        "type": "uint256"
+      },
+      {
+        "internalType": "bool",
+        "name": "isLong",
+        "type": "bool"
+      }
+    ],
     "name": "quoteOpenFee",
     "outputs": [
       {

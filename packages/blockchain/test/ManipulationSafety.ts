@@ -25,10 +25,11 @@ import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
  * touched the pool. Leftover tokens are therefore NOT dumped (dumping just pays
  * slippage back to the pool and masks the extraction) — they are valued at P0.
  *
- * Result: no configuration is profitable. The OI-integral impact fee is
- * quadratic in position size and provably dominates both the manipulation
- * profit and the round-trip slippage, on both sides. This suite locks that
- * property in so a future fee/curve change that breaks it fails loudly.
+ * Scope: separate transactions and single swaps, so the close clamp is in play
+ * and the spot-value swap fee bites. It is NOT evidence that the impact fee
+ * alone prevents manipulation: done in one transaction with split swaps it did
+ * not (audit R4). The atomic, split-swap and entry cases live in
+ * AtomicManipulation.ts.
  *
  * NOTE on scope: this proves single-actor manipulation is unprofitable. It does
  * NOT (and cannot) remove the LP's inherent directional exposure — an actor who

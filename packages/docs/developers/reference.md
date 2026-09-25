@@ -39,6 +39,7 @@ description: "Function reference for EXNIHILOPool, the factory, router, NFTs and
 | `totalLongCollateral()` / `totalShortCollateral()` / `totalShortDebt()` | Aggregates behind the reserve identities |
 | `openPositionCount()` | Number of open positions |
 | `quoteOpenFee(notional, isLong)` | The exact open fee now |
+| `quoteOpen(notional, isLong)` | `(locked, debt)` for an open in the next block: the worst of live reserves and the last 5 block opens. A floor, since unaccrued funding only improves it — derive `minAirTokenOut` / `minAirUsdOut` from `locked` |
 | `quoteClose(nftId)` | `(ready, pnl)` for a close in the next block, clamp included; `pnl` is net of the close fee, negative when underwater (an estimate when `ready` is false) |
 | `quoteCloseUnclamped(nftId)` | The same at live reserves, without the clamp. Not what a close pays: in profit here but not in `quoteClose` means a recent price move is holding the close back — retry within a few blocks |
 | `liveAmountsOf(nftId)` | `(locked, debt, notional)` now, net of funding |

@@ -21,6 +21,33 @@ export async function quoteOpenFee(
   }) as Promise<bigint>;
 }
 
+export interface OpenQuote {
+  /** Collateral the position would lock: airToken (long) or airUsd (short). */
+  locked: bigint;
+  /** What it would owe: airUsd (long, equal to the notional) or airToken (short). */
+  debt: bigint;
+}
+
+/**
+ * What an open sent now would lock, priced as the pool will price it: at the
+ * worst of live reserves and the last few block opens (see CLAMP_BLOCKS). A
+ * floor, so `locked` less a slippage margin is a safe `minAmountOut`.
+ */
+export async function quoteOpen(
+  ctx: Ctx,
+  pool: Address,
+  notional: bigint,
+  isLong: boolean
+): Promise<OpenQuote> {
+  const [locked, debt] = (await ctx.publicClient.readContract({
+    address: pool,
+    abi: exnihiloPoolAbi,
+    functionName: "quoteOpen",
+    args: [notional, isLong],
+  })) as [bigint, bigint];
+  return { locked, debt };
+}
+
 export interface CloseQuote {
   /**
    * False when current reserves cannot price the position at all. `pnl` then
@@ -150,7 +177,7 @@ export interface OpenArgs {
   pool: Address;
   /** USDC notional, 6 dec. */
   notional: bigint;
-  /** Slippage guard on what the position locks. 0 accepts any outcome. */
+  /** Slippage guard on what the position locks; derive it from `quoteOpen`. 0 accepts any outcome. */
   minAmountOut?: bigint;
 }
 

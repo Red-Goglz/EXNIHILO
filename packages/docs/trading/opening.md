@@ -45,7 +45,12 @@ one USDC approval for every pool.
 
 ## Limits
 
-- **Slippage** — `minAirTokenOut` / `minAirUsdOut` revert the open if the curve gives less.
+- **Entry price** — an open is priced at the worst of live reserves and the last 5 block opens,
+  so it can never be priced against a move made in the same transaction. Right after a move in
+  your favour it pays the earlier price for a few seconds. `quoteOpen(notional, isLong)` returns
+  `(locked, debt)` exactly as the open will be priced.
+- **Slippage** — `minAirTokenOut` / `minAirUsdOut` revert the open if it locks less. Take them
+  from `quoteOpen`, not from the live reserves.
 - **Position cap** — at most 1% of the pool's USDC on day one, rising to 20% after 24 hours.
   Above it the open reverts `LeverageCapExceeded`; read the live maximum with
   `effectiveLeverageCap()`. See [Position Caps](/lp/position-caps).
