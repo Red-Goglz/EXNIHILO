@@ -40,30 +40,25 @@ consequences for an honest holder, and `quoteClose` accounts for both:
   any of those block opens, the close reverts `PositionUnderwater` even though the live price
   shows a profit. It clears on its own once the move is more than 5 blocks old — a few seconds.
 
-## The clamp only moves one way
-
-The clamp can lower a payout and never raise one. It starts from the live price, and a recent
-block open replaces it only when that is worse. That is deliberate — it is what stops a holder
-pricing a close against a move they just made — but it means the clamp does nothing about a move
-made *at* you. Someone can sell the token into the pool immediately before your long closes, or
-buy immediately before your short does, and the close settles against that price; no earlier
-snapshot restores it.
-
-`minUsdcOut` is what answers this. With a sensible floor the close reverts `InsufficientOutput`
-instead of settling into someone else's trade, and the position is untouched and closeable once
-the move ages out. A close sent with `minUsdcOut = 0` takes whatever price it is handed.
-
-The same move can also push a position underwater and hold the exit shut for as long as it is
-sustained, while funding keeps decaying the position. That one a floor cannot fix.
-
-The second can also be caused on purpose: anyone who pushes the price down at the end of one block
-and back at the start of the next holds a close back for 5 blocks, and can repeat it. Nothing is
-taken — the holder keeps the position and can close once the pushing stops — but funding keeps
-running meanwhile, and only a position close to break-even can be held back cheaply.
+The refusal can also be caused on purpose: pushing the price down at the end of one block and back
+at the start of the next holds a close back for 5 blocks, repeatably. Nothing is taken, but
+funding keeps running, and only a position near break-even can be held back cheaply.
 
 `quoteCloseUnclamped(nftId)` returns the same `(ready, pnl)` at live reserves, without the clamp.
 When it shows a profit and `quoteClose` does not, the close is being held back rather than losing:
-retry shortly. The app does this for you and labels the button **Retry shortly**.
+retry shortly. The app labels the button **Retry shortly**.
+
+## The clamp only moves one way
+
+The clamp can lower a payout and never raise one — that is what stops a holder pricing a close
+against a move they just made — so it does nothing about a move made *at* you. Someone can sell
+into the pool just before your long closes, or buy just before your short does, and the close
+settles at that price.
+
+`minUsdcOut` is the answer: with a sensible floor the close reverts `InsufficientOutput` instead,
+and the position stays closeable once the move ages out. A close with `minUsdcOut = 0` takes
+whatever price it is handed. A move sustained long enough to push the position underwater holds
+the exit shut for as long as it lasts, while funding keeps running; no floor fixes that.
 
 ## Underwater positions
 

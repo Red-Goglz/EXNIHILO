@@ -52,6 +52,8 @@ app.get("/prices/:pool", async (c) => {
       spot: r.spotPrice.toString(),
       long: r.longPrice.toString(),
       short: r.shortPrice.toString(),
+      indexLong: r.fundingIndexLong.toString(),
+      indexShort: r.fundingIndexShort.toString(),
       event: r.eventType,
     })),
   });

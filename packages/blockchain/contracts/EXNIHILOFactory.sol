@@ -109,9 +109,8 @@ contract EXNIHILOFactory is ReentrancyGuard {
         IERC20(usdc).safeTransferFrom(msg.sender, address(this), usdcAmount);
         IERC20(tokenAddress).safeTransferFrom(msg.sender, address(this), tokenAmount);
 
-        // Funding rounds per unit of collateral, so a coarse unit is a valuable
-        // one: below MIN_TOKEN_DECIMALS the sub-unit residue is worth trading
-        // against. A token that will not answer is assumed to be the usual 18.
+        // Below MIN_TOKEN_DECIMALS a unit is worth enough that funding's rounding
+        // residue can be traded against. No answer is taken as 18.
         uint8 tokenDecimals;
         try IERC20Decimals(tokenAddress).decimals() returns (uint8 d) {
             tokenDecimals = d;

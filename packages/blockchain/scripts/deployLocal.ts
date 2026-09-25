@@ -11,7 +11,7 @@
  *
  * Signers used (all standard hardhat accounts):
  *   [0]  deployer    — deploys MockUSDC + PositionNFT + LpNFT; initial token holder
- *   [1]  treasury    — receives 2% protocol fee
+ *   [1]  treasury    — receives protocol fees
  *   [8]  sysDeployer — deploys EXNIHILOFactory (matches test fixture)
  *
  * Usage:
@@ -126,14 +126,8 @@ async function main() {
 
   // 7. Create markets with varied LP sizes
   //    Each market is seeded by deployer (who becomes the LP NFT holder).
-  //    LP sizes intentionally varied to give the UI different TVLs / prices.
+  //    Seed size is the only per-market knob; it is varied for different TVLs / prices.
   //   format: [symbol, usdcSeed (6dec), tokenSeed (18dec)]
-  //
-  //   Per-position caps, position lifetime and the swap fee are no longer
-  //   per-market settings: the pool ramps the first two from its own age
-  //   (currentMaxPositionBps / currentPositionDuration) and the fee is a
-  //   contract constant at 1 %. Seed sizes are the only knob left, and they
-  //   are varied here to give the UI different TVLs and prices.
   const marketSpecs: [string, bigint, bigint][] = [
     // ARENA — small pool, low price (~$0.001 / token)
     ["ARENA",   500n   * 1_000_000n,  500_000n * 10n ** 18n],

@@ -43,13 +43,9 @@ interface PoolState {
 }
 
 /**
- * One eth_call for everything this indexer needs from a pool.
- *
- * This used to be eight separate `readContract` calls (four fee accumulators,
- * four price/reserve values) issued on every pool event, which made RPC volume
- * the dominant cost of a sync. `indexerState()` bundles them contract-side,
- * which works on every chain — unlike `client.multicall`, which needs
- * Multicall3 deployed and so would break against a bare Hardhat node.
+ * One eth_call for everything this indexer needs from a pool. `indexerState()`
+ * bundles it contract-side, which, unlike Multicall3, also works on a bare
+ * Hardhat node.
  */
 async function readPoolState(
   context: any,
@@ -475,19 +471,10 @@ ponder.on("EXNIHILOPool:PositionOpened", async ({ event, context }) => {
 
 // ── Pool: funding accrued ───────────────────────────────────────────────────
 //
-// Replaces PositionRenewed. Renewals were discrete, per-position, and paid a
-// fee; funding is continuous, charged to a whole side at once, and pays no fee
-// at all — the released collateral moves straight into the backed reserves and
-// the debt it was locked against is burned.
-//
-// That is why this handler touches neither the fee columns nor trackUser: there
-// is no payer and no fee. What it does record is the only thing that
-// distinguishes reserve growth caused by funding from reserve growth caused by
-// trading, which LP yield attribution depends on.
-//
-// It fires on essentially every pool mutation, so it deliberately does NOT
-// write a price snapshot: the event that caused the mutation writes one
-// already, and a standalone pokeFunding moves the price by a trickle.
+// Funding is not a fee: released collateral moves into the backed reserves and
+// its debt is burned. So no fee columns and no trackUser; this records what
+// separates funding from trading growth in the reserves. No price snapshot:
+// the event that caused the accrual writes one.
 
 ponder.on("EXNIHILOPool:FundingAccrued", async ({ event, context }) => {
   const pool = event.log.address;

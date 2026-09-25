@@ -24,13 +24,14 @@ The factory was deployed at block **91,382,693**, the indexer's start block. Mar
 by users with `createMarket`; there are no official ones. USDC is Circle's native 6-decimal USDC,
 not bridged `USDC.e`.
 
-::: warning Immutable
-The factory has no owner. `usdc` and `protocolTreasury` are constructor immutables and every pool
-parameter is a contract constant, so changing any of them means deploying a new protocol. The
-contracts listed here still carry one privileged role, `deployer` — currently the deploying EOA
-above — which can call `closePool` on any pool. The next deployment removes it: its factory has no
-role at all, and only a pool's own LP can close it.
+::: warning These are the July 2026 contracts
+They predate what these docs describe: positions there expire and renew instead of paying
+continuous funding, and the factory's `deployer` (the EOA above) can call `closePool` on any pool.
+The next deployment replaces every address on this page.
 :::
+
+Nothing is upgradeable: `usdc` and `protocolTreasury` are constructor immutables and every pool
+parameter is a contract constant.
 
 Each market is one `EXNIHILOPool`, emitted in `MarketCreated` and listed by
 `factory.allPools(i)` / `factory.allPoolsLength()`.

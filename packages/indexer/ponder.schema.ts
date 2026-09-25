@@ -23,8 +23,7 @@ export const position = onchainTable("position", (t) => ({
   airTokenMinted: t.bigint().notNull(),
   feesPaid: t.bigint().notNull(),
   openedAt: t.bigint().notNull(),
-  // Replaces `deadline`. Positions do not expire; this is the denominator of
-  // the decay ratio above, in RAY.
+  // The side's funding index at open, in RAY: live = atOpen × index / this.
   fundingIndexAtOpen: t.bigint().notNull(),
   status: t.text().notNull(),             // "open" | "closed" | "swept"
   payout: t.bigint().notNull(),           // 0 while open

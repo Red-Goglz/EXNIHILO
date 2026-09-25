@@ -1,11 +1,11 @@
 ---
-description: "Open a long (a call) or a short (a put): pay the premium, post no collateral, and lose no more than you paid. What it costs, what happens on-chain, and the limits that apply."
+description: "Open a long (a perpetual call) or a short (a perpetual put): pay the premium, post no collateral, and lose no more than you paid. What it costs, what happens on-chain, and the limits that apply."
 ---
 
 # Opening a Position
 
-A **long** profits when the token rises against USDC — in option terms, a call. A **short**
-profits when it falls — a put. Either way you pay a premium (the open fee), post no collateral,
+A **long** profits when the token rises against USDC — in option terms, a perpetual call. A
+**short** profits when it falls — a perpetual put. Either way you pay a premium (the open fee), post no collateral,
 and cannot lose more than that premium. For a short this matters most: a squeeze that would wreck
 a margin short cannot cost you more than you paid.
 

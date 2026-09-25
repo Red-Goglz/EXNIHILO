@@ -20,9 +20,8 @@ Nothing else. Position caps and funding are automatic and identical on every mar
 
 1. Reads the token's decimals (18 if unavailable), rejects anything outside 6–18 with
    `UnsupportedDecimals`, and deploys an `EXNIHILOPool`
-2. Mints the LP NFT to you
-3. Seeds your liquidity into the pool
-4. Emits `MarketCreated`
+2. Mints the pool's LP NFT and seeds your liquidity
+3. Transfers the LP NFT to you and emits `MarketCreated`
 
 You are then the pool's sole LP — see [Running a Pool](/lp/ownership).
 

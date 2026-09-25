@@ -4,9 +4,9 @@ description: "Each pool has exactly one LP, identified by a transferable LP NFT.
 
 # Running a Pool
 
-Each pool has exactly one liquidity provider: whoever holds its **LP NFT**. The NFT is minted to
-the market creator along with the initial liquidity, and transferring it transfers every LP right
-at once — to sell a pool, move it to a multisig, or build on top of it.
+Each pool has exactly one liquidity provider: whoever holds its **LP NFT**. The NFT goes to the
+market creator along with the initial liquidity, and transferring it transfers every LP right at
+once — to sell a pool, move it to a multisig, or build on top of it.
 
 ## What the LP can do
 

@@ -90,30 +90,12 @@ export function formatDuration(sec: bigint | undefined): string {
 }
 
 /**
- * Format the pool's spotPrice return value to a USD/token string.
- *
- * The pool's spotPrice() returns: (backedAirUsd * 1e18) / backedAirToken
- *
- * For an 18-decimal token and 6-decimal USDC, the raw value is
- * denominated in USDC units scaled by 1e12 (= 1e18 / 1e6).
- * Divide by 1e12 to get the USD price per token.
- *
- * For tokens with non-18 decimals, pass tokenDecimals so the
- * adjustment is applied correctly.
- *
- * @param raw           Return value of pool.spotPrice()
- * @param tokenDecimals Decimals of the token (usually 18)
+ * Format a pool price view (spotPrice / longPrice / shortPrice). The pool
+ * already scales by 10^tokenDecimals, so the value is USDC (6 dec) per whole
+ * token whatever the token's decimals.
  */
-export function decodeSpotPrice(raw: bigint, tokenDecimals = 18): string {
-  // spotPrice = (backedAirUsd * 1e18) / backedAirToken
-  // backedAirUsd is 6-dec, backedAirToken is tokenDecimals-dec
-  // To get USD per whole token:
-  //   price = spotPrice / 10^(18 - tokenDecimals + 12)
-  //         = spotPrice / 10^(30 - tokenDecimals)   for 6-dec USDC
-  const shift = 18 - tokenDecimals;
-  const divisor = 10n ** BigInt(shift);
-  const wholeCents = raw / divisor; // in USDC units (6 dec)
-  return formatPrice(wholeCents);
+export function decodeSpotPrice(raw: bigint): string {
+  return formatPrice(raw);
 }
 
 /**

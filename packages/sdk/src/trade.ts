@@ -3,12 +3,7 @@ import type { Address, Hash } from "viem";
 import { requireAccount, requireWallet, type Ctx } from "./client.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Quotes
-//
-// Every quote proxies to the pool. Fee maths is never reimplemented here: the
-// base fee has a floor, the impact fee depends on live open interest and
-// reserves, and funding reprices against live open interest and depth.
-// A client-side copy would drift the moment any of those move.
+// Quotes — every one proxies to the pool; fee maths is never reimplemented here.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Total USDC fee to open a position of `notional` right now. */
@@ -83,16 +78,15 @@ export interface OpenPreflight {
   /** Present when `ok` is false. Safe to show a user verbatim. */
   reason?: string;
   fee: bigint;
-  /** Notional + fee. The USDC that must be approved and available. */
+  /**
+   * USDC that must be approved and held: the fee alone, since the notional is
+   * synthetic. The impact fee can rise before the open lands, so leave headroom.
+   */
   totalRequired: bigint;
   cap: bigint;
 }
 
-/**
- * Check an open before sending it. Catches the two failures that actually
- * happen in production — over the position cap, and insufficient allowance or
- * balance — with a message worth showing rather than a bare revert.
- */
+/** Check an open before sending it: closing market, position cap, balance, allowance. */
 export async function preflightOpen(
   ctx: Ctx,
   pool: Address,
@@ -111,7 +105,8 @@ export async function preflightOpen(
     allowFailure: false,
   })) as [bigint, bigint, bigint, Address];
 
-  const totalRequired = notional + fee;
+  // The router pulls only the fee; the notional is minted, never deposited.
+  const totalRequired = fee;
 
   const [balance, allowance] = (await ctx.publicClient.multicall({
     contracts: [
@@ -136,7 +131,7 @@ export async function preflightOpen(
     };
   }
   if (balance < totalRequired) {
-    return { ...base, ok: false, reason: `Need ${totalRequired} USDC (notional + fee), have ${balance}.` };
+    return { ...base, ok: false, reason: `Need ${totalRequired} USDC for the fee, have ${balance}.` };
   }
   if (allowance < totalRequired) {
     return { ...base, ok: false, reason: `USDC allowance is ${allowance}, need ${totalRequired}.` };
@@ -193,9 +188,10 @@ export async function openShort(ctx: Ctx, args: OpenArgs): Promise<Hash> {
  * Close a position. Only the holder may call this, and only against the pool
  * that issued it. `isLong` picks the entry point; read it from `getPosition`.
  *
- * @param to Where the profit is sent. Defaults to the caller. Pass something
- *           else when the holder's own wallet cannot receive USDC — there is no
- *           expiry path to fall back on, so this is the holder's only escape.
+ * @param minUsdcOut Payout floor. Set it: the close-price clamp never protects
+ *                   against a move made just before the close lands.
+ * @param to Where the profit is sent. Defaults to the caller; use another
+ *           address when the holder's wallet cannot receive USDC.
  */
 export async function closePosition(
   ctx: Ctx,

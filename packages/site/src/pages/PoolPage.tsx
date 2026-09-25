@@ -140,17 +140,17 @@ function PoolContent() {
   // Derived stats
   const price =
     spotPriceRaw !== undefined && spotPriceRaw > 0n
-      ? decodeSpotPrice(spotPriceRaw, tokenDecimals)
+      ? decodeSpotPrice(spotPriceRaw)
       : "—";
 
   const longPrice =
     longPriceRaw !== undefined && longPriceRaw > 0n
-      ? decodeSpotPrice(longPriceRaw, tokenDecimals)
+      ? decodeSpotPrice(longPriceRaw)
       : "—";
 
   const shortPrice =
     shortPriceRaw !== undefined && shortPriceRaw > 0n
-      ? decodeSpotPrice(shortPriceRaw, tokenDecimals)
+      ? decodeSpotPrice(shortPriceRaw)
       : "—";
 
   // TVL = token side (in USDC) + USDC side

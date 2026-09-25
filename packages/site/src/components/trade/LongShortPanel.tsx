@@ -78,7 +78,7 @@ export default function LongShortPanel({
   const currentMaxPositionBps = data?.[8]?.result as bigint | undefined;
   const createdAt = data?.[9]?.result as bigint | undefined;
   const closeDate = data?.[10]?.result as bigint | undefined;
-  const positionDuration = data?.[11]?.result as bigint | undefined;
+  const fundingWindow = data?.[11]?.result as bigint | undefined;
   const isClosed = closeDate !== undefined && closeDate > 0n;
   const isInactive =
     !isClosed &&
@@ -492,9 +492,9 @@ export default function LongShortPanel({
             </span>
           </div>
           <div>
-            LIVES{" "}
-            <span style={{ color: "var(--cyan)", fontWeight: 600 }}>{formatDuration(positionDuration)}</span>
-            <span style={{ color: "var(--muted)" }}> — then extend it (dynamic fee) or it settles at market.</span>
+            FUNDING{" "}
+            <span style={{ color: "var(--cyan)", fontWeight: 600 }}>10% + 20% × utilization</span>
+            <span style={{ color: "var(--muted)" }}> per {formatDuration(fundingWindow)} window, taken as size. No expiry; break-even never moves.</span>
           </div>
         </div>
       )}

@@ -144,8 +144,8 @@ await exnihilo.claimPayout(pool, to);
 
 ### Pre-flight
 
-`preflightOpen` catches the failures that actually happen — over the cap, or
-short on allowance or balance — with a message you can show verbatim:
+`preflightOpen` catches a closing market, the cap, and a short balance or
+allowance, with a message you can show verbatim:
 
 ```ts
 const check = await exnihilo.preflightOpen(pool, notional, true, account, routerAddress);
@@ -153,7 +153,8 @@ if (!check.ok) return showError(check.reason);
 // check.fee, check.totalRequired, check.cap
 ```
 
-Note `totalRequired` is notional **plus** fee. That is what must be approved.
+`totalRequired` is the fee alone — the notional is synthetic and never pulled.
+The impact fee can rise before the open lands, so approve with some headroom.
 
 ### The close recipient
 
@@ -171,11 +172,9 @@ const state = await exnihilo.getPositionState(tokenId);
 
 `lockedAmount`, `debt` and `notional` are what funding has left the position —
 all three shrink by the same fraction, so the break-even never moves.
-`remainingBps` is that fraction of what it opened with. The amounts on
-`Position` (`lockedAmountAtOpen`, `usdcIn`, `airUsdMinted`, `airTokenMinted`)
-are the opening figures and are *not* the current size — the collateral field's
-name is awkward on purpose, because a bare read of it is a bug you can spot
-without knowing the funding model.
+`remainingBps` is that fraction of what it opened with. The `Position` amounts
+(`lockedAmountAtOpen`, `usdcIn`, `airUsdMinted`, `airTokenMinted`) are opening
+figures, not the current size.
 
 `isDust` means anyone may now call `sweepDust`.
 
@@ -207,10 +206,11 @@ const plan = exnihilo.planPreMarket({
 markup and returns exactly what would be submitted.
 
 ::: warning Get the spot quote right
-`quoteSpotPriceUsdc` is the one input that cannot be checked on-chain, and the
-error is asymmetric. **Too high** only delays the fill — roughly 30 seconds per
-1% at the default 2%/minute decay. **Too low** and the quote reserve is bought
-out at your number almost immediately, with no band to absorb it.
+`quoteSpotPriceUsdc` is the one input that cannot be checked on-chain. **Too
+high** delays the fill — roughly 30 seconds per 1% at the default 2%/minute
+decay — and more than about 10% too high it never fills, because the price
+stops at 90% of the start. **Too low** and the quote reserve is bought out at
+your number almost immediately.
 
 Pass the honest spot price; the SDK adds the markup. Do not pre-mark it up.
 :::
@@ -292,48 +292,24 @@ await exnihilo.buyout(preMarketAddress, maxUsdc, minQuoteOut);
 Trading the premarket AMM is what keeps its ratio honest while the auction
 decays, so the real market opens at a current price rather than a stale one.
 
-**Always set `maxUsdc` on a buyout.** The cost is
-`max(currentPrice() × quoteReserve, $1)` — a product, and only the first term
-falls. The reserve *grows* every time someone buys the token, since that is what
-a quote-in swap does, and it is the main thing a premarket is there for.
-
-So the figure you read from `buyoutCost()` can be higher by the time your
-transaction lands. At the default 2%/minute decay the price drops about 0.067%
-per block, so any quote-in swap larger than that fraction of the reserve pushes
-the cost up over that interval. `maxUsdc` is what protects you between quote and
-execution.
+**Always set `maxUsdc` on a buyout.** The cost is `currentPrice() × quoteReserve`,
+and only the price falls: every quote-in swap grows the reserve. At the default
+2%/minute decay the price drops about 0.067% per block, so a quote-in swap larger
+than that share of the reserve raises the cost between your quote and execution.
 
 **The auction has a reserve price.** `currentPrice()` decays to **90% of
-`startPrice`** and stops — five minutes at the default 2%/minute — so a premarket
-nobody buys sits unfilled rather than continuing to discount. That bound is what
-makes the buyout cost strictly increasing in `quoteReserve` at every point of the
-decay.
+`startPrice`** and stops — five minutes at the default rate — so a premarket
+nobody buys sits unfilled rather than discounting further, and the buyout cost
+always rises with `quoteReserve`. A reserve drawn down far enough to price to
+nothing makes `buyout` revert `BuyoutNotPriceable` until any quote-in swap.
 
-It used to decay to 1 unit with only a flat $1 total as a backstop, which was
-[C-2](/protocol/audit-report#the-two-critical-findings): because that total did
-not depend on `quoteReserve`, a bidder could swap borrowed quote in, buy the
-whole reserve back for $1 — their own deposit included — and keep the token
-reserve. Fixed 2026-08-21.
+Seeding also checks:
 
-There is no longer a flat minimum on the total. If the quote reserve is ever
-drawn down far enough to price to nothing, `buyout` reverts `BuyoutNotPriceable`
-rather than clamping up to a floor — the condition is temporary, and **any**
-quote-in swap clears it. Clamping instead would have let that moment be locked in
-as a permanent launch over a near-empty market, since `launched` is one-way.
-
-`createPreMarket` requires the seeded quote reserve to be worth at least $100.
-
-**The token cannot be USDC, and cannot be the quote asset.** Both are rejected at
-seed time. `EXNIHILOFactory.createMarket` rejects them too, but only at buyout —
-and by then the seed is in custody with no path that returns it, so seeding used
-to succeed and then brick the buyout permanently. Fixed 2026-08-22.
-
-**The quote asset must implement `decimals()`.** A quote whose `decimals()`
-reverts is rejected with `QuoteDecimalsUnavailable` rather than assumed to be 18.
-The value is not cosmetic here the way it is for the project token: it divides
-every buyout price and the $100 seed check, so guessing 18 for a 6-decimal quote
-misjudges the bonded reserve by a factor of 10^12. A quote token without the
-optional metadata extension has to be wrapped before it can be bonded.
+- the seeded quote reserve is worth at least $100 at `startPrice`;
+- the token is neither USDC nor the quote asset;
+- the quote implements `decimals()` — it prices every buyout, so an unreadable
+  one reverts `QuoteDecimalsUnavailable` rather than being guessed. Wrap a quote
+  token that lacks it.
 
 ## Integrator fees
 
@@ -394,13 +370,12 @@ prices or open interest — its debt decays with it — but it still counts as
 open, and an LP cannot withdraw until every position is gone. The threshold
 depends only on funding, so no price movement can make a sweep succeed or fail.
 
-Clearing a whole book one call at a time is the slow way. `sweepDustBatch` takes
-a list and returns how many it released, skipping anything already gone, from
-another pool, or not yet dust — so another sweeper taking one mid-batch does not
-cost you the rest. Chunk it: the work is linear and a block still has a gas limit.
+`sweepDustBatch` clears a list in one transaction, skipping anything already
+gone, from another pool, or not yet dust, so a race does not cost the batch. The
+work is linear, so chunk a large book.
 
 ```ts
-const swept = await exnihilo.sweepDustBatch(pool, tokenIds); // → count released
+await exnihilo.sweepDustBatch(pool, tokenIds);
 ```
 
 `pokeFunding` is never required; every trade accrues funding first.

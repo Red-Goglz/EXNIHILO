@@ -52,6 +52,7 @@ against them.
 
 ## Interaction with the impact fee
 
-The [impact fee](/protocol/fees#open-fee) grows with the square of size relative to depth, so it
-pushes the same way. It only exceeds the 5% base fee above about 67% of pool depth, which the 20%
-cap keeps out of reach — the base fee is always the larger part.
+The [impact fee](/protocol/fees#open-fee) grows with size and same-side open interest relative to
+depth, so it pushes the same way. For a lone position it passes the 5% base fee only above about
+67% of depth, out of reach under the 20% cap; on a side already holding more than about a quarter
+of depth, a full-size open pays more in impact than in base fee.

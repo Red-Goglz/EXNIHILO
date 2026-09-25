@@ -25,11 +25,7 @@ export interface Position {
   /** Total fees paid to open. Funding is not a fee and is not counted here. */
   feesPaid: bigint;
   openedAt: bigint;
-  /**
-   * The pool's funding index for this position's side when it was minted, in
-   * RAY. Replaces what used to be `deadline`: positions do not expire, they are
-   * charged continuously instead.
-   */
+  /** The side's funding index at mint, in RAY. */
   fundingIndexAtOpen: bigint;
 }
 

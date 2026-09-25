@@ -19,15 +19,7 @@ export interface MarketSummary {
   effectiveLeverageCap: bigint;
   /** Market creation timestamp. Anchors the cap ramp. */
   createdAt: bigint;
-  /**
-   * The period one funding charge is levied over, in seconds. One hour at
-   * market creation, widening by one second per second, capped at 30 days.
-   *
-   * A market's first hours are its most volatile — no price history, whatever
-   * depth the creator seeded — so rent starts high and falls as the market
-   * earns a history. This replaced the position lifetime that used to sit here:
-   * positions no longer expire, they are charged continuously instead.
-   */
+  /** Funding window in seconds: 1 hour at creation, +1 s per second, max 30 days. */
   fundingWindow: bigint;
   /** Per-second funding rate on the long side, in RAY (1e27). */
   fundingRateLong: bigint;

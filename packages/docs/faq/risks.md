@@ -11,10 +11,10 @@ EXNIHILO is experimental software. Only use funds you can afford to lose.
 ## Smart contract risk
 
 **No human security firm has audited the protocol.** Five AI audit rounds have been published; the
-latest (2026-08-20) found critical issues, and the continuous-funding model the contracts now use was
-built after it and has not been audited. The code uses reentrancy guards, exact reserve invariants
-and a 630-test suite, but undiscovered vulnerabilities may exist, and nothing can be patched once
-deployed. See [Security](/protocol/security).
+latest (2026-08-20) found critical issues. Continuous funding came after it and has had one
+single-pass review (R3), whose High is fixed; the fixes made since are unaudited. The code uses reentrancy guards, exact
+reserve invariants and a 673-test suite, but undiscovered vulnerabilities may exist, and nothing can
+be patched once deployed. See [Security](/protocol/security).
 
 ## As a trader
 

@@ -21,9 +21,10 @@ Your position is not closed, liquidated or margin-called. It gets **smaller**.
 
 ## Why it works this way
 
-A position posts no margin, so what you hold is an option the LP wrote — and an option with no
-expiry is worth an unbounded amount unless its premium is charged continuously. With no margin
-account to debit, the only thing the charge can reach is the position.
+A position is a [perpetual option](/introduction/positions-are-options) the LP wrote. One that never
+expired and cost nothing to hold would be worth close to its whole notional, so it pays for time as
+it goes — its theta. With no margin account to debit, the only thing the charge can reach is the
+position.
 
 It takes a **fraction** of what is there instead of accruing a debt, so a claim can never be
 driven below zero — there is nothing to liquidate and no keeper to pay — and one index per side
@@ -55,15 +56,15 @@ steepest on a new market — no price history, the most volatility — and falls
 **Crowding.** Each side pays for its own open interest relative to pool depth. A lone position
 pays close to the base rate; a side whose open interest equals the pool's depth pays three times
 that. Open interest decays with the positions it counts, so crowding eases on its own, and the
-contract integrates that in closed form. For longs, a stretch of time costs the same whether it is
-accrued in one step or fifty.
+contract integrates that in closed form.
 
-Shorts are not quite exact. Short funding returns USDC to the pool, which deepens it and lowers the
-short side's utilization, and a single accrual does not see that happen inside its own interval.
-So a crowded short side on a quiet pool pays a little more: in testing, a short side at high
-utilization kept 57.7% of its size after 20 days accrued in one step, against 58.9% accrued twice
-a day. The error only ever overcharges, so nobody gains by keeping a pool quiet, and any trade or
-`pokeFunding()` narrows it.
+**Accrual timing.** Charging a quiet stretch in one step can cost a side slightly more than
+charging it in pieces, in three cases: above the 4× utilization cap the capped rate is held for the
+whole interval; short funding deepens the pool, lowering short utilization, which one accrual does
+not see (in testing, a crowded short side kept 57.7% of its size after 20 days accrued in one step,
+against 58.9% accrued twice a day); and while the window is still widening its integral is
+approximated piecewise, off by a fraction of a percent. Each errs toward overcharging, so nobody
+gains by keeping a pool quiet, and any trade or `pokeFunding()` narrows it.
 
 The rate is priced as an option's carry — more than a perp's funding, and steepest where
 volatility is highest. Measured on a lone position, by market age when it opens:
@@ -114,14 +115,6 @@ The NFT stores opening figures; each live figure is
 storage, so they are accurate on a pool that has been quiet for a week.
 
 `pokeFunding()` writes accrued funding without trading. Anyone may call it and nobody needs to.
-Accrual timing can change what a side is charged, in three ways: above the 4× utilization cap the
-rate is held for the whole interval even after funding has burned open interest back below it; a
-crowded short side is measured against a depth that short funding itself deepens (see
-[The rate](#the-rate)); and while the window is still widening, the integral is approximated
-piecewise, so a different set of boundaries lands on a slightly different number. In all three the
-error is an overcharge, never an undercharge, and accruing more often narrows it. The gaps are
-small — the widening-window one is bounded at a fraction of a percent of the interval's charge,
-and every case shrinks to nothing once the window reaches its 30-day cap.
 
 ## Sweeping a decayed position
 

@@ -110,9 +110,8 @@ contract EXNIHILOPool is ReentrancyGuard {
     uint256 private constant WIND_DOWN_DOUBLING  = 1 days;
     uint256 private constant WIND_DOWN_MAX_SHIFT = 16; // overflow bound
 
-    // An open needs index resolution left underneath it: the shared index truncates
-    // by up to one unit per accrual, which is a rounding error at RAY and a wipe at
-    // single digits. RAY / 1e9 — about seventeen years of decay without a rebase.
+    // Opens are refused below this, where index truncation stops being a rounding
+    // error. RAY / 1e9: about seventeen years of base-rate decay without a rebase.
     uint256 private constant MIN_FUNDING_INDEX = 1e18;
 
     // sweepDust threshold, measured on collateral, which only funding moves.
@@ -614,13 +613,8 @@ contract EXNIHILOPool is ReentrancyGuard {
         _settle(nftId, pos, holder, holder, 0, true);
     }
 
-    /// @notice sweepDust over many positions in one transaction. Nothing caps how
-    ///         many positions a pool can carry, and only a sweep decrements
-    ///         openPositionCount, which removeLiquidity waits on — so clearing an
-    ///         abandoned book should not cost one transaction per NFT.
-    /// @dev    Entries that are gone, not this pool's, or not yet dust are SKIPPED
-    ///         rather than reverted, so another sweeper taking one mid-batch does
-    ///         not cost the caller the rest.
+    /// @notice sweepDust over a list. Entries that are gone, from another pool or
+    ///         not yet dust are skipped, not reverted, so a race does not cost the batch.
     /// @return swept How many positions were released.
     function sweepDustBatch(uint256[] calldata nftIds)
         external
@@ -1049,11 +1043,8 @@ contract EXNIHILOPool is ReentrancyGuard {
     function pokeFunding() external nonReentrant reserveMutation {}
 
     /// @dev Charge both sides: released collateral moves to the backed reserve and
-    ///      the matching debt and open interest are burned. The clock advances when
-    ///      a charge lands, or when there is nothing to charge. A release that rounds
-    ///      to zero keeps the clock, carrying the time into the next accrual. Opens
-    ///      settle that carried interval rather than resetting the clock over it,
-    ///      which would forgive it for the whole side (see _settleCarriedFunding).
+    ///      the matching debt and open interest are burned. A release that rounds
+    ///      to zero leaves the clock alone, carrying the time to the next accrual.
     function _accrueFunding() internal {
         (uint256 idxL, uint256 factorL, uint256 elapsedL,) = _projectFunding(true);
         if (factorL != RAY) {
@@ -1088,14 +1079,9 @@ contract EXNIHILOPool is ReentrancyGuard {
         }
     }
 
-    /// @dev Charge a carried interval to the side's index before a new position
-    ///      joins it, and restart the clock. _accrueFunding leaves the interval on
-    ///      the clock whenever the aggregate release rounds to zero; left there, the
-    ///      next accrual would re-price it at the joiner's own utilization and bill
-    ///      them for time they did not hold, while resetting the clock instead would
-    ///      forgive it for the whole side — which is worth farming when a unit of
-    ///      collateral is valuable. Settling it does neither. The aggregate keeps its
-    ///      sub-unit residue, which _flushResidue hands to the LP.
+    /// @dev Before a position joins a side, charge any carried interval to the
+    ///      side's index and restart the clock, so the joiner is not billed for it
+    ///      and the side is not let off it. _flushResidue hands the LP the residue.
     /// @return The index the opening position should carry.
     function _settleCarriedFunding(bool isLong) internal returns (uint256) {
         (,,, uint256 openIndex) = _projectFunding(isLong);
@@ -1159,8 +1145,9 @@ contract EXNIHILOPool is ReentrancyGuard {
     ///      utilization term b, the closed form is
     ///        q = (1 − a)^t,  kept = a·q / (a + b·(1 − q))
     ///      which composes across accruals for longs. Short funding deepens
-    ///      backedAirUsd, which this holds fixed, so one long accrual overcharges
-    ///      shorts slightly. At or above the utilization cap the full rate is held.
+    ///      backedAirUsd, which this holds fixed, so one accrual over a long
+    ///      interval overcharges shorts slightly. At or above the utilization cap
+    ///      the full rate is held.
     function _decayFactor(uint256 rate, uint256 oi, uint256 window, uint256 weighted)
         internal
         view
@@ -1176,8 +1163,7 @@ contract EXNIHILOPool is ReentrancyGuard {
 
     /// @dev Amount released by decaying `amount` by `factor`. Rounds the kept amount
     ///      UP, opposite to _liveAt, so aggregates stay ahead of the positions that
-    ///      settlement subtracts from them. mulDiv carries the full 512-bit product,
-    ///      so a reserve large enough to overflow amount x RAY cannot freeze accrual.
+    ///      settlement subtracts from them. mulDiv cannot overflow at any reserve size.
     function _released(uint256 amount, uint256 factor) internal pure returns (uint256) {
         uint256 kept = Math.mulDiv(amount, factor, RAY, Math.Rounding.Ceil);
         if (kept > amount) kept = amount; // rounding only
@@ -1197,9 +1183,8 @@ contract EXNIHILOPool is ReentrancyGuard {
         return _liveRatePerSecond(isLong);
     }
 
-    /// @dev The rate a holder is actually charged now: projected open interest,
-    ///      wind-down shift applied, capped. Every public read goes through this,
-    ///      so none of them can quote a pre-wind-down rate during one.
+    /// @dev The rate charged now: projected open interest, wind-down shift applied,
+    ///      capped. Every public rate read goes through this.
     function _liveRatePerSecond(bool isLong) internal view returns (uint256) {
         if (backedAirUsd == 0) return 0;
         uint256 rate = _ratePerSecond(_projectedOpenInterest(isLong), block.timestamp);
@@ -1439,12 +1424,8 @@ contract EXNIHILOPool is ReentrancyGuard {
         return rawOut - fee;
     }
 
-    /// @dev Smallest input whose _cpAmountOut covers `debt`, by bisection.
-    ///      Prorating a full-collateral trade (input × debt / fullOutput) overstates
-    ///      this: constant-product output is concave, so buying part of the maximum
-    ///      costs less than that share of the maximum input, and the holder was
-    ///      charged the difference. Callers must pass a `hi` that already covers
-    ///      `debt`; the search is monotonic because _cpAmountOut is.
+    /// @dev Smallest input whose _cpAmountOut covers `debt`, by bisection. `hi` must
+    ///      already cover `debt`; the search is sound because _cpAmountOut is monotonic.
     function _buybackCost(
         uint256 debt,
         uint256 reserveIn,
@@ -1507,10 +1488,8 @@ contract EXNIHILOPool is ReentrancyGuard {
 
     // ── Transfers and accrual ─────────────────────────────────────────────────
 
-    /// @dev Pull exactly `amount`, rejecting a token that credits less than it is
-    ///      told to. This is a check per transfer, not a property of the token: one
-    ///      that rebases or is seized AFTER the pull still breaks the invariant, so
-    ///      elastic-supply tokens are out of scope for a market.
+    /// @dev Pull exactly `amount`; reverts if less arrives. A balance that moves
+    ///      later (rebase, seizure) is not caught, so such tokens are unsupported.
     function _transferIn(IERC20 token, address from, uint256 amount) internal {
         uint256 balanceBefore = token.balanceOf(address(this));
         token.safeTransferFrom(from, address(this), amount);

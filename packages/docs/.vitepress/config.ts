@@ -2,15 +2,9 @@ import { defineConfig } from "vitepress";
 
 const SITE = "https://exnihilo.markets";
 
-/**
- * Site-wide description. Still needed as the fallback for any page that forgets
- * its own `description` frontmatter — but it should never be the *only* one in
- * play. Every page under this directory carries a specific description; when
- * they did not, all 31 of them shipped this same sentence, which meant a page
- * titled "Risk Disclosure" was described to searchers as a sales pitch.
- */
+/** Fallback only: every page should carry its own `description` frontmatter. */
 const SITE_DESCRIPTION =
-  "Long or short any ERC-20 token. You pay a fee, not collateral — and that fee is the most you can lose.";
+  "Perpetual options on any ERC-20 token. Go long or short for a fee, not collateral — and that fee is the most you can lose.";
 
 /** `trading/pnl.md` → `https://exnihilo.markets/docs/trading/pnl.html` */
 function pageUrl(relativePath: string): string {
@@ -155,7 +149,7 @@ export default defineConfig({
         items: [
           { text: "What is EXNIHILO", link: "/introduction/what-is-exnihilo" },
           {
-            text: "Positions Are Options",
+            text: "Perpetual Options",
             link: "/introduction/positions-are-options",
           },
           {

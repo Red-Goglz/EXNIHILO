@@ -85,8 +85,8 @@ different units, never summed.
 | `MIN_TOKEN_DECIMALS()` / `MAX_TOKEN_DECIMALS()` | The accepted range, 6 and 18 |
 | `usdc()` / `protocolTreasury()` / `positionNFT()` / `lpNftContract()` / `poolDeployer()` | Immutables |
 
-The factory has no owner and no admin function. Earlier deployments exposed `deployer()` /
-`setDeployer(address)`, an emergency role that could call `closePool` on any pool; it was removed.
+The factory has no owner and no admin function. The July 2026 deployment still has a `deployer`
+role; see [Contract Addresses](/protocol/addresses).
 
 ## EXNIHILORouter
 

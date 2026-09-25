@@ -6,11 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 EXNIHILO is an npm workspace monorepo for a Web3 dApp "Out of thin air" Trade Platform
 It's a dapp where you can create permissionless pools, go long or short a token.
-It has five packages:
+It has seven packages:
 - `packages/blockchain` — Solidity smart contracts with Hardhat
 - `packages/site` — React 19 frontend with Wagmi/Viem for wallet integration
 - `packages/indexer` — Ponder event indexer + Hono JSON API serving price history, pool/protocol metrics, and LP APR to the site
-- `packages/abis` — shared contract ABIs (`@exnihilio/abis`), consumed by both the site and the indexer
+- `packages/abis` — shared contract ABIs (`@exnihilio/abis`), consumed by the site, the indexer and the SDK
+- `packages/sdk` — typed viem client (`@exnihilio/sdk`) for integrators
+- `packages/arbbot` — read-only arbitrage scanner (never sends a transaction)
 - `packages/docs` — VitePress documentation site
 
 ## Commands
@@ -21,7 +23,7 @@ It has five packages:
 npx hardhat test                              # Run all smart contract tests
 REPORT_GAS=true npx hardhat test             # Run tests with gas usage reporting
 npx hardhat node                             # Start local Hardhat network
-npx hardhat ignition deploy ./ignition/modules/Lock.ts  # Deploy contracts
+npx hardhat run scripts/deployLocal.ts --network localhost   # Deploy + seed locally
 ```
 
 ### Site Package (`packages/site`)
@@ -66,8 +68,8 @@ Copy `packages/blockchain/.env.example` to `packages/blockchain/.env` and popula
 ### Blockchain Package
 
 Follows standard Hardhat layout:
-- `contracts/` — Solidity contracts (currently `Lock.sol`)
-- `ignition/modules/` — Hardhat Ignition deployment modules
+- `contracts/` — pool, factory, router, NFTs and the launchpad (`PreMarket*`, `LockedLpVault`)
+- `scripts/` — deploy scripts (`deployLocal.ts`, `deployMainnet.ts`) and one-off tools
 - `test/` — Chai/Hardhat tests using `loadFixture` and `time` helpers
 - `hardhat.config.ts` — Solidity 0.8.24 (evmVersion `cancun`, viaIR), networks
   `avalanche` (43114) and `avalancheFujiTestnet` (43113)

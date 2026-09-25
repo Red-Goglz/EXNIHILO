@@ -329,9 +329,9 @@ function FeedCard({
   const capUsdc = hasLeverageCap ? Number(leverageCap!) / 1_000_000 : Infinity;
   const overCap = hasLeverageCap && usdcRaw > 0n && usdcRaw > leverageCap!;
   const longPriceDisplay  = longPriceRaw !== undefined && longPriceRaw > 0n
-    ? decodeSpotPrice(longPriceRaw, tokenDecimals) : "—";
+    ? decodeSpotPrice(longPriceRaw) : "—";
   const shortPriceDisplay = shortPriceRaw !== undefined && shortPriceRaw > 0n
-    ? decodeSpotPrice(shortPriceRaw, tokenDecimals) : "—";
+    ? decodeSpotPrice(shortPriceRaw) : "—";
 
   // Allowance — only needed after direction is picked
   const { data: allowanceData } = useReadContracts({

@@ -44,10 +44,7 @@ export class MissingAddressError extends Error {
   }
 }
 
-/**
- * Internal handle passed to every module. Not exported from the package root —
- * consumers hold the object returned by `createExnihilo` instead.
- */
+/** First argument of every standalone function; `createExnihilo` binds it for you. */
 export interface Ctx {
   publicClient: PublicClient;
   walletClient?: WalletClient;
